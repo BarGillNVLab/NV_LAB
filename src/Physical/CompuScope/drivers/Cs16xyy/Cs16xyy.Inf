@@ -1,0 +1,158 @@
+;; Cs16xyyWDF.inf
+;
+;-------------------------------------------------------------------------
+; Version Section
+;-------------------------------------------------------------------------
+
+[Version]
+Signature      = "$WINDOWS NT$"
+Class          = %ProviderName%
+ClassGuid      = {ff646f80-8def-11d2-9449-00105a075f6b}
+Provider       = %MSFT%
+DriverVer=05/10/2022,6.1.7600.16385
+CatalogFile    = Cs16xyy.cat
+
+[DestinationDirs]
+DefaultDestDir  = 12
+CoInstaller_CopyFiles = 11
+
+;-------------------------------------------------------------------------
+; Class Section
+;-------------------------------------------------------------------------
+[ClassInstall32]
+Addreg         = GageClassReg
+
+[GageClassReg]
+HKR,,,0,%ClassName%
+HKR,,Icon,,-5
+
+;-------------------------------------------------------------------------
+; Device Install Section
+;-------------------------------------------------------------------------
+[ControlFlags]
+ExcludeFromSelect = *
+
+[Manufacturer]
+%MSFT%=MSFT,NTAMD64
+
+[SourceDisksFiles]
+Cs16xyyWDF.sys    = 1
+Cs16xyyWDF64.sys  = 1
+WdfCoInstaller01009.dll = 1, ; x86 make sure the number matches with SourceDisksNames
+WdfCoInstaller0100964.dll = 1, ; x64 make sure the number matches with SourceDisksNames
+
+[SourceDisksNames]
+1=%DISK_NAME%,
+
+; For Win2K
+[MSFT]
+; DisplayName            Section           DeviceId
+; -----------            -------           --------
+%CsDriver.PCIDRVDESC0%=CsDriver_Inst, PCI\VEN_1197&DEV_0480&SUBSYS_905610B5	;PCI
+%CsDriver.PCIDRVDESC1%=CsDriver_Inst, PCI\VEN_10b5&DEV_9056			;PLX board
+%CsDriver.PCIEDRVDESC0%=CsDriver_Inst, PCI\VEN_1197&DEV_0490			;PCI-E
+%CsDriver.PCIEDRVDESC1%=CsDriver_Inst, PCI\VEN_1197&DEV_0491			;Oscar
+
+; For XP and later
+[MSFT.NTAMD64]
+; DisplayName            Section           DeviceId
+; -----------            -------           --------
+%CsDriver.PCIDRVDESC0%=CsDriver_Inst, PCI\VEN_1197&DEV_0480&SUBSYS_905610B5	;PCI
+%CsDriver.PCIDRVDESC1%=CsDriver_Inst, PCI\VEN_10b5&DEV_9056			;PLX board
+%CsDriver.PCIEDRVDESC0%=CsDriver_Inst, PCI\VEN_1197&DEV_0490			;PCI-E
+%CsDriver.PCIEDRVDESC1%=CsDriver_Inst, PCI\VEN_1197&DEV_0491			;Oscar
+
+;---------- DDInstall Sections -----------------------------------------------
+; --------- Windows 2000 -----------------
+
+[CsDriver_Inst.NTX86]
+CopyFiles      = CopyFilesSection_Driver_x86
+AddReg		   = CsDriver_EventLog_x86
+
+[CopyFilesSection_Driver_x86]
+Cs16xyyWdf.sys
+
+[CsDriver_Inst.NTX86.Services]
+AddService     = Cs16xyyWdf,0x00000002,CsDriver_Service_x86
+
+[CsDriver_Service_x86]
+DisplayName    = %CsDriver.SVCDESC%
+ServiceType    = 1                  ; SERVICE_KERNEL_DRIVER
+StartType      = 3                  ; SERVICE_DEMAND_START
+ErrorControl   = 1                  ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %12%\Cs16xyyWdf.sys
+
+[CsDriver_EventLog_x86]
+HKR,,EventMessageFile,0x00020000,"%%SystemRoot%%\System32\IoLogMsg.dll;%%SystemRoot%%\System32\drivers\Cs16xyyWdf.sys"
+HKR,,TypesSupported,0x00010001,7
+
+; --------- Windows 64 bit -----------------
+
+[CsDriver_Inst.NTAMD64]
+CopyFiles      = CopyFilesSection_Driver_x64
+AddReg		   = CsDriver_EventLog_x64
+
+[CopyFilesSection_Driver_x64]
+Cs16xyyWdf64.sys
+
+[CsDriver_Inst.NTAMD64.Services]
+AddService     = Cs16xyyWdf,0x00000002,CsDriver_Service_x64
+
+[CsDriver_Service_x64]
+DisplayName    = %CsDriver.SVCDESC%
+ServiceType    = 1                  ; SERVICE_KERNEL_DRIVER
+StartType      = 3                  ; SERVICE_DEMAND_START
+ErrorControl   = 1                  ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %12%\Cs16xyyWdf64.sys
+
+[CsDriver_EventLog_x64]
+HKR,,EventMessageFile,0x00020000,"%%SystemRoot%%\System32\IoLogMsg.dll;%%SystemRoot%%\System32\drivers\Cs16xyyWdf64.sys"
+HKR,,TypesSupported,0x00010001,7
+
+;-------------------------------------------------------------------------
+; WDF Coinstaller installation
+;-------------------------------------------------------------------------
+[CsDriver_Inst.NTx86.CoInstallers]
+AddReg         = CoInstaller_AddReg_x86
+CopyFiles      = CoInstaller_CopyFiles_x86
+
+[CsDriver_Inst.NTamd64.CoInstallers]
+AddReg         = CoInstaller_AddReg_x64
+CopyFiles      = CoInstaller_CopyFiles_x64
+
+[CoInstaller_CopyFiles_x86]
+WdfCoInstaller01009.dll
+
+[CoInstaller_CopyFiles_x64]
+WdfCoInstaller0100964.dll
+
+[CoInstaller_AddReg_x86]
+HKR,,CoInstallers32,0x00010000, "WdfCoInstaller01009.dll,WdfCoInstaller"
+
+[CoInstaller_AddReg_x64]
+HKR,,CoInstallers32,0x00010000, "WdfCoInstaller0100964.dll,WdfCoInstaller"
+
+[CsDriver_Inst.NTx86.Wdf]
+KmdfService    = Cs16xyyWdf, CsDriver_wdfsect
+
+[CsDriver_Inst.NTamd64.Wdf]
+KmdfService    = Cs16xyyWdf, CsDriver_wdfsect
+
+[CsDriver_wdfsect]
+KmdfLibraryVersion = 1.9
+
+;------------------------------------------------------------------------------
+;  String Definitions
+;------------------------------------------------------------------------------
+
+[Strings]
+ProviderName		= "Gage Applied Technologies"
+MSFT           		= "DynamicSignals"
+ClassName      		= "Gage Digitizers"
+CsDriver.SVCDESC 	= "Cs16xyy Drivers"
+CsDriver.PCIDRVDESC0 	= "PCI Razor CompuScope"
+CsDriver.PCIDRVDESC1	= "PLX Based Board"
+CsDriver.PCIEDRVDESC0	= "PCIe Razor CompuScope"
+CsDriver.PCIEDRVDESC1	= "PCIe Oscar CompuScope"
+DISK_NAME      		= "CompuScope Driver Install Disk"
+

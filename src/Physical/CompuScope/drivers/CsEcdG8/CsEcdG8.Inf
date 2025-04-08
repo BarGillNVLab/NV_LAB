@@ -1,0 +1,149 @@
+;;  CsxyG8WDF.inf
+;
+;-------------------------------------------------------------------------
+; Version Section
+;-------------------------------------------------------------------------
+
+[Version]
+Signature      = "$WINDOWS NT$"
+Class          = %ProviderName%
+ClassGuid      = {ff646f80-8def-11d2-9449-00105a075f6b}
+Provider       = %MSFT%
+DriverVer=05/10/2022,6.1.7600.16385
+CatalogFile    = CsEcdG8.cat
+
+[DestinationDirs]
+DefaultDestDir  = 12
+CoInstaller_CopyFiles = 11
+
+;-------------------------------------------------------------------------
+; Class Section
+;-------------------------------------------------------------------------
+[ClassInstall32]
+Addreg         = GageClassReg
+
+[GageClassReg]
+HKR,,,0,%ClassName%
+HKR,,Icon,,-5
+
+;-------------------------------------------------------------------------
+; Device Install Section
+;-------------------------------------------------------------------------
+[ControlFlags]
+ExcludeFromSelect = *
+
+[Manufacturer]
+%MSFT%=MSFT,NTAMD64
+
+[SourceDisksFiles]
+CsEcdG8WDF.sys     = 1
+CsEcdG8WDF64.sys   = 1
+WdfCoInstaller01009.dll = 1, ; x86 make sure the number matches with SourceDisksNames
+WdfCoInstaller0100964.dll = 1, ; x64 make sure the number matches with SourceDisksNames
+
+[SourceDisksNames]
+1=%DISK_NAME%,
+
+; For Win2K
+[MSFT]
+; DisplayName            Section           DeviceId
+; -----------            -------           --------
+%CsDriver.PCIEDRVDESC%=CsDriver_Inst, PCI\VEN_1197&DEV_0650&SUBSYS_00041172	;Cobra Max PCI-E
+
+; For XP and later
+[MSFT.NTAMD64]
+; DisplayName            Section           DeviceId
+; -----------            -------           --------
+%CsDriver.PCIEDRVDESC%=CsDriver_Inst, PCI\VEN_1197&DEV_0650&SUBSYS_00041172	;Cobra Max PCI-E
+
+;---------- DDInstall Sections -----------------------------------------------
+; --------- Windows 2000 -----------------
+
+[CsDriver_Inst.NTX86]
+CopyFiles      = CopyFilesSection_Driver_x86
+AddReg		   = CsDriver_EventLog_x86
+
+[CopyFilesSection_Driver_x86]
+CsEcdG8Wdf.sys
+
+[CsDriver_Inst.NTX86.Services]
+AddService     = CsEcdG8Wdf,0x00000002,CsDriver_Service_x86
+
+[CsDriver_Service_x86]
+DisplayName    = %CsDriver.SVCDESC%
+ServiceType    = 1                  ; SERVICE_KERNEL_DRIVER
+StartType      = 3                  ; SERVICE_DEMAND_START
+ErrorControl   = 1                  ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %12%\CsEcdG8Wdf.sys
+
+[CsDriver_EventLog_x86]
+HKR,,EventMessageFile,0x00020000,"%%SystemRoot%%\System32\IoLogMsg.dll;%%SystemRoot%%\System32\drivers\CsEcdG8Wdf.sys"
+HKR,,TypesSupported,0x00010001,7
+
+; --------- Windows 64 bit -----------------
+
+[CsDriver_Inst.NTAMD64]
+CopyFiles      = CopyFilesSection_Driver_x64
+AddReg		   = CsDriver_EventLog_x64
+
+[CopyFilesSection_Driver_x64]
+CsEcdG8Wdf64.sys
+
+[CsDriver_Inst.NTAMD64.Services]
+AddService     = CsEcdG8Wdf,0x00000002,CsDriver_Service_x64
+
+[CsDriver_Service_x64]
+DisplayName    = %CsDriver.SVCDESC%
+ServiceType    = 1                  ; SERVICE_KERNEL_DRIVER
+StartType      = 3                  ; SERVICE_DEMAND_START
+ErrorControl   = 1                  ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %12%\CsEcdG8Wdf64.sys
+
+[CsDriver_EventLog_x64]
+HKR,,EventMessageFile,0x00020000,"%%SystemRoot%%\System32\IoLogMsg.dll;%%SystemRoot%%\System32\drivers\CsEcdG8Wdf64.sys"
+HKR,,TypesSupported,0x00010001,7
+
+;-------------------------------------------------------------------------
+; WDF Coinstaller installation
+;-------------------------------------------------------------------------
+[CsDriver_Inst.NTx86.CoInstallers]
+AddReg         = CoInstaller_AddReg_x86
+CopyFiles      = CoInstaller_CopyFiles_x86
+
+[CsDriver_Inst.NTamd64.CoInstallers]
+AddReg         = CoInstaller_AddReg_x64
+CopyFiles      = CoInstaller_CopyFiles_x64
+
+[CoInstaller_CopyFiles_x86]
+WdfCoInstaller01009.dll
+
+[CoInstaller_CopyFiles_x64]
+WdfCoInstaller0100964.dll
+
+[CoInstaller_AddReg_x86]
+HKR,,CoInstallers32,0x00010000, "WdfCoInstaller01009.dll,WdfCoInstaller"
+
+[CoInstaller_AddReg_x64]
+HKR,,CoInstallers32,0x00010000, "WdfCoInstaller0100964.dll,WdfCoInstaller"
+
+[CsDriver_Inst.NTx86.Wdf]
+KmdfService    = CsEcdG8Wdf, CsDriver_wdfsect
+
+[CsDriver_Inst.NTamd64.Wdf]
+KmdfService    = CsEcdG8Wdf, CsDriver_wdfsect
+
+[CsDriver_wdfsect]
+KmdfLibraryVersion = 1.9
+
+;------------------------------------------------------------------------------
+;  String Definitions
+;------------------------------------------------------------------------------
+
+[Strings]
+ProviderName		="Gage Applied Technologies"
+MSFT			= "DynamicSignals"
+ClassName		= "Gage Digitizers"
+CsDriver.SVCDESC	= "CsEcdG8 Drivers"
+CsDriver.PCIEDRVDESC	= "PCIe CobraMax CompuScope"
+DISK_NAME		= "CompuScope Driver Install Disk"
+
