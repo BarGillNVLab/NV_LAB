@@ -1419,6 +1419,11 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             pg.repeats = obj.repeats;
             pg.fixDelays = obj.fixDelays;
 
+            %Load AWG if needed
+            if AWG
+               obj.loadAWG(S); 
+            end
+
             % change pulses to trigger if neccesary
             fgCell = FrequencyGenerator.getFG();
             fg_names = cellfun(@(c) c.name, fgCell, 'UniformOutput', false);
@@ -1427,7 +1432,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                     if obj.IQ.useIQ == 1
                         % S.changePulseToTrigger('SGT', 'TRIGGER', 5*1e-3, true);
                         pg.changeSequence('','','',{'channel', 'SGT', 'channel_2','TRIGGER', 'trigger_duration', 5*1e-3, 'add_trigger', true});
-                        obj.LoadAWG();
+                        obj.loadAWG();
                     else
                         % S.changePulseToTrigger('SGT', 'TRIGGER', 5*1e-3, false);
                         pg.changeSequence('','','',{'channel', 'SGT', 'channel_2','TRIGGER', 'trigger_duration', 5*1e-3, 'add_trigger', false});
@@ -1614,9 +1619,32 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             [Status] = rs_generate_wave( sgt100.visa, IQinfo, IQinfo.StartPlayback, IQinfo.KeepLocalFile )
         end
 
-        function LoadAWG(obj)
-
+        function loadAWG(obj, S)
+            % create all sequences from the base sequence and permutated
+            % parameter
+            sequences = {};
+            for i = 1:length(obj.permutable_parameter)
+                obj.changeSequence(i);
+                sequences{i} = S.copySequence;
+            end
+            
+            % get a list of all frequency generators
             fgCell = FrequencyGenerator.getFG();
+
+            % update sequences to include both on and off times for each fg
+            % that has IQ enabled OR a trigger to start the waveform
+            for i = 1:length(fgCell)
+                if fgCell{i}.useIQ == 1
+                    channel_name = ; % need to get channel name for the fg
+                    for j = 1:length(sequences)
+                        fgCell{i}.loadAWGInternal %create the waveform for each sequence
+                        % sequences(j).changeSequenceToPulse
+                        sequences(j).changePulseToTrigger({'channel', channel_name, 'channel_2','TRIGGER', 'trigger_duration', 5*1e-3, 'add_trigger', false});
+                    end
+                end
+            end
+
+            % fgCell = FrequencyGenerator.getFG();
             fg_names = cellfun(@(c) c.name, fgCell, 'UniformOutput', false);
             fg = fgCell{contains(fg_names, 'SGT')};
             fg.IQ.segment_names = []; % temporarly here, needs to be moved to experiment wrapup (not necessarily the function, but the operation)

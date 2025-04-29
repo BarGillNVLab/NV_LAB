@@ -142,6 +142,18 @@ classdef ExpRabi < Experiment
             % Set parameter, for saving
             obj.mCurrentXAxisParam.value = obj.tau;
         end
+
+        function changeSequence(obj, tau)
+            % Devices
+            pg = getObjByName(PulseGenerator.NAME);
+            % Some magic numbers
+            maxLastDelay = Experiment.DEFAULT_LAST_DELAY + max(obj.tau);
+
+            pg.changeSequence('MW', 'duration', tau);
+            if obj.constantTime
+                pg.changeSequence('lastDelay', 'duration', maxLastDelay - obj.tau(tau));
+            end
+        end
         
         function perform(obj)
             %%% Initialization
@@ -177,6 +189,7 @@ classdef ExpRabi < Experiment
                         return;
                     end
                     try
+                        obj.changeSequence(obj.tau(t))
                         pg.changeSequence('MW', 'duration', obj.tau(t));
                         if obj.constantTime
                             pg.changeSequence('lastDelay', 'duration', maxLastDelay - obj.tau(t));
