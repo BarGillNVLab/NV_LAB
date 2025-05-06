@@ -41,12 +41,13 @@ classdef NiDaq < EventSender
     
     %% Initializtion %%
     
-    methods (Access = protected)
+    methods %(Access = protected)
         function obj = NiDaq(deviceName, dummyMode)
             obj@EventSender(NiDaq.NAME);
             obj.init(deviceName, dummyMode)
         end
-        
+    end
+    methods (Access = protected)
         function init(obj, deviceName, dummyModeBoolean)
             % Internal channels that are being used by someone
             obj.registerChannel('100MHzTimebase', obj.CHANNEL_100MHZ)

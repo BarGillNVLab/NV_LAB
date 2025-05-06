@@ -7,7 +7,7 @@ classdef Setup < handle
     end
     
     properties (Hidden, Constant)
-        NEEDED_FIELDS = {'lasers', 'niDaq', 'pulseGenerator', 'setupNumber', 'spcm'}; % 'stages' deleted - Yachel
+        NEEDED_FIELDS = {'lasers', 'Daq', 'pulseGenerator', 'setupNumber', 'spcm'}; % 'stages' deleted - Yachel
     end
     
     methods (Static)
@@ -43,7 +43,7 @@ classdef Setup < handle
                         
             %%%% init important objects %%%%
             PulseGenerator.create(jsonStruct.pulseGenerator);
-            NiDaq.create(jsonStruct.niDaq);
+            Daq.create(jsonStruct.Daq);
             Spcm.create(jsonStruct.spcm);
             ImageScanResult.init;
             StageScanner.init;
