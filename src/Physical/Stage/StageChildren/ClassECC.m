@@ -16,6 +16,10 @@ classdef ClassECC < ClassStage
         macroScanAxis = -1; % macro direction axis (x, y or z)
         macroScanVelocity = -1;
         macroNormalVelocity = -1;
+        macrotPixel
+        scanRunning
+        macroScanStartEndVector
+        macroScanPixelSizeInum
         macroPixelTime = -1; % time duration at each pixel
         macroFixPosition = -1; % fixing the position so the first quadrature will be symmetric around the scanning point
         macroIndex = -1; % current line, -1 = not in scan
@@ -24,8 +28,8 @@ classdef ClassECC < ClassStage
     end
        
     properties (Constant)
-        dllFolder = 'C:/Users/Owner/Google Drive/NV Lab/Control code/Drivers/Attocube/ECC100_DLL/Win_64Bit/lib/';
-        hFolder = 'C:/Users/Owner/Google Drive/NV Lab/Control code/Drivers/Attocube/ECC100_DLL/Win_64Bit/inc/';
+        dllFolder = 'G:\My Drive\NV Lab\Control code/Drivers/Attocube/ECC100_DLL/Win_64Bit/lib/';
+        hFolder = 'G:\My Drive\NV Lab\Control code/Drivers/Attocube/ECC100_DLL/Win_64Bit/inc/';
         libAlias = 'ecc';
         
         stageName = 'Stage (Coarse) - ECC';
@@ -45,6 +49,7 @@ classdef ClassECC < ClassStage
         
         STEP_MINIMUM_SIZE = 0.1;
         STEP_DEFAULT_SIZE = 10;
+        WARNING_PREVIOUS_SCAN_CANCELLED = '2D Scan is in progress! Previous scan was cancelled';
     end
     
     methods (Static, Access = public)
@@ -91,6 +96,7 @@ classdef ClassECC < ClassStage
             obj.Initialization;
             
             obj.availableProperties.(obj.HAS_OPEN_LOOP) = true;
+            obj.availableProperties.(obj.HAS_SLOW_SCAN) = true;
         end
         
         function delete(obj)
@@ -272,6 +278,19 @@ classdef ClassECC < ClassStage
                 SetVelocity(obj, i, obj.defaultVel);
             end
             GetPosition(obj, obj.axes); % Updates obj.curPos
+            stagesJson = JsonInfoReader.getJson.stages;
+            if isfield(stagesJson, 'pg_controlled') && stagesJson.pg_controlled
+                triggerChannel = 'pulseGenerator';
+            else
+                triggerChannel = stageStruct.niDaqChannel;
+            end
+            if ~strcmp(triggerChannel, 'pulseGenerator')
+                nidaq = getObjByName(NiDaq.NAME);
+                nidaq.registerChannel(triggerChannel, obj.name);
+            else
+                obj.pgControlled = 1;
+            end
+            obj.triggerChannel = triggerChannel;
             
         end
         
@@ -346,7 +365,10 @@ classdef ClassECC < ClassStage
             SendCommand(obj, 'ECC_controlAutoReset', realAxis, 1, 1); % Auto Reset is on
             SendCommand(obj, 'ECC_controlReferenceAutoUpdate', realAxis, 1, 1); %when set, every time the reference marking is hit the reference position will be updated.
             range = SendCommand(obj, 'ECC_controlTargetRange', realAxis, 1000, 1);  % setting the range (changed from 10 to 100)
-            valid = SendCommand(obj, 'ECC_getStatusReference', realAxis, 0);
+%             valid = SendCommand(obj, 'ECC_getStatusReference', realAxis, 0);
+            validPtr = libpointer('int32Ptr', 0);
+            SendCommand(obj, 'ECC_getStatusReference', realAxis, validPtr);
+            valid = validPtr.Value;
             refPos = SendCommand(obj, 'ECC_getReferencePosition', realAxis, 0);
             while (~valid || abs(refPos) > range)
                 questionString = sprintf('Refrence isn''t valid for axis %s. Move manually!', obj.axes(realAxis+1));
@@ -388,6 +410,10 @@ classdef ClassECC < ClassStage
         function Move(obj, axisName, posInMicrons)
             % Checking reference before movement
             % Absolute change in position (the user enters the position in microns) of axis (x,y,z or 1 for x, 2 for y and 3 for z).
+            if obj.scanRunning
+                obj.sendWarning(obj.WARNING_PREVIOUS_SCAN_CANCELLED);
+                obj.AbortScan;
+            end
             for i=1:length(axisName)
                 realAxis = obj.GetAxisInternal(axisName(i));
                 phAxis = realAxis +1;
@@ -613,6 +639,10 @@ classdef ClassECC < ClassStage
         
         function SetVelocity(obj, axisName, velocity) %seting the velocity in microns/sec
             realAxis = obj.GetAxisInternal(axisName);
+            if obj.scanRunning
+                obj.sendWarning(obj.WARNING_PREVIOUS_SCAN_CANCELLED);
+                obj.AbortScan;
+            end
             switch realAxis
                 case {0,1,2}
                     if velocity < 1000
@@ -665,111 +695,68 @@ classdef ClassECC < ClassStage
             % Vectorial axis is possible.
             vel = GetVelocity(obj, axisName);
         end
-        
-        function ScanOneDimension(obj, axisName, scanAxisVector, tPixel)
-            % Does a macro scan for the given axis.
-            % axisName - The axis to scan (x,y,z or 1 for x, 2 for y and 3)
+
+        function PrepareScanInOneDimension(obj, scanAxisVector, nFlat, nOverRun, tPixel, scanAxis) %#ok<INUSL>
+            % Prepares a one dimensional scan, writes the waveform and 
+            % initializes the DDL function.
             % scanAxisVector - A vector with the points to scan, points
             % should increase with equal distances between them.
+            % nFlat - How many flat points should be in the beginning of the scan.
+            % nOveRun - How many extra points should be taken from each.
             % tPixel - Scan time for each pixel (in seconds).
-            % moving to the start point
+            % scanAxis - The axis to scan (x,y,z or 1 for x, 2 for y and 3
+            % for z).
+            %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
             
-            % prepare scan
-            clock = (tPixel*1e9)/1000;
-            SetClock(obj, axisName, clock);
-            numberOfPixels = length(scanAxisVector) - 1;
-            scanLength = scanAxisVector(end)-scanAxisVector(1);
-            pixel = 1000*scanLength/numberOfPixels; % resolution in nm
-            pixelResolution = ceil(pixel/4);
-            fixPosition = pixelResolution/3000;
-            startPoint = scanAxisVector(1) - fixPosition;
-            endPoint = scanAxisVector(end)+ fixPosition;
+            % Get parameters
+            scanAxis = GetAxis(obj, scanAxis);
             
-            if obj.fastScan %Fast Scan
-                try
-                    SetResolution(obj, axisName, pixelResolution);
-                catch err
-                    switch err.identifier
-                        case 'ECC:ResOutOfLimit'
-                            fprintf('can not scan! either you entered too many points or scan length is too short\n');
-                            return
-                        otherwise
-                            rethrow(err)
-                    end
-                end
-                totalTime = numberOfPixels*tPixel;
-                scanVelocity = scanLength/(totalTime);
-                %normalVelocity = obj.curVel(GetAxis(obj,scanAxis));
-                
-                try
-                    SetVelocity(obj, axisName, scanVelocity);
-                catch err
-                    switch err.identifier
-                        case 'ECC:VelOutOfMaxLimit'
-                            error('Can not scan! Either pixel time is too short or scan length is too long');
-                        case 'ECC:VelOutOfMinLimit'
-                            error('Can not scan! Either pixel time is too long or scan length is too short');
-                        otherwise
-                            rethrow(err)
-                    end
-                end
-                
-                Move(obj, axisName, startPoint);
-                GetPosition(obj, axisName);
-                
-                %start scan
-                Delay(obj,0.01);
-                Move(obj, axisName, endPoint);
-                GetPosition(obj, axisName);
-                
-                % reset velocety to normalVelocity
-                SetVelocity(obj, axisName, obj.defaultVel);
-                
-                
-            else %Slow Scan
-                %                 if tPixel < 0.015
-                %                     fprintf('Minimum pixel time is 15ms, %.1f were given, changing to 15ms\n', 1000*tPixel);
-                %                     tPixel = 0.015;
-                %                 end
-                %                 tPixel = tPixel - 0.015; % The intrinsic delay is 15ms...
-                %                 SetOnTargetWindow(obj, scanAxis, pixelSize, 0.5);
-                %                 ChangeMode(obj, scanAxis, 'Nanostepping');
-                %                 WaitFor(obj, scanAxis, 'ControllerReady')
-                try
-                    SetResolution(obj, axisName, pixelResolution);
-                catch err
-                    switch err.identifier
-                        case 'ECC:ResOutOfLimit'
-                            fprintf('can not scan! either you entered too many points or scan length is too short\n');
-                            return
-                        otherwise
-                            rethrow(err)
-                    end
-                end
-                fprintf('Scanning...');
-                
-                if obj.verySlow
-                    for i=1:numberOfPixels
-                        if (mod(i,numberOfPixels/10) == 0)
-                            fprintf(' %d%%',100*i/numberOfPixels);
-                        end
-                        Move(obj, scanAxis, scanAxisVector(i));
-                    end
-                else
-                    for i=1:numberOfPixels
-                        if (mod(i,numberOfPixels/10) == 0)
-                            fprintf(' %d%%',100*i/numberOfPixels);
-                        end
-                        Move(obj, scanAxis, scanAxisVector(i));
-                        %                     SendCommand(obj, 'PI_DIO', scanAxisID, 1, 1, 1);
-                        Delay(obj, tPixel);
-                        %                     SendCommand(obj, 'PI_DIO', scanAxisID, 1, 0, 1);
-                    end
-                end
-                
-                % reset velocety to normalVelocity
-                SetVelocity(obj, axisName, obj.defaultVel);
+%             if (nOverRun < 10); nOverRun = 10; end % In order to be centered around the pixel we need at least one extra point from each side, and it's 2 because negative direction has a bug
+            
+            
+            numberOfPixels = length(scanAxisVector); % This is the number of pixels
+            pixelSizeInum = (scanAxisVector(end) - scanAxisVector(1))/(numberOfPixels-1); % Will be negative if scanning in reverse
+            nOverRunInum = pixelSizeInum*nOverRun; % Can be negative if scanning in reverse
+            startPointInum = scanAxisVector(1)-nOverRunInum;
+            endPointInum = scanAxisVector(end)+nOverRunInum;
+            
+            maxPointInum = max(endPointInum, startPointInum);    
+            minPointInum = min(endPointInum, startPointInum);
+            if maxPointInum > obj.posSoftRangeLimit(scanAxis) || minPointInum < obj.negSoftRangeLimit(scanAxis)
+                obj.sendError(sprintf('Scan is outside the limits: scan overhead requires adding an additional pixel from each side which increase the scan from %.3f %s to %.3f %s\n', startPointInum, StringHelper.MICRON, endPointInum, StringHelper.MICRON));
             end
+            
+            obj.macroScanAxis = scanAxis;
+            obj.macrotPixel = tPixel;
+            obj.macroScanVector = scanAxisVector;
+            obj.macroIndex = 1;
+            obj.macroScanStartEndVector = [startPointInum, endPointInum];
+            obj.macroScanPixelSizeInum = pixelSizeInum;
+        end
+        
+        function ScanOneDimension(obj, scanAxisVector, nFlat, nOverRun, tPixel, scanAxis)  %#ok<INUSL>
+            %%%%%%%%%%%%%% ONE DIMENSIONAL SCAN %%%%%%%%%%%%%%
+            % to be used for wide field scans
+            % Does a scan for the given axis.
+            % Last 2 variables are for 2D scans.
+            % scanAxisVector - A vector with the points to scan, points
+            % should increase with equal distances between them.
+            % nFlat - How many flat points should be in the beginning of the scan.
+            % nOveRun - How many extra points should be taken from each.
+            % tPixel - Scan time for each pixel (in seconds).
+            % scanAxis - The axis to scan (x,y,z or 1 for x, 2 for y and 3
+            % for z).
+            %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+            
+            scanAxis = GetAxis(obj, scanAxis);
+            obj.prepareWriteTrigger();
+            for i = 1:length(scanAxisVector)
+                Move(obj, scanAxis, scanAxisVector(i));
+                obj.writeTrigger(1);
+                pause(obj.macrotPixel);
+                obj.writeTrigger(0);
+            end
+            obj.SetVelocity(obj.macroScanAxis, obj.defaultVel);
         end
         
         function PrepareScanX(obj, x, y, z, nFlat, nOverRun, tPixel)
@@ -793,7 +780,13 @@ classdef ClassECC < ClassStage
             % nFlat - Not used.
             % nOverRun - ignored.
             % tPixel - Scan time for each pixel.
-            PrepareScanYZ(obj, x, y, z, nFlat, nOverRun, tPixel);
+           % PrepareScanYZ(obj, x, y, z, nFlat, nOverRun, tPixel);
+           if obj.scanRunning
+                warning(obj.WARNING_PREVIOUS_SCAN_CANCELLED);
+                AbortScan(obj);
+            end
+            Move(obj, 'xz', [x z]);
+            PrepareScanInOneDimension(obj, y, nFlat, nOverRun, tPixel, 'y');
         end
         
         function PrepareScanZ(obj, x, y, z, nFlat, nOverRun, tPixel)
@@ -805,7 +798,9 @@ classdef ClassECC < ClassStage
             % nFlat - Not used.
             % nOverRun - ignored.
             % tPixel - Scan time for each pixel.
-            PrepareScanZX(obj, x, y, z, nFlat, nOverRun, tPixel);
+            
+            Move(obj, 'xy', [x y]);
+            PrepareScanInOneDimension(obj, z, nFlat, nOverRun, tPixel, 'z');
         end
         
         function ScanX(obj, x, y, z, nFlat, nOverRun, tPixel) %#ok<*INUSD>
@@ -859,7 +854,8 @@ classdef ClassECC < ClassStage
             if (obj.macroIndex == -1)
                 error('No scan detected.\nFunction can only be called after ''PrepareScanX!''');
             end
-            ScanNextLine(obj);
+            Move(obj, 'xy', [x y]);
+            ScanOneDimension(obj, z, nFlat, nOverRun, tPixel, 'z');
         end
         
         function PrepareScanInTwoDimensions(obj, macroScanAxisVector, normalScanAxisVector, nFlat, nOverRun, tPixel, macroScanAxisName, normalScanAxisName)
@@ -1281,6 +1277,7 @@ classdef ClassECC < ClassStage
             if (obj.macroScanAxis ~= -1) && (obj.macroNormalVelocity ~= -1)
                 SetVelocity(obj, obj.macroScanAxis, obj.macroNormalVelocity);
             end
+            obj.scanRunning = 0;
             obj.macroIndex = -1;
         end
         

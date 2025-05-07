@@ -7,15 +7,17 @@ classdef EventExtraImageUpdated < handle
         phAxes      % a vector or a cell of 2 vectors
         botLabel    % the label to show below
         leftLabel   % the label to show on the left
+        initialroi
     end
         
     methods
-        function obj = EventExtraImageUpdated(image, phAxes, botLabel, leftLabel)
+        function obj = EventExtraImageUpdated(image, phAxes, botLabel, leftLabel, initialroi)
             obj@handle;
             obj.image = image;
             obj.phAxes = phAxes;
             obj.botLabel = botLabel;
             obj.leftLabel = leftLabel;
+            obj.initialroi = initialroi;
         end
         
         function phAxis = getFirstAxis(obj)

@@ -28,63 +28,63 @@ classdef ViewMWContrast < GuiComponent
             
             hboxMain.Widths = [-3 -1 -3 -3 -1 -3 -3];
             
-%             %%%% callbacks %%%%
-%             obj.cbxMWContrast.Callback = @(h,e) obj.cbxMWContrastCallback;
-%             obj.edtFrequency.Callback = @(h,e) obj.edtFrequencyCallback;
-%             obj.edtAmplitude.Callback = @(h,e) obj.edtAmplitudeCallback;
+            %%%% callbacks %%%%
+            obj.cbxMWContrast.Callback = @(h,e) obj.cbxMWContrastCallback;
+            obj.edtFrequency.Callback = @(h,e) obj.edtFrequencyCallback;
+            obj.edtAmplitude.Callback = @(h,e) obj.edtAmplitudeCallback;
             
             %%%% internal values %%%%
             obj.height = 45;
-%             obj.refresh();  % init values
+            obj.refresh();  % init values
         end
         
         
-    %     function refresh(obj)
-    %         stage = getObjByName(obj.stageName);
-    %         scanParams = stage.scanParams;
-    %         obj.cbxMWContrast.Value = scanParams.isMWContrastScan;
-    %         obj.edtFrequency.String = StringHelper.formatNumber(scanParams.MWFrequency);
-    %         obj.edtAmplitude.String = StringHelper.formatNumber(scanParams.MWAmplitude);
-    %     end
-    % 
-    %     function cbxMWContrastCallback(obj)
-    %         stage = getObjByName(obj.stageName);
-    %         scanParams = stage.scanParams;
-    %         scanParams.isMWContrastScan = obj.cbxMWContrast.Value;
-    %         stage.sendEventScanParamsChanged();
-    %     end
-    % 
-    %     function edtFrequencyCallback(obj)
-    %         stage = getObjByName(obj.stageName);
-    %         scanParams = stage.scanParams;
-    %         if ~ValidationHelper.isValuePositive(obj.edtFrequency.String)
-    %             obj.edtFrequency.String = StringHelper.formatNumber(scanParams.MWFrequency);
-    %             EventStation.anonymousError('Frequency has to be a positive number! Reverting.');
-    %         end
-    %         scanParams.MWFrequency = str2double(obj.edtFrequency.String);
-    %         stage.sendEventScanParamsChanged();
-    %     end
-    % 
-    %     function edtAmplitudeCallback(obj)
-    %         stage = getObjByName(obj.stageName);
-    %         scanParams = stage.scanParams;
-    %         if ~ValidationHelper.isStringValueANumber(obj.edtAmplitude.String)
-    %             obj.edtAmplitude.String = StringHelper.formatNumber(scanParams.MWAmplitude);
-    %             EventStation.anonymousError('Amplitude has to be a number! Reverting.');
-    %         end
-    %         scanParams.MWAmplitude = str2double(obj.edtAmplitude.String);
-    %         stage.sendEventScanParamsChanged();
-    %     end
-    % end
-    % 
-    % %% overridden from EventListener
-    % methods
-    %     % When events happen, this function jumps.
-    %     % event is the event sent from the EventSender
-    %     function onEvent(obj, event)
-    %         if event.isError || isfield(event.extraInfo, ClassStage.EVENT_SCAN_PARAMS_CHANGED)
-    %             obj.refresh()
-    %         end
-    %     end
+        function refresh(obj)
+            camera = getObjByName(Camera.NAME);
+            imageParams = camera.imgparams;
+            obj.cbxMWContrast.Value = imageParams.isMWcontrastImg;
+            obj.edtFrequency.String = StringHelper.formatNumber(imageParams.MWFrequency);
+            obj.edtAmplitude.String = StringHelper.formatNumber(imageParams.MWAmplitude);
+        end
+    
+        function cbxMWContrastCallback(obj)
+            camera = getObjByName(Camera.NAME);
+            imageParams = camera.imgparams;
+            imageParams.isMWcontrastImg = obj.cbxMWContrast.Value;
+            camera.sendEventScanParamsChanged();
+        end
+    
+        function edtFrequencyCallback(obj)
+            camera = getObjByName(Camera.NAME);
+            imageParams = camera.imgparams;
+            if ~ValidationHelper.isValuePositive(obj.edtFrequency.String)
+                obj.edtFrequency.String = StringHelper.formatNumber(imageParams.MWFrequency);
+                EventStation.anonymousError('Frequency has to be a positive number! Reverting.');
+            end
+            imageParams.MWFrequency = str2double(obj.edtFrequency.String);
+            camera.sendEventScanParamsChanged();
+        end
+    
+        function edtAmplitudeCallback(obj)
+            camera = getObjByName(Camera.NAME);
+            imageParams = camera.imgparams;
+            if ~ValidationHelper.isStringValueANumber(obj.edtAmplitude.String)
+                obj.edtAmplitude.String = StringHelper.formatNumber(imageParams.MWAmplitude);
+                EventStation.anonymousError('Amplitude has to be a number! Reverting.');
+            end
+            imageParams.MWAmplitude = str2double(obj.edtAmplitude.String);
+            camera.sendEventScanParamsChanged();
+        end
+    end
+    
+    %% overridden from EventListener
+    methods
+        % When events happen, this function jumps.
+        % event is the event sent from the EventSender
+        function onEvent(obj, event)
+            if event.isError || isfield(event.extraInfo, Camera.EVENT_CAMERA_PARAMS_CHANGED)
+                obj.refresh()
+            end
+        end
      end
 end

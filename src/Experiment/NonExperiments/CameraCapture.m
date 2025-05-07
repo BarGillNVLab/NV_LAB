@@ -9,6 +9,9 @@ classdef CameraCapture < EventSender & EventListener & Savable
         mcameraimageparams    
         measurementType=1;       % index for MEASUREMENTS_OPTIONS
         mCurrentlyAcquiring = false;
+
+
+        initialroi
         
         
     end
@@ -55,7 +58,7 @@ classdef CameraCapture < EventSender & EventListener & Savable
             phAxes = {axis1, axis2};
             botLabel = 'x';
             leftLabel = 'y';
-            extra = EventExtraImageUpdated(ImageResults, phAxes, botLabel, leftLabel);
+            extra = EventExtraImageUpdated(ImageResults, phAxes, botLabel, leftLabel, obj.initialroi);
             
             obj.sendEvent(struct(obj.EVENT_IMAGE_UPDATED, extra));
         end
@@ -69,6 +72,7 @@ classdef CameraCapture < EventSender & EventListener & Savable
 
          function startAcquision(obj)
             obj.mcameraimageparams = obj.mCamera.imgparams.copy;
+            obj.initialroi = obj.mcameraimageparams.roi;
             obj.mCurrentlyAcquiring = true;
             obj.sendEventAcquiringStarting();
             
@@ -79,8 +83,8 @@ classdef CameraCapture < EventSender & EventListener & Savable
             if obj.mcameraimageparams.isMWcontrastImg
                 %%% Set Frequency Generator
                 fg = getObjByName(FrequencyGenerator.getDefaultFgName); 
-                fg.amplitude = obj.mStageScanParams.MWAmplitude;
-                fg.frequency = obj.mStageScanParams.MWFrequency;
+                fg.amplitude = obj.mcameraimageparams.MWAmplitude;
+                fg.frequency = obj.mcameraimageparams.MWFrequency;
                 fg.output = 1;
             end
             timerVal = tic;
@@ -184,7 +188,7 @@ classdef CameraCapture < EventSender & EventListener & Savable
                                     if j==2
                                         pg.on('MW');
                                     end
-                                    currentMatrix = camera.readFromTime(nframes, timedelay);
+                                    currentMatrix = camera.readFromTime(1, nframes, timedelay);
                                     kcpsMatrix(:,:,j) = mean(currentMatrix,3); 
                                     if j==2
                                         pg.off('MW');
@@ -193,20 +197,17 @@ classdef CameraCapture < EventSender & EventListener & Savable
                                 imagematrix = kcpsMatrix;
                                 obj.sendEventAcquiringUpdated(kcpsMatrix);
                             case 2
-                                while ~obj.mCurrentlyAcquiring
+                                while obj.mCurrentlyAcquiring
                                     % Creating data to be saved
-                                    for i=1:nframes
-                                        for j = 1:size(kcpsMatrix,3)
-                                            if j==2
-                                                pg.on('MW');
-                                            end
-                                            currentMatrix = camera.readFromTime;
-                                            kcpsMatrix(:,:,j) = kcpsMatrix(:,:,j) + (currentMatrix - kcpsMatrix(:,:,j)) / i; 
-                                            if j==2
-                                                pg.off('MW');
-                                            end
+                                    for j = 1:size(kcpsMatrix,3)
+                                        if j==2
+                                            pg.on('MW');
                                         end
-                                        pause(timedelay/1000);
+                                        currentMatrix = camera.readFromTime(1, nframes, timedelay);
+                                        kcpsMatrix(:,:,j) = mean(currentMatrix,3); 
+                                        if j==2
+                                            pg.off('MW');
+                                        end
                                     end
                                     imagematrix = kcpsMatrix;
                                     obj.sendEventAcquiringUpdated(kcpsMatrix);
@@ -304,11 +305,12 @@ classdef CameraCapture < EventSender & EventListener & Savable
             end
         end
         
-        function loadStateFromStruct(obj, savedStruct, category)
+        function loadStateFromStruct(obj, savedStruct, category, subCategory)
             % Loads the state from a struct.
             % to support older versions, always check for a value in the
             % struct before using it. View example in the first line.
             if ~strcmp(category, Savable.CATEGORY_IMAGE); return; end
+            if ~any(strcmp(subCategory, {Savable.SUB_CATEGORY_DEFAULT})); return; end
                         
             if ~isfield(savedStruct, 'imageParams')
                 return
@@ -338,8 +340,8 @@ classdef CameraCapture < EventSender & EventListener & Savable
             end
             params = savedStruct.imageParams;
             roi = params.roi;
-            string = sprintf('The ROI width is %s starting at %s \nand its length is %s starting from %s ', ...
-               roi(3), roi(1), roi(4), roi(3));
+            string = sprintf('The ROI width is %d starting at %d \nand its length is %d starting from %d ', ...
+               roi(3), roi(1), roi(4), roi(2));
             
         end
     end

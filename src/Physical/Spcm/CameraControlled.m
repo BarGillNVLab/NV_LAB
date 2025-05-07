@@ -3,7 +3,8 @@ classdef CameraControlled < Spcm & NiDaqControlled
     properties (Access = protected)
         % Backup, for NiDaq reset
         isEnabled   % logical
-        
+        exposureInitState
+
         % For time measure
         voltageIntegrationTime
         nTimeIntegration
@@ -19,6 +20,7 @@ classdef CameraControlled < Spcm & NiDaqControlled
         nExpIntegration
         expTimeoutTime
         measureExpTask
+        triggerType
         
         % Channel Names
         niDaqGateChannelName            % torn on the photodiode power supply
@@ -53,7 +55,9 @@ classdef CameraControlled < Spcm & NiDaqControlled
             % Prepare the Integrator to a scan by timer, with integration time of
             % integrationTime in seconds.
 %             obj.camera.prepareAcquisition(exposureTime);
+            obj.camera.setTriggerType('manual');
             obj.camera.StartRead;
+
         end
         
         function image = readFromTime(obj, averageExposures, nframes, timeDelay)
@@ -71,29 +75,43 @@ classdef CameraControlled < Spcm & NiDaqControlled
         function clearTimeRead(obj)
             % Clears the task for reading voltage by time.
             obj.camera.stopRead;
+            cameraprop = obj.camera.imgparams;
+            if cameraprop.exposuretime ~= obj.camera.src.ExposureTime
+                cameraprop.exposuretime = obj.camera.src.ExposureTime;
+                obj.camera.sendEventScanParamsChanged;
+            end
         end
     %%% End (by time) %%%
     
     
     %%% By Stage %%%
-        function prepareCountByStage(obj, stageName, nPixels, timeout, fastScan, pixelTime)
+    function prepareCountByStage(obj, stageName, nPixels, timeout, isFastScan, pixelTime)
             % Prepare the camera to a scan by a stage. Before a multiline
             % scan, this should be called only once.
-            if ~exist('pixelTime', 'var')
-                pixelTime = 0.01;
-            end
+            
             if ~ValidationHelper.isValuePositiveInteger(nPixels)
                 obj.sendError('Can''t prepare for reading %s points, only positive integers allowed! Igonring');
             end
+            pg = getObjByName(PulseGenerator.NAME);
+            pg.Off('detector');
             obj.nScanIntegration = nPixels;
             obj.scanningStageName = stageName;
-            obj.pixelTime = pixelTime;
-            obj.camera.prepareAcquisition(obj.nScanIntegration, obj.pixelTime);
+            obj.camera.timeout = timeout;
+            obj.pixelTime = pixelTime*1e03;  % pixel time in millisec
+            obj.exposureInitState = obj.camera.getExposureAuto;
+            exposureTime = obj.camera.imgparams.exposuretime*1e-3;
+            if exposureTime > obj.pixelTime
+                obj.camera.setExposureTime(obj.pixelTime-0.25*obj.pixelTime);
+            end
+            obj.camera.setTriggerType('hardware');
+            obj.camera.framesPerTrigger(1);
+            obj.camera.setTriggerRepeats(nPixels);
+            
         end
         
         function startScanCount(obj)
             % Starts reading by scan, this should be called before every line.
-            obj.camera.startExperiment;
+            obj.camera.StartRead;
         end
         
         function [meanCounts, sterrCounts, focusGrades] = readFromScan(obj)
@@ -101,16 +119,22 @@ classdef CameraControlled < Spcm & NiDaqControlled
             if obj.nScanIntegration <= 0
                 obj.sendError('Can''t read from camera without calling ''prepare()''! ');
             end
-            
-            images = obj.camera.readExperimentData();
-            meanCounts = mean(images, [2 3]);
-            voltageFullReshape = reshape(images, size(images, 1), prod(size(images, [2 3])));
-            sterrCounts = ste(voltageFullReshape, 0, 2);
-            focusGrades = evaluateFocus(images);
+            if obj.camera.IsLoggin
+                obj.camera.stopRead;
+            end
+            images = obj.camera.readfromcamera(obj.nScanIntegration);
+            images = squeeze(double(images));
+            meanCounts = squeeze(mean(images, [1 2]));
+            voltageFullReshape = reshape(images, size(images, 3), prod(size(images, [1 2])));
+            sterrCounts = ste(voltageFullReshape, 0, 1);
+            focusGrades = obj.evaluateFocus(images);
         end
         
         function clearScanRead(obj)
-            % Clear the task that scans from stage.
+            obj.camera.clearMemory;
+            obj.camera.setTriggerType('manual');
+            obj.camera.allData = {};
+            obj.camera.setExposureAuto(obj.exposureInitState);
         end
     %%% End (By stage) %%%%
         
@@ -144,10 +168,10 @@ classdef CameraControlled < Spcm & NiDaqControlled
     end
     
     methods
-        function focusGrades = evaluateFocus(imageMatrix)
+        function focusGrades = evaluateFocus(obj, imageMatrix)
             focusGrades = zeros(1, obj.nScanIntegration);
             for i = 1:obj.nScanIntegration
-                focusGrades(i) = fmeasure(squeeze(imageMatrix(i, :, :)), 'LAPV', []);
+                focusGrades(i) = fmeasure(squeeze(imageMatrix(:, :, i)), 'LAPV', []);
             end
         end
  

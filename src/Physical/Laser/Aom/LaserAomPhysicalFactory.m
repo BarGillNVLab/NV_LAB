@@ -31,6 +31,8 @@ classdef LaserAomPhysicalFactory
                     return
                 case 'nidaqdouble'
                     aomPhysicalPart = AomDoubleNiDaqControlled.create(partName, struct);
+                case 'pulsestreamer'
+                    aomPhysicalPart = AomPSControlled.create(partName, struct);
                 otherwise
                     EventStation.anonymousError( ...
                         'Can''t create a %s-class AOM part for laser "%s" - unknown classname! Aborting.', ...

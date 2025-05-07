@@ -15,6 +15,7 @@ classdef (Sealed) PulseStreamerNewClass < PulseGenerator
         ps          % PulseStreamer object. Scalar local variable for communication with PS.
         trigger     % PSStart object.
         automaticRearm % PSTriggerMode object
+        currentOnChannels
     end
     
     %% 
@@ -155,6 +156,19 @@ classdef (Sealed) PulseStreamerNewClass < PulseGenerator
 
                 obj.chooseOnChannels(channels);
             end
+
+            function chooseAnalogOutput(obj, channel, value)
+                if channel == 0
+                    output = OutputState(obj.onChannelsBinary,value,0);
+                elseif channel == 1
+                    output = OutputState(obj.onChannelsBinary,0,value);
+                else
+                    obj.sendError('incorrect channel input')
+                    return
+                end
+                obj.ps.constant(output);
+            end
+           
         end
         
     methods (Access = private)
@@ -173,6 +187,7 @@ classdef (Sealed) PulseStreamerNewClass < PulseGenerator
             % Save state internally
             obj.onChannelsBinary = channels;
         end
+
     end
     
     

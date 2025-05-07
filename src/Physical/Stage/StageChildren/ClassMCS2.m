@@ -50,7 +50,6 @@ classdef ClassMCS2 < ClassStage
         fastScan
             
         % NiDaq
-        triggerChannel
         digitalPulseTask = -1; % Digital pulse task for scanning
         
         % Tilt

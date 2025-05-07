@@ -76,6 +76,8 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         voltageHistogram            % struct with the measured voltage histogram
         voltageOffset = [];         % voltage offset point to generate from the DAQ to differential port.   
 
+        % camera properties
+
         % AWG parameters:
         IQ = struct('IQ_arrays', [], 'clock', 1e9, 'switchWF', true, 'duration', 0.1, 'wfRepeats', -1, 'filename', '', 'function', '', 'useIQ', 0);
         create_triggers
@@ -109,6 +111,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
     
     properties (Dependent, Access = {?Experiment, ?ViewExperimentPlot}) % Inclusion of ?Experiment gives access to its subclasses
         totalNumberOfParams
+        imageSize
     end
     
     % For plotting
@@ -485,6 +488,17 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         
         function totalParamNum = get.totalNumberOfParams(obj)
             totalParamNum = getTotalNumberOfParams(obj);
+        end
+
+        function size = get.imageSize(obj)
+            spcm = getObjByName(Spcm.NAME);
+            if spcm.hasCamera
+                [~, ~, width, hight] = spcm.camera.getROI;
+            else
+                width = 1;
+                hight = 1;
+            end
+            size = [width, hight];
         end
     end
     
@@ -1139,11 +1153,12 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
 %                 sterr = -1;
 %                 return;
 %             end
+            spcm = getObjByName(Spcm.NAME);
+            M = obj.imageSize(1);  N = obj.imageSize(2);
             
-            m = length(rawData)/n;  % Number of reads each repeat
+            m = size(rawData, 1)/n;  % Number of reads each repeat, if using camera we need only the 1st dimension.
             
             % added by rotem 18.4.21 %
-            spcm = getObjByName(Spcm.NAME);
             if mod(10,m)
                 if ~obj.digitizerFullDataAcquisition
                     m = obj.detectionPeriodsPerRepeat;
@@ -1156,6 +1171,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             
             timeNormalization = [obj.detectionDuration obj.referenceDetectionDuration]*musec;
             if isprop(obj, 'weakDetectionDuration') timeNormalization = [obj.weakDetectionDuration(obj.param_idx) obj.detectionDuration obj.referenceDetectionDuration]*musec; end;
+            if isprop(obj, 'changeDetectionDuration') if obj.changeDetectionDuration timeNormalization = [obj.tau(obj.param_idx) obj.referenceDetectionDuration]*musec; end; end;
 
             if length(timeNormalization) ~= m &&  length(timeNormalization) > 1
                 if length(timeNormalization) == m/2

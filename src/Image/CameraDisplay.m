@@ -10,6 +10,7 @@ classdef CameraDisplay < Savable & EventSender & EventListener
         
         % Events
         EVENT_IMAGE_UPDATED = 'imageUpdated';
+        EVENT_CPP_UPDATED = 'cppUpdated'
 
         % Figure Options
         PLOT_STYLE_OPTIONS_2D = {'Normal', 'Equal', 'Square'};
@@ -54,6 +55,13 @@ classdef CameraDisplay < Savable & EventSender & EventListener
         cursorType              % integer. Index for value in CURSOR_OPTIONS
         contrastType            % integer. Index for value in CONTRAST_OPTIONS
         imageType               % integer. Index for value in IMAGE_OPTIONS
+        runCPP                  % boolean checks if the runcpp button was pressed
+
+        roi
+        initialroi
+        initialdata
+        cpproi
+        CPP
     end
     
     methods
@@ -67,6 +75,8 @@ classdef CameraDisplay < Savable & EventSender & EventListener
             obj.cursorType = 1;     % Marker
             obj.contrastType = 1;   % Difference
             obj.imageType = 1;      % kcps
+            obj.runCPP = 0;         % counts per pixel flag
+            obj.CPP = 0;            % counts per pixel
             
         end
         %%      
@@ -87,6 +97,9 @@ classdef CameraDisplay < Savable & EventSender & EventListener
                 obj.mSecondAxis = newStruct.mSecondAxis;
                 obj.mLabelBot = newStruct.mLabelBot;
                 obj.mLabelLeft = newStruct.mLabelLeft;
+                obj.initialroi = newStruct.initialroi;
+                obj.roi = [obj.mFirstAxis(1) obj.mSecondAxis(1) obj.mFirstAxis(end)-obj.mFirstAxis(1) obj.mSecondAxis(end)-obj.mSecondAxis(1)];
+                
                 
 
                 
@@ -96,6 +109,8 @@ classdef CameraDisplay < Savable & EventSender & EventListener
             end
             
             [data, label] = obj.getDataForPlotting;
+
+            
             
             % We need to calculate this before sending event (so as to update the header):
             if obj.colormapAuto
@@ -146,11 +161,20 @@ classdef CameraDisplay < Savable & EventSender & EventListener
             
             obj.clearCursorData;    % left outside of updateDataCursor(obj), so that zoom bar is not deleted
             obj.updateDataCursor;
+            if obj.runCPP
+                % leave the previous ccp box
+                % update the ccp
+                obj.drawRectangle(obj.cpproi);
+                obj.RunCPP;
+            else
+                delete(findall(gca, 'Type','rectangle'));
+            end
+            obj.sendEventCPPUpdated();
         end
 
         function [data, label] = getDataForPlotting(obj)
             label = 'power';
-            if size(obj.mData, 2) == 2 % Contrast Image
+            if size(obj.mData, 3) == 2 % Contrast Image
                     withoutMW = obj.mData(:,:,1);
                     withMW = obj.mData(:,:,2);
                 switch obj.contrastType
@@ -299,22 +323,100 @@ classdef CameraDisplay < Savable & EventSender & EventListener
             obj.drawRectangle(rect);
             % rect(1)==horizontal position, rect(2)==vertical position
             % rect(3)==width;	rect(4)==height
+            rect = round(rect);
+            obj.cpproi = rect;
+            xstart = rect(1) - obj.roi(1);
+            ystart = rect(2) - obj.roi(2);
+%             obj.roi = [rect(1) rect(2) rect(3) rect(4)];
             data = getimage(obj.gAxes);
-            zoomdata = data(rect(1):rect(1)+rect(3), rect(2):rect(2)+rect(4));
+            zoomdata = data(ystart:ystart+rect(4), xstart:xstart+rect(3));
             axis1 = rect(1):(rect(1)+rect(3));
             axis2 = rect(2):(rect(2)+rect(4));
             botLabel = obj.mLabelBot;
             leftLabel = obj.mLabelLeft;
-            extra = struct(scanResults, zoomdata, getFirstAxis, axis1,getSecondAxis, axis2, botLabel, botLabel, leftLabel, leftLabel);
+            phAxes = {axis1, axis2};
+            extra = EventExtraImageUpdated(zoomdata, phAxes, botLabel, leftLabel, obj.initialroi);
+%             extra = struct(scanResults, zoomdata, getFirstAxis, axis1,getSecondAxis, axis2, botLabel, botLabel, leftLabel, leftLabel);
             newstruct = obj.ScanStructToInternal(extra);
             obj.update(newstruct);
         end
+
+
+        function ZoomOut(obj)
+            ROI = obj.initialroi;
+            Data = obj.initialdata;
+            axis1 = ROI(1):(ROI(1)+ROI(3));
+            axis2 = ROI(2):(ROI(2)+ROI(4));
+            phAxes = {axis1, axis2};
+            botLabel = obj.mLabelBot;
+            leftLabel = obj.mLabelLeft;
+            extra = EventExtraImageUpdated(Data, phAxes, botLabel, leftLabel, obj.initialroi);
+%             extra = struct(scanResults, Data, getFirstAxis, axis1,getSecondAxis, axis2, botLabel, botLabel, leftLabel, leftLabel);
+            newstruct = obj.ScanStructToInternal(extra);
+            obj.update(newstruct);
+        end
+
+        % for cpp calculation for each acquisition need to specify a
+        % conversion factor of digital power to physical power
+
+        function CPPBox(obj)
+            % draws a box on the image for counts per pixel calculation
+            if ~obj.isDataAvailable      % nothing to zoom to
+                EventStation.anonymousWarning('Image is empty');
+                return
+            end
+            
+            % "try" getting user input
+            warning('off','all');
+            delete(findall(gca, 'Type','rectangle'));
+            rect = getrect(obj.gAxes);
+            warning('on','all');
+            if rect(3) == 0; return; end  % Selection has no width. No use in continuing
+            
+            % Draw, according to the dimensions of the image
+            if rect(4) == 0     % Selection has no height
+                return
+            end
+            obj.drawRectangle(rect);
+            obj.cpproi = round(rect);
+        end
+
+        function RunCPP(obj)
+            data = obj.getDataForPlotting;
+            if isempty(obj.cpproi)|| ~compareVectors(obj.cpproi, obj.roi)
+                obj.cpproi = obj.roi;
+            end
+           function isInside = compareVectors(roi1, roi2)
+                % Check that both are 1x4 vectors
+                if numel(roi1) ~= 4 || numel(roi2) ~= 4
+                    error('Both input vectors must be of size 1x4.');
+                end
+            
+                % Extract coordinates and dimensions
+                x1 = roi1(1); y1 = roi1(2); w1 = roi1(3); h1 = roi1(4);
+                x2 = roi2(1); y2 = roi2(2); w2 = roi2(3); h2 = roi2(4);
+            
+                % Check if ROI1 is fully within ROI2
+                isInside = (x1 >= x2) && ...
+                           (y1 >= y2) && ...
+                           (x1 + w1 <= x2 + w2) && ...
+                           (y1 + h1 <= y2 + h2);
+            end
+
+            reldata = data(obj.cpproi(2):obj.cpproi(2)+obj.cpproi(4), obj.cpproi(1):obj.cpproi(1)+obj.cpproi(3));
+            obj.CPP = mean(reldata, "all");
+        end
+
 
         
 
          %% Helper methods
         function sendEventImageUpdated(obj)
             obj.sendQueuedEvent(struct(obj.EVENT_IMAGE_UPDATED, true));
+        end
+
+        function sendEventCPPUpdated(obj)
+            obj.sendEvent(struct(obj.EVENT_CPP_UPDATED, true));
         end
         
         function tf = isDataAvailable(obj)
@@ -415,13 +517,14 @@ classdef CameraDisplay < Savable & EventSender & EventListener
         end
         
         function newStruct = ScanStructToInternal(scanStruct)
-            % Converts a struct, as output by StageScanner to the way it is
-            % represented within this class (ImageScanResult)
+            % Converts a struct, as output by CameraCapture to the way it is
+            % represented within this class (CameraDisplay)
             newStruct.mData = scanStruct.image;
             newStruct.mFirstAxis = scanStruct.getFirstAxis;
             newStruct.mSecondAxis = scanStruct.getSecondAxis;
             newStruct.mLabelBot = scanStruct.botLabel;
             newStruct.mLabelLeft = scanStruct.leftLabel;
+            newStruct.initialroi = scanStruct.initialroi;
         end
     end
 
@@ -555,6 +658,7 @@ classdef CameraDisplay < Savable & EventSender & EventListener
                     && isfield(event.extraInfo, CameraCapture.EVENT_IMAGE_UPDATED)
                 
                 extra = event.extraInfo.(CameraCapture.EVENT_IMAGE_UPDATED);
+                obj.initialdata = extra.image;
                 % "extra" now points to an object of class EventExtraImageUpdated,
                 % but we want it in the in-house format
                 extraInternal = obj.ScanStructToInternal(extra);

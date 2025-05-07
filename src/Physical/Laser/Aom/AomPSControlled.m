@@ -1,8 +1,7 @@
-classdef AomNiDaqControlled < LaserPartAbstract & NiDaqControlled
-    %AOMNIDAQCONTROLLED Laser controlled by NiDaq
-    
+classdef AomPSControlled < LaserPartAbstract 
+
     properties
-        niDaqChannel;
+        agChannel;   % can be 0 or 1
 
         canSetEnabled = false;
         canSetValue = true;
@@ -12,41 +11,38 @@ classdef AomNiDaqControlled < LaserPartAbstract & NiDaqControlled
     properties (Constant)
         NEEDED_FIELDS = {'channel'};
         OPTIONAL_FIELDS = {'minVal', 'maxVal'};
+        DEFUALT_VALUE = 0.5;
     end
-    
-    methods
+
+
+
+     methods
         % Constructor
-        function obj = AomNiDaqControlled(name, niDaqChannel, minVal, maxVal)
+        function obj = AomPSControlled(name, agChannel, minVal, maxVal)
             obj@LaserPartAbstract(name, minVal, maxVal, NiDaq.UNITS)
-            obj@NiDaqControlled(name, niDaqChannel, minVal, maxVal);
-            obj.niDaqChannel = niDaqChannel;
+            obj.agChannel = extractChannelNumber(agChannel);
             
             % Initialize
-            obj.valueInternal = obj.getValueRealWorld;
+            obj.setValueRealWorld(0);
         end
     end
     
     methods (Access = protected)
         function setValueRealWorld(obj, newValue)
-            niDaq = getObjByName(NiDaq.NAME);
-            niDaq.writeVoltage(obj.name, newValue);
+            pg = getObjByName(PulseGenerator.NAME);
+            pg.chooseAnalogOutput(obj.agChannel, newValue);
             
             obj.valueInternal = newValue;   % backup, for NiDaq reset
         end
         
         function value = getValueRealWorld(obj)
-            nidaq = getObjByName(NiDaq.NAME);
-            value = nidaq.readVoltage(obj.name);
+            
+            value = obj.DEFUALT_VALUE;
         end
+        
     end
     
-    methods
-        function onNiDaqReset(obj, niDaq) %#ok<INUSD>
-            % This function jumps when the NiDaq resets
-            % Each component can decide what to do
-            obj.value = round(obj.valueInternal, 2);
-        end
-    end
+   
     
     methods (Static)
         function obj = create(name, jsonStruct)
@@ -59,12 +55,12 @@ classdef AomNiDaqControlled < LaserPartAbstract & NiDaqControlled
             
             % We want to get either values set in json, or empty variables
             % (which will be handled by NiDaqControlled constructor):
-            jsonStruct = FactoryHelper.supplementStruct(jsonStruct, AomNiDaqControlled.OPTIONAL_FIELDS);
+            jsonStruct = FactoryHelper.supplementStruct(jsonStruct, AomPSControlled.OPTIONAL_FIELDS);
             
-            niDaqChannel = jsonStruct.channel;
+            agChannel = jsonStruct.channel;
             minVal = jsonStruct.minVal;
             maxVal = jsonStruct.maxVal;
-            obj = AomNiDaqControlled(name, niDaqChannel, minVal, maxVal);
+            obj = AomPSControlled(name, agChannel, minVal, maxVal);
         end
     end
     

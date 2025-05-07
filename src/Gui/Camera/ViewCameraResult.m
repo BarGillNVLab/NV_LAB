@@ -12,7 +12,7 @@ classdef ViewCameraResult < ViewVBox
         function obj = ViewCameraResult(parent, controller, minImageSize)
             if ~exist('minImageSize', 'var'); minImageSize = []; end
             obj@ViewVBox(parent, controller);
-            obj.vHeader = ImageOptions(obj, controller);
+            obj.vHeader = ViewImageOptions(obj, controller);
             %obj.vHeader.startListeningTo(ImageScanResult.NAME);     % This will ensure that header actions will occur after image has updated
             obj.vImage = ViewCameraResultImage(obj, controller, minImageSize);
             

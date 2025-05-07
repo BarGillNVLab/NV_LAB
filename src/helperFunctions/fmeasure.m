@@ -1,4 +1,4 @@
-function FM = fmeasure(Image, Measure, ROI)
+ function FM = fmeasure(Image, Measure, ROI)
 %This function measures the relative degree of focus of an image. It may be invoked as:
 %
 %   FM = fmeasure(IMAGE, METHOD, ROI)

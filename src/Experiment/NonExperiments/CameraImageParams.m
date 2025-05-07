@@ -4,6 +4,7 @@ classdef CameraImageParams < handle
     properties(Constant)
         DEFAULT_EXPOSURE_TIME = 10;
         DEFAULT_ROI = [0 0 1920 1200];
+        DEFAULT_BINNING = 1;
     end
 
     properties
@@ -16,6 +17,7 @@ classdef CameraImageParams < handle
         
         roi                   % [min_x, min_y, width, length]
         exposuretime
+        binning
         
         Avarage_exposures
         nframes            % for the average exposures option
@@ -23,13 +25,14 @@ classdef CameraImageParams < handle
     end
 
     methods
-        function obj = CameraImageParams(roi, exposure_time, Avarage_exposures, nframes, timedelay, isMWcontrastImg, MWAmplitude, MWFrequency)
+        function obj = CameraImageParams(roi, exposure_time, binning, Avarage_exposures, nframes, timedelay, isMWcontrastImg, MWAmplitude, MWFrequency)
 
             %%%% default no-args constructor if needed %%%%
             
             if nargin == 0
                 obj.roi = obj.DEFAULT_ROI;
                 obj.exposuretime = obj.DEFAULT_EXPOSURE_TIME;
+                obj.binning = obj.DEFAULT_BINNING;
                 obj.Avarage_exposures = false;
                 obj.nframes = 1;
                 obj.timedelay = 0;
@@ -64,6 +67,7 @@ classdef CameraImageParams < handle
             end
             obj.roi = roi;
             obj.exposuretime = exposure_time;
+            obj.binning = binning;
             obj.Avarage_exposures = Avarage_exposures;
             obj.nframes = nframes;
             obj.timedelay = timedelay;

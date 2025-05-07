@@ -1,4 +1,4 @@
-classdef exposure < GuiComponent & EventListener
+classdef exposure < GuiComponent & EventListener & EventSender
 
     % creating the gui features for setup 2
     %this class is for creating the of the camera
@@ -13,6 +13,7 @@ classdef exposure < GuiComponent & EventListener
         delaytime             %delay time edit box
         autoadjustment         % automatic adjustment of the exposure time radio button
         camera
+        maximumbinning
 
         exposurelimits
      end
@@ -28,9 +29,11 @@ classdef exposure < GuiComponent & EventListener
         function obj = exposure(parent, controller, camera)
             obj@GuiComponent(parent, controller);
             obj@EventListener(Camera.NAME);
+            obj@EventSender(sprintf('%s%s', camera.NAME, ' _ panel exposure params'));
              %%%% panel init %%%%
             obj.camera = camera;
             obj.exposurelimits = obj.camera.EXPOSURE_TIME_LIMITS;
+            obj.maximumbinning = obj.camera.MAXIMUM_BINNING;
             MINEXPOSURETIME = obj.exposurelimits(1);
             MaXEXPOSURETIME = obj.exposurelimits(2);
             exposure = uix.Panel('Parent', parent.component, 'Title', 'Exposure', 'Padding', 5);
@@ -45,7 +48,7 @@ classdef exposure < GuiComponent & EventListener
             % Add the label for "min" left side
             obj.lblMin = uicontrol(obj.PROP_LABEL{:}, 'Parent', minmax, 'String', [num2str(MINEXPOSURETIME), '<']);
             % Add the editable text box in the center
-            obj.edtexposuretime = uicontrol(obj.PROP_EDIT{:}, 'Parent', minmax,'Callback',@obj.SetExposureCallback);
+            obj.edtexposuretime = uicontrol(obj.PROP_EDIT{:}, 'Parent', minmax);
             % Add the label for "max" on the right
             obj.lblMax = uicontrol(obj.PROP_LABEL{:}, 'Parent', minmax, 'String', [num2str(MaXEXPOSURETIME)]);  
 
@@ -54,14 +57,14 @@ classdef exposure < GuiComponent & EventListener
             minmaxwidth = 280;
                 
 
-            obj.avgexpo = uicontrol(obj.PROP_CHECKBOX{:}, 'Parent', leftBox, 'String', 'Average exposures','Callback',@obj.AverageExposuresCallback);  % average exposure checkbox
+            obj.avgexpo = uicontrol(obj.PROP_CHECKBOX{:}, 'Parent', leftBox, 'String', 'Average exposures');  % average exposure checkbox
 
             avgexpogrid = uix.Grid('parent', leftBox,'Spacing', 0);
             uicontrol(obj.PROP_LABEL{:}, 'Parent', avgexpogrid, 'String', 'number');
             uicontrol(obj.PROP_LABEL{:}, 'Parent', avgexpogrid, 'String', 'delay [ms]');
 
-            obj.numexpoavg = uicontrol(obj.PROP_EDIT{:},'Parent', avgexpogrid,'Enable','off','Callback',@obj.NframesCallback);
-            obj.delaytime = uicontrol(obj.PROP_EDIT{:},'Parent', avgexpogrid,'Enable','off','Callback',@obj.TimeDelayCallback);
+            obj.numexpoavg = uicontrol(obj.PROP_EDIT{:},'Parent', avgexpogrid,'Enable','off');
+            obj.delaytime = uicontrol(obj.PROP_EDIT{:},'Parent', avgexpogrid,'Enable','off');
             
             avgexpogrid.Widths = [100 -1];
             avgexpogrid.Heights = [25 25];
@@ -92,6 +95,9 @@ classdef exposure < GuiComponent & EventListener
                 if i == numCheckboxes; j = 8;end
                 obj.cbxbinned(i) = uicontrol(obj.PROP_RADIO{:}, 'Parent', binninggroup,...
                     'String', ['binned', num2str(j), 'x', num2str(j)], 'Position', [paddingFromLeft 25+(numCheckboxes-i)*rbHeight rbWidth rbHeight],'Tag', num2str(j));
+                if j> obj.maximumbinning
+                    set(obj.cbxbinned(i), 'Enable', 'off');
+                end
             end
             binning.Heights = 140;
             binningwidth = 100;
@@ -102,6 +108,7 @@ classdef exposure < GuiComponent & EventListener
             
             obj.autoadjustment = uicontrol(obj.PROP_CHECKBOX{:}, 'Parent', vmain, ...
                 'String', 'Adjusting Exposure Time Automatically');
+            isvalid(obj.autoadjustment);
 
             vmain.Heights = [hboxMainheight 20];
             vmainwidth = sum(hboxMain.Widths);
@@ -110,15 +117,21 @@ classdef exposure < GuiComponent & EventListener
             obj.width = vmainwidth;
             obj.height = sum(vmain.Heights) + 20;
 
-
+            obj.edtexposuretime.Callback = @(h,e) obj.SetExposureCallback;
+            obj.avgexpo.Callback = @(h,e) obj.AverageExposuresCallback;
+            obj.numexpoavg.Callback = @(h,e) obj.NframesCallback;
+            obj.delaytime.Callback = @(h,e) obj.TimeDelayCallback;
+            obj.autoadjustment.Callback = @(h, e) obj.ExposureAuto;
             obj.refresh;
+
+            
         end
 
         % callback functions
 
         function SetExposureCallback(obj)
             imageParams = obj.camera.imgparams;
-            expo = imageParams.exposuretime;
+            expo = imageParams.exposuretime/1000;
             viewMexposure = obj.edtexposuretime;
             if ~ValidationHelper.isStringValueANumber(viewMexposure.String)
                 viewMexposure.String = expo;
@@ -135,22 +148,29 @@ classdef exposure < GuiComponent & EventListener
                 exposurein = expo;
                 obj.sendWarning(warningMsg);
             end
+            isvalid(obj.autoadjustment);
+            s =get(obj.autoadjustment, 'Value');
+            if s == 1
+                warningMsg = sprintf('Exposure time cannot be set when on automode');
+                exposurein = expo;
+                obj.sendWarning(warningMsg);
+            end
+
              [viewMexposure.String, t] = StringHelper.formatNumber(exposurein);
              obj.camera.setExposureTime(t);
         end
 
         function AverageExposuresCallback(obj)
-            if obj.avgexpo ==0
-                obj.avgexpo =1;
+            isAvrgExposures = get(obj.avgexpo, 'Value');
+            if isAvrgExposures ==1
                 obj.numexpoavg.Enable = 'on';
                 obj.delaytime.Enable = 'on';
             else
-                obj.avgexpo =0;
                 obj.numexpoavg.Enable = 'off';
                 obj.delaytime.Enable = 'off';
             end
             imageParams = obj.camera.imgparams;
-            imageParams.Avarage_exposures = obj.avgexpo;
+            imageParams.Avarage_exposures = isAvrgExposures;
         end
 
         function NframesCallback(obj)
@@ -184,11 +204,23 @@ classdef exposure < GuiComponent & EventListener
             obj.camera.setBinning(binnum);
         end
 
+        function ExposureAuto(obj)
+            isAutoExposure = get(obj.autoadjustment, 'Value');
+            if isAutoExposure
+                obj.camera.setExposureAuto(1);
+            else
+                obj.camera.setExposureAuto(0);
+            end
+        end
+
+
+
 
 
         function refresh(obj)
             obj.edtexposuretime.String = obj.camera.imgparams.exposuretime*1e-3;
-            
+            obj.autoadjustment.Value= obj.camera.exposureAutoState;
+            obj.avgexpo.Value  = obj.camera.imgparams.Avarage_exposures;
         end
      end
 

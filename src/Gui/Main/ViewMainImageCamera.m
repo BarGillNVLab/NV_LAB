@@ -44,7 +44,7 @@ classdef ViewMainImageCamera < ViewVBox
             %column 3
             viewLaserContainer = ViewLasersContainer(column3, controller);
             viewSaveLoad = ViewSaveLoad(column3, controller, Savable.CATEGORY_IMAGE);
-            cameraoptions = CameraOptions(column3, controller);
+            cameraoptions = ViewCameraOptions(column3, controller);
         
             
             column3.setHeights([viewLaserContainer.height, viewSaveLoad.height, cameraoptions.height]);

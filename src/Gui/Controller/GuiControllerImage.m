@@ -3,10 +3,11 @@ classdef GuiControllerImage < GuiController
     %   
     properties
         dummuMode
+        iscamera      % a flag to indicate if the setup has a camera
     end
     
     methods
-        function obj = GuiControllerImage(dummyMode)
+        function obj = GuiControllerImage(iscamera, dummyMode)
             if ~exist("dummyMode", "var")
                 dummyMode = 0;
             end
@@ -15,6 +16,7 @@ classdef GuiControllerImage < GuiController
             windowName = 'ImageNVC_touch_new';
             obj = obj@GuiController(windowName, shouldConfirmOnExit, openOnlyOne);
             obj.dummuMode = dummyMode;
+            obj.iscamera = iscamera;
         end
         
         function view = getMainView(obj, figureWindowParent)
@@ -22,9 +24,13 @@ classdef GuiControllerImage < GuiController
             % It can call any view constructor with the params:
             % parent=figureWindowParent, controller=obj
             if ~obj.dummuMode
-                view = ViewMainImage(figureWindowParent, obj);
+                if ~ obj.iscamera
+                    view = ViewMainImage(figureWindowParent, obj);
+                else
+                    view = ViewMainImageCamera(figureWindowParent, obj);
+                end
             else
-                view = ViewMainImageCamera(figureWindowParent, obj);
+                
             end
         end
         

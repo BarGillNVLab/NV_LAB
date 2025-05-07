@@ -1,6 +1,6 @@
 classdef CountsperPixel < GuiComponent
     properties
-        ccpbtn         % ccp button
+        ccplbl         % ccp button
         runccp         % run ccp button
         ccpboxbtn      % ccpbox button
         stpccp         % stop ccp button
@@ -15,7 +15,7 @@ classdef CountsperPixel < GuiComponent
             mainVBox = uix.VBox('Parent',panel, 'Spacing', 0, 'Padding', 0);
 
             % Add a text box for the "CPP" display at the top
-            obj.ccpbtn = uicontrol(obj.PROP_BUTTON{:}, ...
+            obj.ccplbl = uicontrol(obj.PROP_LABEL{:}, ...
                                     'Parent', mainVBox, ...
                                     'String', 'CPP', ...
                                     'FontSize', 10, ...
@@ -48,7 +48,60 @@ classdef CountsperPixel < GuiComponent
             
             obj.height = sum(mainVBox.Heights) + 5;
             obj.width = 130;
+
+
+            obj.ccpboxbtn.Callback = @(h,e) obj.CPPBoxCallback;
+            obj.runccp.Callback = @(h,e) obj.RunCPPCallback;
+            obj.stpccp = @(h,e) obj.StopCPPCallback;
+        end
+            % Callback functions can be implemented here as needed
+
+
+            function RunCPPCallback(obj)
+                cameradisplay = obj.getCameraDisplay;
+                cameradisplay.RunCPP
+                cameradisplay.runCPP = true;
+                obj.ccplbl.String = num2str(cameradisplay.CPP);
+                obj.backToMarker;
+            end
+
+            function CPPBoxCallback(obj)
+                cameradisplay = obj.getCameraDisplay;
+                cameradisplay.CPPBox;
+                obj.backToMarker
+            end
+
+            function StopCPPCallback(obj)
+                cameradisplay = obj.getCameraDisplay;
+                if ~cameradisplay.RunCPP
+                    obj.ccplbl.String = 'CPP';
+                    return
+                end
+                cameradisplay.RunCPP = false;
+            end
+
+
+
+    end
+    methods (Static)
+        function isr = getCameraDisplay
+            isr = getObjByName(CameraDisplay.NAME);
+            if isempty(isr)
+                throwBaseObjException(CameraDisplay.NAME);
+            end
         end
     end
-    % Callback functions can be implemented here as needed
+
+    methods (Access = private)
+        function backToMarker(~)
+            % When other operations finish, we want to return the cursor to
+            % "marker" mode, both visually and functionally
+            
+            cameradisplay = getObjByName(CameraDisplay.NAME);
+            if isempty(cameradisplay); throwBaseObjException(CameraDisplay.NAME); end
+            
+            action = cameradisplay.CURSOR_OPTIONS{1};
+            cameradisplay.updateDataCursor(action);    % functionally
+        end
+    end
 end

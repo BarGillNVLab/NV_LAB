@@ -6,6 +6,9 @@ classdef (Abstract) ClassStage < EventSender & Savable & EventListener
         availableProperties = struct;
         stepSize                % double
         loopMode = 'Closed'     % string. 'Closed' by default. Can be either that or 'Open'.
+        pgControlled = 0        % boolean. if the trigger for scanning is comming from the pulse generator
+        triggerChannel
+        triggerChannelLine
     end
     
     properties (Abstract, Constant)
@@ -192,7 +195,7 @@ classdef (Abstract) ClassStage < EventSender & Savable & EventListener
             phAxis = ClassStage.getAxis(phAxis);
             string = ClassStage.SCAN_AXES(phAxis);
         end
-        
+
     end  % methods (static, public)
     
     methods (Access = protected)
@@ -526,6 +529,34 @@ classdef (Abstract) ClassStage < EventSender & Savable & EventListener
                 obj.sendError('At least one axis needs to be fixed for this operation')
             else
                 obj.move(phAxes, fixedPos);
+            end
+        end
+
+        function prepareWriteTrigger(obj)
+            try
+                x = obj.pgControlled;
+            catch ME
+                disp(getReport(ME))
+            end
+            disp(x)
+            disp(class(obj.pgControlled))
+            if ~obj.pgControlled
+                nidaq = getObjByName(NiDaq.NAME);
+                obj.triggerChannelLine = obj.triggerChannel(end);                             % For example, if the channel is 'PFI3', we want the line to be '3'
+                obj.digitalPulseTask = nidaq.prepareDigitalOutputTask(obj.triggerChannel);
+            end
+        end
+
+        function writeTrigger(obj, value)
+            if obj.pgControlled
+                pg = getObjByName(PulseGenerator.NAME);
+                if value
+                    pg.On('detector');
+                else
+                    pg.Off('detector');
+                end
+            else
+                nidaq.writeDigitalOnce(obj.digitalPulseTask, value, obj.triggerChannelLine);
             end
         end
         

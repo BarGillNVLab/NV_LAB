@@ -7,6 +7,7 @@ classdef StageScanner < EventSender & EventListener & Savable
         mScanExtraInfo % Hist, if available.
         mStageName
         mStageScanParams
+        mFocusGrade = []            % for widefield focus search
         mCurrentlyScanning = false
     end
     
@@ -262,6 +263,7 @@ classdef StageScanner < EventSender & EventListener & Savable
             nPixels = length(scanParams.getFirstScanAxisVector());
             isMWContrastScan = scanParams.isMWContrastScan;
             kcpsScanVector = zeros(nPixels, 1+isMWContrastScan);
+            if isa(spcm, 'CameraControlled');obj.mFocusGrade = zeros(nPixels, 1);end
             axisToScan = scanParams.getScanAxes; % string of size 1
             x = scanParams.getScanAxisVector(1); % vector between [min, max] or the fixed position if exist
             y = scanParams.getScanAxisVector(2); % vector between [min, max] or the fixed position if exist
@@ -299,11 +301,14 @@ classdef StageScanner < EventSender & EventListener & Savable
                 scanOk = false;
                 
                 % Prepare Scan
+                
                 prepareScanfuncName = sprintf('PrepareScan%s', upper(axisToScan));
                 feval(prepareScanfuncName, stage, x, y, z, nFlat, nOverRun, tPixel);
                 
+                
                 % try to scan
                 kcps = zeros(curPixelsAmountToScan , size(kcpsScanVector, 2));
+                focusGrade = zeros(size(kcps));
                 for i = 1:size(kcpsScanVector, 2) % MW Contrast
                     for trial = 1:StageScanner.TRIALS_AMOUNT_ON_ERROR
                         if i==2
@@ -315,9 +320,12 @@ classdef StageScanner < EventSender & EventListener & Savable
                                 spcm.clearScanRead();  % todo - added to try resolving the problem. Wasn't here in the first place!
                                 return
                             end
-                            
-                            spcm.prepareCountByStage(stage.name, curPixelsAmountToScan, timeout, isFastScan);
-                            
+
+                            if isa(spcm, "CameraControlled")
+                                spcm.prepareCountByStage(stage.name, curPixelsAmountToScan, timeout, isFastScan, tPixel);
+                            else
+                                spcm.prepareCountByStage(stage.name, curPixelsAmountToScan, timeout, isFastScan);
+                            end
                             spcm.startScanCount();
                             
                             % scan stage
@@ -325,7 +333,11 @@ classdef StageScanner < EventSender & EventListener & Savable
                             feval(scanfuncName, stage, x,y,z, nFlat, nOverRun, tPixel);
                             
                             % read counter
-                            kcps(:,i) = spcm.readFromScan();
+                            if isa(spcm, 'CameraControlled')
+                                [kcps(:,i), ~, focusGrade(:,i)] = spcm.readFromScan();
+                            else
+                                kcps(:,i) = spcm.readFromScan();
+                            end
                             if bHasLiftime && ~isMWContrastScan
                                 hist = spcm.lastScanHist;
                             end
@@ -360,11 +372,17 @@ classdef StageScanner < EventSender & EventListener & Savable
                 % Update the scan results in the returned vector
                 if isMWContrastScan % Contrast
                     kcpsScanVector(vectorStartIndex:vectorEndIndex, :) = kcps;
+                    if ~isempty(obj.mFocusGrade); obj.mFocusGrade(vectorStartIndex:vectorEndIndex) = focusGrade(:, 1);end
                 else
                     kcpsScanVector(vectorStartIndex:vectorEndIndex) = kcps;
+                    if ~isempty(obj.mFocusGrade); obj.mFocusGrade(vectorStartIndex:vectorEndIndex) = focusGrade;end
                     if bHasLiftime
                         extraInfo.hist(vectorStartIndex:vectorEndIndex, :) = hist;
                     end
+                end
+
+                if ~isempty(obj.mFocusGrade)
+                    extraInfo.FocusGrade = obj.mFocusGrade;
                 end
                 
                 % Go tell everybody

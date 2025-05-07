@@ -3,8 +3,7 @@ classdef ViewCameraZScan < GuiComponent
     
     properties
         radioAverages       % #1
-        radioFFT            % #2
-        radioBoth            % #3
+        radioFocusGrade            % #2
     end
     
     methods
@@ -12,69 +11,47 @@ classdef ViewCameraZScan < GuiComponent
             obj@GuiComponent(parent, controller);
             bgMain = uibuttongroup(...
                 'Parent', parent.component, ...
-                'Title', 'Scan display');
-               % 'SelectionChangedFcn',@obj.callbackRadioSelection);
+                'Title', 'Scan display', 'SelectionChangedFcn', @obj.callbackRadioSelection);
             obj.component = bgMain;
             
-            rbHeight = 20; % "rb" stands for "radio button"
+            rbHeight = 35; % "rb" stands for "radio button"
             rbWidth = 80;
             paddingFromLeft = 10;
             
             obj.radioAverages = uicontrol(obj.PROP_RADIO{:}, 'Parent', bgMain, ...
-                'String', 'Averages', ...
-                'Position', [paddingFromLeft 55 rbWidth rbHeight]); % [fromLeft, fromBottom, width, height]
+                'Style', 'radiobutton','String','<html><center>Average<br>Counts</center></html>', ...
+                'Position', [paddingFromLeft 45 rbWidth rbHeight], 'Tag', ImageScanResult.SCAN_OPTIONS{1}); % [fromLeft, fromBottom, width, height]
                 %'Tag', ImageScanResult.CONTRAST_OPTIONS{1});
-            obj.radioFFT = uicontrol(obj.PROP_RADIO{:}, 'Parent', bgMain, ...
-                'String', 'FFT', ...
-                'Position', [paddingFromLeft 30 rbWidth rbHeight]);  % [fromLeft, fromBottom, width, height]
+            obj.radioFocusGrade = uicontrol(obj.PROP_RADIO{:}, 'Parent', bgMain, ...
+                 'Style', 'radiobutton', 'String', '<html><center>Focus<br>Grade</center></html>', ...
+                'Position', [paddingFromLeft 5 rbWidth rbHeight], 'Tag', ImageScanResult.SCAN_OPTIONS{2});  % [fromLeft, fromBottom, width, height]
                % 'Tag', ImageScanResult.CONTRAST_OPTIONS{2});
-            obj.radioBoth = uicontrol(obj.PROP_RADIO{:}, 'Parent', bgMain, ...
-                'String', 'Both', ...
-                'Position', [paddingFromLeft 5 rbWidth rbHeight]); % [fromLeft, fromBottom, width, height]
-                %'Tag', ImageScanResult.CONTRAST_OPTIONS{3});
-            
             
             obj.height = 100;
-            obj.width = 90;
+            obj.width = 100;
+        end
+        
+        function update(obj)
+            % Executes when image updates
+            % Get values from ImageScanResult
+            imageScanResult = getObjByName(ImageScanResult.NAME);
+            switch imageScanResult.scanType
+                case 1
+                    obj.component.SelectedObject = obj.radioAverages;
+                case 2
+                    obj.component.SelectedObject = obj.radioFocusGrade;
+               
+            end
+            
+        end
+
+        %%%% Callbacks %%%%
+        function callbackRadioSelection(obj, ~, event) %#ok<INUSL>
+            imageScanResult = getObjByName(ImageScanResult.NAME);
+            action = event.NewValue.Tag;
+            actionIndex = find(strcmp(action, ImageScanResult.SCAN_OPTIONS));
+            imageScanResult.scanType = actionIndex;
+            imageScanResult.update;
         end
     end
 end
-        
-%         function update(obj)
-%             % Executes when image updates
-%             % Get values from ImageScanResult
-%             imageScanResult = getObjByName(ImageScanResult.NAME);
-%             if size(imageScanResult.mData, imageScanResult.mDimNumber+1) == 2 % Contrast Imaging
-%                 obj.radioAverages.Enable = 'on';
-%                 obj.radioRatio.Enable = 'on';
-%                 obj.radioWithout.Enable = 'on';
-%                 obj.radioWith.Enable = 'on';
-%                 switch imageScanResult.contrastType
-%                     case 1
-%                         obj.component.SelectedObject = obj.radioAverages;
-%                     case 2
-%                         obj.component.SelectedObject = obj.radioRatio;
-%                     case 3
-%                         obj.component.SelectedObject = obj.radioWithout; 
-%                     case 4
-%                         obj.component.SelectedObject = obj.radioWith;
-%                 end
-%             else
-%                 obj.component.SelectedObject = obj.radioAverages;
-%                 obj.radioAverages.Enable = 'off';
-%                 obj.radioRatio.Enable = 'off';
-%                 obj.radioWithout.Enable = 'off';
-%                 obj.radioWith.Enable = 'off';
-%             end
-%         end
-% 
-%         %%%% Callbacks %%%%
-%         function callbackRadioSelection(obj, ~, event) %#ok<INUSL>
-%             imageScanResult = getObjByName(ImageScanResult.NAME);
-%             action = event.NewValue.Tag;
-%             actionIndex = find(strcmp(action, ImageScanResult.CONTRAST_OPTIONS));
-%             imageScanResult.contrastType = actionIndex;
-%             imageScanResult.update;
-%         end
-%     end
-% end

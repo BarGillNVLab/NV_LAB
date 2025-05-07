@@ -121,6 +121,13 @@ classdef RegionofInteresst < GuiComponent & EventSender & EventListener
                 warningMsg = sprintf( ...
                     'roi the %s axis starts and ends at the same point!', ...
                     axes(index));
+                min = roi(index);
+                obj.sendWarning(warningMsg)
+            elseif mod(min,4) ~=0
+                warningMsg = sprintf( ...
+                    'the %s axis minimum must be devidable by 4', ...
+                    axes(index));
+                min = roi(index);
                 obj.sendWarning(warningMsg)
             end
              [viewMin.String, roi(index)] = StringHelper.formatNumber(min);
@@ -155,6 +162,12 @@ classdef RegionofInteresst < GuiComponent & EventSender & EventListener
                     'roi the %s axis max must be larger than min', ...
                     axes(index));
                 obj.sendWarning(warningMsg)
+            elseif mod(max,4) ~=0
+                warningMsg = sprintf( ...
+                    'the %s axis maximum must be devidable by 4', ...
+                    axes(index));
+                max = roi(index);
+                obj.sendWarning(warningMsg)
             end
              [viewMax.String, te] = StringHelper.formatNumber(max);
              roi(index+2) = te-roi(index);
@@ -162,6 +175,8 @@ classdef RegionofInteresst < GuiComponent & EventSender & EventListener
         end
 
         function setRoiDefault(obj)
+            binning = obj.camera.imgparams.binning;
+            obj.defaultRoi = obj.camera.ROI_DEFULT/binning;
             obj.edtmax(1).String = num2str(obj.defaultRoi(1)+obj.defaultRoi(3));
             obj.edtmax(2).String = num2str(obj.defaultRoi(2)+obj.defaultRoi(4));
             obj.edtmin(1).String = num2str(obj.defaultRoi(1));

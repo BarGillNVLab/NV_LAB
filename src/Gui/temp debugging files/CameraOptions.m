@@ -20,8 +20,8 @@ classdef CameraOptions < ViewVBox
 
             %bottom left hbox
             
-            roi = RegionofInteresst(main, controller, camera);
-            exposur = exposure(main, controller, camera);  
+            roi = ViewRegionofInteresst(main, controller, camera);
+            exposur = Viewexposure(main, controller, camera);  
             mw = ViewMWContrast(main, controller);
             
             

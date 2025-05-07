@@ -45,6 +45,10 @@ classdef Setup < handle
             PulseGenerator.create(jsonStruct.pulseGenerator);
             NiDaq.create(jsonStruct.niDaq);
             Spcm.create(jsonStruct.spcm);
+            if strcmpi(jsonStruct.spcm.classname, 'camera')
+                CameraDisplay.init;
+                CameraCapture.init;
+            end
             ImageScanResult.init;
             StageScanner.init;
             SaveLoad.init;

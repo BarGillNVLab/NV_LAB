@@ -9,7 +9,7 @@ classdef SaveLoadCatImage < SaveLoad & EventListener
     methods
         function obj = SaveLoadCatImage
             obj@SaveLoad(Savable.CATEGORY_IMAGE);
-            obj@EventListener(StageScanner.NAME);
+            obj@EventListener({StageScanner.NAME, CameraCapture.NAME});
         end
 
     end
@@ -21,7 +21,7 @@ classdef SaveLoadCatImage < SaveLoad & EventListener
         function onEvent(obj, event)
             % There are two kinds of relevant events: Scan started and scan
             % ended:
-            if isfield(event.extraInfo, StageScanner.EVENT_SCAN_STARTED)
+            if isfield(event.extraInfo, StageScanner.EVENT_SCAN_STARTED)|| isfield(event.extraInfo, CameraCapture.EVENT_ACQUIRE_STARTED)
                 obj.saveParamsToLocalStruct;
                 
             elseif isfield(event.extraInfo, StageScanner.EVENT_SCAN_FINISHED)
@@ -31,6 +31,9 @@ classdef SaveLoadCatImage < SaveLoad & EventListener
                 if scanParams.autoSave
                     obj.autoSave;
                 end
+            elseif isfield(event.extraInfo, CameraCapture.EVENT_ACQUIRE_FINISHED)
+                obj.saveResultsToLocalStruct();
+                
             end
         end
     end

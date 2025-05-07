@@ -1,4 +1,9 @@
 function main()
 Setup.init;
-GuiControllerImage().start;
+jsonStruct = JsonInfoReader.getJson();
+iscamera = 0;
+if strcmpi(jsonStruct.spcm.classname, 'camera')
+    iscamera = 1;
+end
+GuiControllerImage(iscamera).start;
 end

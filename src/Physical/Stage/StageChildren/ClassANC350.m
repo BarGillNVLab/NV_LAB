@@ -52,7 +52,6 @@ classdef ClassANC350  < ClassStage % < handle %
         lengthMacroVector
         scanRunning = -1;
         TPixel
-        triggerChannel
 
         Temp = 300 % defult temp in kelvin
         forceStop = 0;

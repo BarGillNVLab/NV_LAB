@@ -7,6 +7,9 @@ classdef StartStop < GuiComponent
         stopbtn                 %stop button
         contchx                 %continues checkbox
 
+
+%         initialroi             % updates only when acquiring a new image
+
     end
     
     methods
@@ -41,10 +44,11 @@ classdef StartStop < GuiComponent
     
         function StartCallback(obj)
             cameracpture = getObjByName(CameraCapture.NAME);
-            cameracpture.startAcquision;
             if obj.contchx 
-                obj.startbtn.Enable = false;
+                set(obj.startbtn, 'Enable', 'off');
             end
+            cameracpture.startAcquision;
+%             obj.initialroi = cameracpture.mcameraimageparams.roi;
         end
 
         function continueCallback(obj)
@@ -66,7 +70,7 @@ classdef StartStop < GuiComponent
         function StopCallback(obj)
             cameracpture = getObjByName(CameraCapture.NAME);
             cameracpture.mCurrentlyAcquiring = false;
-            obj.startbtn.Enable = 'on';
+            set(obj.startbtn, 'Enable', 'on');
         end
 
 
