@@ -13,9 +13,11 @@ classdef Camera < BaseObject & EventSender
     
     properties (Access = public)
         binning = 1         % The number of pixels to sum together. For N the binning is N*N pixels
-        
+        timeout
+        triggertype         % type of trigger the camera has daq/ pulsestreamer
         imgparams           % CameraImageParams object (roi, exposuretime, Avarage_exposures, nframes, timedelay, isMWcontrastImg, MWAmplitude, MWFrequency)
         isAcquiring         % Boolean. true during continious aquiring
+        exposureAutoState
         
 
 %         imageSize
