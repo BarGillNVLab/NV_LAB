@@ -16,6 +16,7 @@ classdef ImageScanResult < Savable & EventSender & EventListener
         mLabelBot       % string
         mLabelLeft      % string
         mHist = []      % double. Scan lifetime results.
+        mFocusGrade
     end
     
     properties (Access = private) % For plotting over Image
@@ -33,6 +34,7 @@ classdef ImageScanResult < Savable & EventSender & EventListener
         cursorType              % integer. Index for value in CURSOR_OPTIONS
         contrastType            % integer. Index for value in CONTRAST_OPTIONS
         imageType               % integer. Index for value in IMAGE_OPTIONS
+        scanType                % integer. for widefield scans
     end
     
     properties (Constant)
@@ -51,6 +53,7 @@ classdef ImageScanResult < Savable & EventSender & EventListener
             'Gray', 'Bone', 'Copper', 'Lines'};
         CURSOR_OPTIONS = {'Marker', 'Zoom', 'Location'};
         CONTRAST_OPTIONS = {'Difference', 'Ratio', 'Without MW', 'With MW'};
+        SCAN_OPTIONS = {'Average counts', 'Focus Grade'}
         IMAGE_OPTIONS = {'kcps', 'Lifetime'};
     end
     
@@ -65,6 +68,7 @@ classdef ImageScanResult < Savable & EventSender & EventListener
             obj.cursorType = 1;     % Marker
             obj.contrastType = 1;   % Difference
             obj.imageType = 1;      % kcps
+            obj.scanType = 1;       % widefield scan
         end
         
         %% Updating Image
@@ -91,6 +95,13 @@ classdef ImageScanResult < Savable & EventSender & EventListener
                 else
                     obj.mHist = [];
                 end
+                
+                if isfield(newStruct, 'mFocusGrade') % Only available for widefield images
+                    obj.mFocusGrade = newStruct.mFocusGrade;
+                else
+                    obj.mFocusGrade = [];
+                end
+                
 
                 % In a previous version we did not save mStageName and
                 % mAxesString. For compatability, we need:
@@ -218,6 +229,9 @@ classdef ImageScanResult < Savable & EventSender & EventListener
                         end
                     else
                         data = obj.mData;
+                    end
+                    if obj.scanType == 2
+                        data = obj.mFocusGrade;
                     end
                 case 2 % Lifetime image
                     label = 'ns';
@@ -657,7 +671,7 @@ classdef ImageScanResult < Savable & EventSender & EventListener
             % Output:
             % fullpath - the fullpath of the image file that was saved
             
-            if isempty(obj.mData) || isempty(obj.mData); return; end
+            if isempty(obj.mData); return; end
             
             isVisible = false;
             figureInvis = obj.copyToFigure(isVisible);
@@ -711,6 +725,9 @@ classdef ImageScanResult < Savable & EventSender & EventListener
             if isprop(scanStruct, 'scanExtraInfo')
                 if isfield(scanStruct.scanExtraInfo, 'hist')
                     newStruct.mHist = scanStruct.scanExtraInfo.hist;
+                end
+                if isfield(scanStruct.scanExtraInfo, 'FocusGrade')
+                    newStruct.mFocusGrade = scanStruct.scanExtraInfo.FocusGrade;
                 end
             end
         end
