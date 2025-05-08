@@ -14,17 +14,19 @@ classdef FrequencyGeneratorWindfreak < FrequencyGenerator & SerialControlled
         NV_LOW_MIN = -52.5;
         NV_PWR_FACTOR = 2;
         
-        NEEDED_FIELDS = {'address', 'serialNumber', 'minFrequency', 'maxFrequency', 'minAmplitude', 'maxAmplitude'}
-        OPTIONAL_FIELDS = {'keepOn'};
+        NEEDED_FIELDS = {'address', 'serialNumber', 'minFrequency', 'maxFrequency', 'minAmplitude', 'maxAmplitude', 'MW', 'AWG'}
+        OPTIONAL_FIELDS = {'keepOn', 'MW2'};
     end
     
     methods (Access = private)
-        function obj=FrequencyGeneratorWindfreak(name, address, frequencyLimits, amplitudeLimits, keepOn)
+        function obj = FrequencyGeneratorWindfreak(name, address, frequencyLimits, amplitudeLimits, keepOn, MW, AWG)
             obj@FrequencyGenerator(name, frequencyLimits, amplitudeLimits, keepOn);
             obj@SerialControlled(address);
             
             obj.initialize;
-
+            obj.switchMW.channel = MW.switchChannel; % currently supports only 1 channel.
+            obj.switchMW.channelName = MW.switchChannelName;
+            obj.AWG = AWG; % not supported yet
 
            InstrObject.Timeout = 1; % change timeout to 1s , defult is 10s
         end
@@ -133,7 +135,7 @@ classdef FrequencyGeneratorWindfreak < FrequencyGenerator & SerialControlled
             
         end
         
-        function commandHD = createCommandHD(obj, what, value, channel)
+        function commandHD = createCommandHD(what, value, channel)
             
 %             % channel
 %             switch channel
@@ -186,8 +188,13 @@ classdef FrequencyGeneratorWindfreak < FrequencyGenerator & SerialControlled
             frequencyLimits = [struct.minFrequency, struct.maxFrequency];
             amplitudeLimits = [struct.minAmplitude, struct.maxAmplitude];
             keepOn = struct.keepOn;
+            AWG = struct.AWG;
+            MW = struct.MW;
+            if type == FrequencyGeneratorWindfreak.TYPE_HD
+                MW = [MW, struct.MW2]; % needs to be tested
+            end
 
-            obj = FrequencyGeneratorWindfreak(name, struct.address, frequencyLimits, amplitudeLimits, keepOn);
+            obj = FrequencyGeneratorWindfreak(name, struct.address, frequencyLimits, amplitudeLimits, keepOn, MW, AWG);
             addBaseObject(obj);
         end
     end

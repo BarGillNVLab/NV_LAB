@@ -31,7 +31,11 @@ classdef (Abstract) FrequencyGenerator < BaseObject
     end
     
     properties (Constant, Access = private)
-        NEEDED_FIELDS = {'address'}
+        NEEDED_FIELDS = {'address', 'MW', 'AWG'}
+        OPTIONAL_FIELDS = {'MW2'}
+        % NEEDED_FIELDS = {'address', 'switchChannelName'}
+        % OPTIONAL_FIELD_IS_ENABLED = {'isEnabled'} % copied from LaserSwitchPhysicalFactory
+        % OPTIONAL_FIELDS_DELAY = {'onDelay', 'offDelay'}
     end
     
     properties (Access = private)
@@ -289,6 +293,14 @@ classdef (Abstract) FrequencyGenerator < BaseObject
                             otherwise
                                 EventStation.anonymousWarning('Could not create Frequency Generator of type %s!', type)
                         end
+
+                        % register FG outputs with the PG, if MW/AWG are "null" in the JSON no channel is registered
+                        createSwitch(curFgStruct.MW)
+                        createSwitch(curFgStruct.AWG)
+                        if isfield(curFgStruct, 'MW2') % we have two channels in the FG, e.g. synthHD
+                           curFgStruct = FactoryHelper.supplementStruct(curFgStruct, FrequencyGenerator.OPTIONAL_FIELDS);
+                           createSwitch(curFgStruct.MW2)
+                        end
                     end
                     fgCellContainer.cells{end + 1} = newFG;
                     catch err
@@ -313,6 +325,21 @@ classdef (Abstract) FrequencyGenerator < BaseObject
             end
             
             freqGens = fgCellContainer.cells;
+        end
+        function createSwitch(outputChannel)
+            if isempty(outputChannel)
+                return;
+            end
+
+            switch lower(outputChannel.classname)
+                case {'pulsegenerator', 'pulsestreamer', 'pulseblaster'}
+                    SwitchPgControlled.create(outputChannel.switchChannelName, outputChannel);
+                otherwise
+                    EventStation.anonymousError(...
+                        'Can''t create a %s-class fast switch - unknown classname! Aborting.', ...
+                        S.classname);
+            end
+        
         end
         
         function num = nChannelsAvailable()

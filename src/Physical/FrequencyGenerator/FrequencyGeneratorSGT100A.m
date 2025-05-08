@@ -5,7 +5,7 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator
     properties (Constant, Hidden)
         TYPE = 'SGT100A';
         
-        NEEDED_FIELDS = {'address', 'serialNumber', 'minFrequency', 'maxFrequency', 'minAmplitude', 'maxAmplitude'}
+        NEEDED_FIELDS = {'address', 'serialNumber', 'minFrequency', 'maxFrequency', 'minAmplitude', 'maxAmplitude', 'MW', 'AWG'}
         OPTIONAL_FIELDS = {'keepOn', 'mode'};
     end
 
@@ -20,16 +20,22 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator
     properties %(Access = private)
         visa;       % visa object
         IQ = struct('output', false, 'segment_names', [], 'list_name', '', 'internal_path', '/var/user/', 'switchWF', true, 'duration', 0.1, 'repeats', -1, 'trigger_next', 1, 'trigger_output', 2);
+        AWG
+        switchMW
+        
     end
     
     methods (Access = private)
-        function obj = FrequencyGeneratorSGT100A(name, address, port, frequencyLimits, amplitudeLimits, keepOn)
+        function obj = FrequencyGeneratorSGT100A(name, address, port, frequencyLimits, amplitudeLimits, keepOn, MW, AWG)
             % All models are the same in regards to controlling them, but
             % the limitations on the amplitude and on the allowed frequencies may vary.
             obj@FrequencyGenerator(name, frequencyLimits, amplitudeLimits, keepOn);
             [~, obj.visa] = rs_connect('visa', 'ni', address);
             
             obj.initialize;
+            obj.switchMW.channel = MW.switchChannel;
+            obj.switchMW.channelName = MW.switchChannelName;
+            obj.AWG = AWG;
         end
     end
 
@@ -121,7 +127,9 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator
             frequencyLimits = [struct.minFrequency, struct.maxFrequency];
             amplitudeLimits = [struct.minAmplitude, struct.maxAmplitude];
             keepOn = struct.keepOn;
-            obj = FrequencyGeneratorSGT100A(name, address, struct.port, frequencyLimits, amplitudeLimits, keepOn);
+            MW = struct.MW;
+            AWG = struct.AWG;
+            obj = FrequencyGeneratorSGT100A(name, address, struct.port, frequencyLimits, amplitudeLimits, keepOn, MW, AWG);
 
             addBaseObject(obj);
         end
