@@ -20,9 +20,9 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator
     properties %(Access = private)
         visa;       % visa object
         IQ = struct('output', false, 'segment_names', [], 'list_name', '', 'internal_path', '/var/user/', 'switchWF', true, 'duration', 0.1, 'repeats', -1, 'trigger_next', 1, 'trigger_output', 2);
-        AWG
+        awg
         switchMW
-        
+                
     end
     
     methods (Access = private)
@@ -35,7 +35,7 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator
             obj.initialize;
             obj.switchMW.channel = MW.switchChannel;
             obj.switchMW.channelName = MW.switchChannelName;
-            obj.AWG = AWG;
+            obj.awg = AWG;
         end
     end
 

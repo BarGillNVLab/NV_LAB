@@ -181,6 +181,10 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             obj.isTracking = true;   % Initialize tracking
             obj.trackThreshhold = 0.7;
             obj.shouldAutosave = true;
+
+            % set the default FG in the MWChannel property
+            fgCell = FrequencyGenerator.getFG();
+            obj.MWChannel = fgCell{1}.switchMW.switchChannelName;
         end
         
         function cellOfStrings = getAllExpParameterProperties(obj)
@@ -363,7 +367,8 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         end
         
         function checkState(obj, newVal)
-            if ~all(newVal == 1 || newVal == 0 || newVal == -1)
+            % if ~all(newVal == 1 || newVal == 0 || newVal == -1)
+            if ismember(newVal, [-1, 0, 1])
                 errMsg = sprintf(...
                     'Parameter must be 0, +1 or -1!');
                 obj.sendError(errMsg);
@@ -1155,7 +1160,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             s = (reshape(rawData, m, n))';
             
             timeNormalization = [obj.detectionDuration obj.referenceDetectionDuration]*musec;
-            if isprop(obj, 'weakDetectionDuration') timeNormalization = [obj.weakDetectionDuration(obj.param_idx) obj.detectionDuration obj.referenceDetectionDuration]*musec; end;
+            if isprop(obj, 'weakDetectionDuration'), timeNormalization = [obj.weakDetectionDuration(obj.param_idx) obj.detectionDuration obj.referenceDetectionDuration]*musec; end
 
             if length(timeNormalization) ~= m &&  length(timeNormalization) > 1
                 if length(timeNormalization) == m/2
@@ -1624,7 +1629,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             % parameter
             sequences = {};
             for i = 1:length(obj.permutable_parameter)
-                obj.changeSequence(i);
+                obj.changeSequence(obj.permutable_parameter(i));
                 sequences{i} = S.copySequence;
             end
             
@@ -1634,12 +1639,17 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             % update sequences to include both on and off times for each fg
             % that has IQ enabled OR a trigger to start the waveform
             for i = 1:length(fgCell)
-                if fgCell{i}.useIQ == 1
-                    channel_name = ; % need to get channel name for the fg
+                % if fgCell{i}.hasAWG
+                if obj.useIQ
+                    signalChannel = fgCell{i}.switchMW.switchChannelName; % need to get channel name for the fg
+                    AWGChannel = fgCell{i}.awg.switchChannelName;
+                    mode = fgCell{i}.awg.mode;
+                    add_trigger = strcmpi(fgCell{i}.awg.mode, 'external');
                     for j = 1:length(sequences)
                         fgCell{i}.loadAWGInternal %create the waveform for each sequence
                         % sequences(j).changeSequenceToPulse
-                        sequences(j).changePulseToTrigger({'channel', channel_name, 'channel_2','TRIGGER', 'trigger_duration', 5*1e-3, 'add_trigger', false});
+                        % sequences(j).updateInternal({'channel', signalChannel, 'channel_2', AWGChannel, 'trigger_duration', 5*1e-3, 'add_trigger', add_trigger, 'mode', mode});
+                        sequences(j).updateInternal(signalChannel, AWGChannel, add_trigger, trigger_duration, mode);
                     end
                 end
             end

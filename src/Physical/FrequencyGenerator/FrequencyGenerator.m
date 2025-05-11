@@ -24,6 +24,7 @@ classdef (Abstract) FrequencyGenerator < BaseObject
     
     properties
         keepOn      % keep the FG always on
+        hasAWG
     end
     
     properties (Abstract, Constant)
