@@ -14,11 +14,11 @@ classdef (Abstract) PulseGenerator < EventSender
                                     % Default is true.
     end
     
-    properties %(Access = protected)
+    properties (Access = protected)
         sequenceInMemory            % logical. Flag for whether obj.sequence is the same as the one in the hardware.
         delayFixed                  % logical. Flag for whether the delay fixed version of the current seqeunce, stored in 'delayFixedSequence', is valid.
         sequence                    % Sequence object, configured in experiment.
-        userSequence            % Sequence object, to be loaded to the hardware (usually the same as sequence).
+        userSequence                % Sequence object, to be loaded to the hardware (usually the same as sequence).
         delayFixedSequence          % A version of sequence which fixed the delays. The flag 'delayFixed' indicates whether it is updated.
         delayFixedSequenceMap       % A map object that saves previously calculated delayed sequences for better performance.
         onChannelsBinary = 0;       % Stores in binary the state of each of

@@ -5,5 +5,8 @@ classdef AWGBaseObject < FrequencyGenerator
         sampleRate
         useAWG
         mode % internal or external
+        waveforms
+        channelName
+    end
 
 end

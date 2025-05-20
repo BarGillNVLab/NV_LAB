@@ -160,7 +160,7 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator
            command = [name, value];
         end
 
-        function LoadAWGInternal(obj)
+        function LoadAWGInternal(obj, segment_name)
             % what we need to do:
             % 1. load all waveforms to instrument
             % 2. create multi segment list
@@ -217,6 +217,7 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator
             state = 'ON';
             for i=1:length(obj.IQ.segment_names)
 %                 segment_name = ['untitled', num2str(i), '.wv']
+                segment_name = [segment_name, '.wv'];
                 if obj.IQ.repeats(i) == -1
                     obj.IQ.repeats(i) = 1;
                 end

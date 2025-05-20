@@ -72,13 +72,16 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         stabilizationDuration = 1.1;% when using gated integrator - the time between the Gated integrator closed to the acquisition
         restartAverageFlag = false; % if true, delete last average and restart the experiment
         digitizerFullDataAcquisition = false;    % logical. To get full data points from digitizer.
-        recordVoltageSpan = false;  % boolean. When true the experiment saves the measured voltage histogram
+        recordVoltageSpan = false;  % logical. When true the experiment saves the measured voltage histogram
         voltageHistogram            % struct with the measured voltage histogram
         voltageOffset = [];         % voltage offset point to generate from the DAQ to differential port.   
 
         % AWG parameters:
         IQ = struct('IQ_arrays', [], 'clock', 1e9, 'switchWF', true, 'duration', 0.1, 'wfRepeats', -1, 'filename', '', 'function', '', 'useIQ', 0);
         create_triggers
+        phase                       % in radians
+        sequencesList               % cell array containing all experiment sequences. Used (mainly) for AWG preloading
+        clearAWG = true             % logical. Wheter to clear the sequences from the awg or not. Default is true.
 %         IQ.wv_path;             % string array
 %         IQ.IQ_arrays; % creating a 2x1x3 matrix. [2,i,j] - 2: I&Q, i: IQ vector length, j: number of segments. if IQ vector length = 1, we will create a constant I&Q with that value.
 %         IQ.switchWF; % trigger switching between segments at the end of a segment (1 - switch, 0 - don't switch)
@@ -1329,10 +1332,16 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             obj.averagesTimeStamp = zeros(obj.averages, 6);
             obj.plotResults;     % Update the plot
             
-            %clear the timetagger measurement if it exists - added by rotem 18.4.21
+            % clear the timetagger measurement if it exists - added by rotem 18.4.21
             spcm = getObjByName(Spcm.NAME);
             if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled')
                spcm.clearExperimentRead();
+            end
+
+            % clear all sequences from the experiment object and AWG instrument
+            if obj.clearAWG
+                obj.sequencesList = {};
+                % need to write function to clear the AWG
             end
             
             % Inform user
@@ -1426,7 +1435,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
 
             %Load AWG if needed
             if AWG
-               obj.loadAWG(S); 
+               obj.loadAWG(S, pg); 
             end
 
             % change pulses to trigger if neccesary
@@ -1589,114 +1598,140 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             end
         end
 
-        function IQinfo = generate_IQ(obj, I_vec, Q_vec, varargin) % varargin = [clock, startPlayback, KeepLocalFile, path, filename, comment, copyright, no_scaling]
-
-            % find the SGT100 from the list of available FGs
-            fgCell = FrequencyGenerator.getFG();
-            fg_names = cellfun(@(c) c.name, fgCell, 'UniformOutput', false);
-            % sgt_idx = find(contains(fg_names, 'SGT'));
-            % sgt100 = fgCell{sgt_idx};
-            sgt100 = fgCell{contains(fg_names, 'SGT')};
-
-            fg = getObjByName(obj.freqGenName);
-
-            % set defaults for non mandatory fields (and clockrate)
-            defult = {'clock', 300e6, 'duration', 0.1e-6, 'StartPlayback', 0, 'KeepLocalFile', 0, 'path', '/hdd/', 'filename','untitled.wv', 'comment', '', 'copyright', '', 'no_scaling', 0};
-            % populate parameters with user input (if there's no user input use defaults)
-            IQinfo = varargin2param(defult, varargin);
-
-            if isempty(IQinfo.filename)  % temp patch
-                IQinfo.filename = 'untitled.wv';
+        function IQinfo = generateIQ(exp, sequence, signalGen) % (obj, I_vec, Q_vec, varargin) % varargin = [clock, startPlayback, KeepLocalFile, path, filename, comment, copyright, no_scaling]
+            % we first need to get some constants
+            dt = 1/signalGen.sampleRate;
+            signalGen_duration = sum(sequence.pulses.duration(sequence.pulses.getOnChannels == signalGen.channelName)); % won't work but that's the gist. It'll be resolved in debugging
+            waveformLength = signalGen_duration + exp.laserInitializationDuration; % we're using laserInitializationDuration but any other experiment constant time can be used. This is only to make sure that the waveform is long enough for the instrument
+            signal = ones(1, waveformLength/dt);
+            t = [0:dt:waveformLength];
+            base_sine = ones(size(exp.frequency), waveformLength/dt);
+            
+            % we create the base sine waves
+            for i = 1:size(exp.frequency)
+                base_sine(i,:) = sin(exp.frequency(i)*t + exp.phase(i));
             end
 
-            IQinfo.duration = IQinfo.duration*1e-6; %convert to us
+            % we create the sequence shape
+            signal = ; % update signal to be a sequence of rects
 
-            if length(I_vec) == 1
-                I_vec = I_vec*ones(1,(1+IQinfo.clock.*IQinfo.duration));
-            end
-            if length(Q_vec) == 1
-                Q_vec = Q_vec*ones(1, (1+IQinfo.clock.*IQinfo.duration));
-            end
+            % demodulate the signal to I and Q vectors
+            [I, Q] = getIQfromSignal(signal); 
 
-            IQinfo.I_data = I_vec;
-            IQinfo.Q_data = Q_vec;
+            % generate the wave for the specific instument
+            signalGen.generateIQInternal(I, Q);
 
-            [Status] = rs_generate_wave( sgt100.visa, IQinfo, IQinfo.StartPlayback, IQinfo.KeepLocalFile )
+            % % find the SGT100 from the list of available FGs
+            % fgCell = FrequencyGenerator.getFG();
+            % fg_names = cellfun(@(c) c.name, fgCell, 'UniformOutput', false);
+            % % sgt_idx = find(contains(fg_names, 'SGT'));
+            % % sgt100 = fgCell{sgt_idx};
+            % sgt100 = fgCell{contains(fg_names, 'SGT')};
+            % 
+            % fg = getObjByName(obj.freqGenName);
+            % 
+            % % set defaults for non mandatory fields (and clockrate)
+            % defult = {'clock', 300e6, 'duration', 0.1e-6, 'StartPlayback', 0, 'KeepLocalFile', 0, 'path', '/hdd/', 'filename','untitled.wv', 'comment', '', 'copyright', '', 'no_scaling', 0};
+            % % populate parameters with user input (if there's no user input use defaults)
+            % IQinfo = varargin2param(defult, varargin);
+            % 
+            % if isempty(IQinfo.filename)  % temp patch
+            %     IQinfo.filename = 'untitled.wv';
+            % end
+            % 
+            % IQinfo.duration = IQinfo.duration*1e-6; %convert to us
+            % 
+            % if length(I_vec) == 1
+            %     I_vec = I_vec*ones(1,(1+IQinfo.clock.*IQinfo.duration));
+            % end
+            % if length(Q_vec) == 1
+            %     Q_vec = Q_vec*ones(1, (1+IQinfo.clock.*IQinfo.duration));
+            % end
+            % 
+            % IQinfo.I_data = I_vec;
+            % IQinfo.Q_data = Q_vec;
+            % 
+            % [Status] = rs_generate_wave( sgt100.visa, IQinfo, IQinfo.StartPlayback, IQinfo.KeepLocalFile )
         end
 
         function loadAWG(obj, S)
-            % create all sequences from the base sequence and permutated
-            % parameter
-            sequences = {};
-            for i = 1:length(obj.permutable_parameter)
-                obj.changeSequence(obj.permutable_parameter(i));
-                sequences{i} = S.copySequence;
-            end
-            
+
             % get a list of all frequency generators
             fgCell = FrequencyGenerator.getFG();
 
-            % update sequences to include both on and off times for each fg
-            % that has IQ enabled OR a trigger to start the waveform
-            for i = 1:length(fgCell)
-                % if fgCell{i}.hasAWG
-                if obj.useIQ
-                    signalChannel = fgCell{i}.switchMW.switchChannelName; % need to get channel name for the fg
-                    AWGChannel = fgCell{i}.awg.switchChannelName;
-                    mode = fgCell{i}.awg.mode;
-                    add_trigger = strcmpi(fgCell{i}.awg.mode, 'external');
-                    for j = 1:length(sequences)
-                        fgCell{i}.loadAWGInternal %create the waveform for each sequence
-                        % sequences(j).changeSequenceToPulse
-                        % sequences(j).updateInternal({'channel', signalChannel, 'channel_2', AWGChannel, 'trigger_duration', 5*1e-3, 'add_trigger', add_trigger, 'mode', mode});
-                        sequences(j).updateInternal(signalChannel, AWGChannel, add_trigger, trigger_duration, mode);
+            % create all sequences from the base sequence and permutated
+            % parameter
+            sequences = cell(obj.permutabple_parameter,1);
+            for i = 1:size(sequences)
+                obj.changeSequence(obj.permutable_parameter(i));
+                sequences{i} = S.copySequence;
+                seqName = [obj.NAME, '_', num2str(j)];
+                sequences{i}.name = seqName;
+                
+                % update the sequence if the signal generator is using AWG
+                for j = 1:length(fgCell)
+                    if fgCell{j}.awg.useIQ
+                         signalChannel = fgCell{j}.switchMW.switchChannelName; % need to get channel name for the fg
+                         AWGChannel = fgCell{j}.awg.switchChannelName;
+                         mode = fgCell{j}.awg.mode;
+                         add_trigger = strcmpi(fgCell{j}.awg.mode, 'external');
+
+                         % we first need to create the waveform according to the experiment sequence
+                         generateIQ(obj, sequences{i}, fgCell{j});
+
+                         % now we can update the sequence that is sent to the pulse generator
+                         sequences{i}.updateInternal(signalChannel, AWGChannel, add_trigger, trigger_duration, mode);
                     end
                 end
             end
 
-            % fgCell = FrequencyGenerator.getFG();
-            fg_names = cellfun(@(c) c.name, fgCell, 'UniformOutput', false);
-            fg = fgCell{contains(fg_names, 'SGT')};
-            fg.IQ.segment_names = []; % temporarly here, needs to be moved to experiment wrapup (not necessarily the function, but the operation)
-%             fg.IQ.repeats = []; % temporarly here, needs to be moved to experiment wrapup (not necessarily the function, but the operation)
-            if size(obj.IQ.wfRepeats) == 1
-                fg.IQ.repeats = obj.IQ.wfRepeats*ones(1,size(obj.IQ.IQ_arrays, 3));
-            else
-                fg.IQ.repeats = obj.IQ.wfRepeats;
-            end
-            
-
-            opt_params = [fieldnames(obj.IQ), struct2cell(obj.IQ)];
-            opt_params = opt_params(2:end,:)';
-            opt_params = opt_params(:);
-            for i = 1:size(obj.IQ.IQ_arrays, 3)
-                if length(obj.IQ.duration) > 1
-                    idx = cellfun(@(c) contains(char(c), 'duration') , opt_params, 'UniformOutput', true);
-                    opt_params{find(idx)+1} = obj.IQ.duration(i);
-                end
-                if length(obj.IQ.switchWF) > 1
-                    idx = cellfun(@(c) contains(char(c), 'switchWF') , opt_params, 'UniformOutput', true);
-                    opt_params{find(idx)+1} = obj.IQ.switchWF(i);
-                end
-                if length(obj.IQ.wfRepeats) > 1
-                    idx = cellfun(@(c) contains(char(c), 'wfRepeats') , opt_params, 'UniformOutput', true);
-                    opt_params{find(idx)+1} = obj.IQ.wfRepeats(i);
-%                     fg.IQ.repeats = [fg.IQ.repeats, obj.IQ.wfRepeats(i)];
-                end
-                if ~exist(obj.IQ.filename)
-                    idx = cellfun(@(c) contains(char(c), 'filename') , opt_params, 'UniformOutput', true);
-                    opt_params{find(idx)+1} = ['untitled', num2str(i), '.wv'];
-                    fg.IQ.segment_names = [fg.IQ.segment_names; convertCharsToStrings(opt_params{find(idx)+1})];
-%                     fgCell = FrequencyGenerator.getFG();
-%                     fn_name = cellfun(@(c) c.name, opt_params, 'UniformOutput', false);
-%                     fn_idx = find(contains(fn_name, 'SGT'));
-%                     opt_params(fn_idx) = ['untitled', num2str(i), '.wv'];
-                    % sgt100 = fgCell{sgt_idx};
-%                     sgt100 = fgCell{contains(fg_names, 'SGT')};
-%                     obj.IQ.filename = ['untitled', num2str(i), '.wv'];
-                end
-                obj.generate_IQ(obj.IQ.IQ_arrays(1,:,i), obj.IQ.IQ_arrays(2,:,i), opt_params);
-            end
+            % we need to store somewhere all of the sequences (we already computed them, it's a shame to do so on the fly again)
+            obj.sequencesList = sequences;
+% 
+% 
+%             % fgCell = FrequencyGenerator.getFG();
+%             fg_names = cellfun(@(c) c.name, fgCell, 'UniformOutput', false);
+%             fg = fgCell{contains(fg_names, 'SGT')};
+%             fg.IQ.segment_names = []; % temporarly here, needs to be moved to experiment wrapup (not necessarily the function, but the operation)
+% %             fg.IQ.repeats = []; % temporarly here, needs to be moved to experiment wrapup (not necessarily the function, but the operation)
+%             if size(obj.IQ.wfRepeats) == 1
+%                 fg.IQ.repeats = obj.IQ.wfRepeats*ones(1,size(obj.IQ.IQ_arrays, 3));
+%             else
+%                 fg.IQ.repeats = obj.IQ.wfRepeats;
+%             end
+% 
+% 
+%             opt_params = [fieldnames(obj.IQ), struct2cell(obj.IQ)];
+%             opt_params = opt_params(2:end,:)';
+%             opt_params = opt_params(:);
+%             for i = 1:size(obj.IQ.IQ_arrays, 3)
+%                 if length(obj.IQ.duration) > 1
+%                     idx = cellfun(@(c) contains(char(c), 'duration') , opt_params, 'UniformOutput', true);
+%                     opt_params{find(idx)+1} = obj.IQ.duration(i);
+%                 end
+%                 if length(obj.IQ.switchWF) > 1
+%                     idx = cellfun(@(c) contains(char(c), 'switchWF') , opt_params, 'UniformOutput', true);
+%                     opt_params{find(idx)+1} = obj.IQ.switchWF(i);
+%                 end
+%                 if length(obj.IQ.wfRepeats) > 1
+%                     idx = cellfun(@(c) contains(char(c), 'wfRepeats') , opt_params, 'UniformOutput', true);
+%                     opt_params{find(idx)+1} = obj.IQ.wfRepeats(i);
+% %                     fg.IQ.repeats = [fg.IQ.repeats, obj.IQ.wfRepeats(i)];
+%                 end
+%                 if ~exist(obj.IQ.filename)
+%                     idx = cellfun(@(c) contains(char(c), 'filename') , opt_params, 'UniformOutput', true);
+%                     opt_params{find(idx)+1} = ['untitled', num2str(i), '.wv'];
+%                     fg.IQ.segment_names = [fg.IQ.segment_names; convertCharsToStrings(opt_params{find(idx)+1})];
+% %                     fgCell = FrequencyGenerator.getFG();
+% %                     fn_name = cellfun(@(c) c.name, opt_params, 'UniformOutput', false);
+% %                     fn_idx = find(contains(fn_name, 'SGT'));
+% %                     opt_params(fn_idx) = ['untitled', num2str(i), '.wv'];
+%                     % sgt100 = fgCell{sgt_idx};
+% %                     sgt100 = fgCell{contains(fg_names, 'SGT')};
+% %                     obj.IQ.filename = ['untitled', num2str(i), '.wv'];
+%                 end
+%                 obj.generateIQ(obj.IQ.IQ_arrays(1,:,i), obj.IQ.IQ_arrays(2,:,i), opt_params);
+%             end
         end
     end
     
