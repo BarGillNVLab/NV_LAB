@@ -1,9 +1,9 @@
-classdef AWG < SignalGenerator
+classdef (Abstract) AWG < SignalGenerator
 
     properties
         bandwidth
         sampleRate
-        useAWG
+        % useAWG
         mode % internal or external
         waveforms
         channelName
@@ -12,8 +12,16 @@ classdef AWG < SignalGenerator
         segmentIQ               % cell array. Each cell is a matrix 2xN (I,Q by IQ length) containing the IQ data for a specific pulse in the sequence.
     end
 
+    properties (Abstract, Constant)
+        TYPE    % for now, one of: {'srs', 'synthhd', 'synthnv', 'TektrinixAWG'}
+    end
+
+    properties (Constant, Access = private)
+        NEEDED_FIELDS = {}
+    end
+
     methods
-        function obj = AWG(bandwidth, sampleRate, useAWG, mode, channelName, directAmplitudeControl, wavformPath)
+        function obj = AWG(name, bandwidth, sampleRate, useAWG, mode, channelName, directAmplitudeControl, wavformPath)
             obj@SignalGenerator(name);
             obj.bandwidth = bandwidth;
             obj.sampleRate = sampleRate;
@@ -83,4 +91,53 @@ classdef AWG < SignalGenerator
         end
     end
 
+    %% Initializtion and Setup
+    methods (Static)
+        function awg = getAWG(AWGStruct)
+            try
+                % If there is no type, then it is a dummy
+                if isfield(AWGStruct, 'type'); type = AWGStruct.type; ...
+                else; type = AWGDummy.TYPE; end
+
+                % Usual checks on fields
+                missingField = FactoryHelper.usualChecks(AWGStruct, ...
+                    AWG.NEEDED_FIELDS);
+                if ischar(missingField) && ~any(isnan(missingField)) && ...  Some field is missing
+                        ~strcmp(type, AWGDummy.TYPE) % This FG is not dummy
+                    EventStation.anonymousError(...
+                        'Trying to create a %s AWG, encountered missing field - "%s". Aborting',...
+                        type, missingField);
+                end
+
+                %%% Get instance (create, if one doesn't exist) %%%
+                t = lower(type);
+                name = [t, '-', AWGStruct.serialNumber];
+                awg = getObjByName(name);
+                if isempty(awg)
+                    switch t
+                        case lower(FrequencyGeneratorSRS.TYPE)
+                            awg = FrequencyGeneratorSRS.getInstance(AWGStruct);
+                        case lower(FrequencyGeneratorWindfreak.TYPE)
+                            awg = FrequencyGeneratorWindfreak.getInstance(AWGStruct);
+                        case lower(FrequencyGeneratorSGT100A.TYPE)
+                            awg = FrequencyGeneratorSGT100A.getInstance(AWGStruct);
+                        case lower(FrequencyGeneratorTektronixAWG.TYPE)
+                            awg = FrequencyGeneratorTektronixAWG.getInstance(AWGStruct);
+                        case lower(FrequencyGeneratorRigolAWG.TYPE)
+                            awg = FrequencyGeneratorRigolAWG.getInstance(AWGStruct);
+                        case lower(FrequencyGeneratorDummy.TYPE)
+                            awg = FrequencyGeneratorDummy.getInstance(AWGStruct);
+                        otherwise
+                            EventStation.anonymousWarning('Could not create Frequency Generator of type %s!', type)
+                    end
+
+                    % register FG outputs with the PG, if MW/AWG are "null" in the JSON no channel is registered
+                end
+            catch err
+                warning('FG "%s" not loaded because of the following error:\n', t);
+                err2warning(err);
+            end
+        end
+
+    end
 end

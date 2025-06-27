@@ -187,8 +187,11 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             obj.shouldAutosave = true;
 
             % set the default FG in the MWChannel property
-            fgCell = FrequencyGenerator.getFG();
-            obj.MWChannel = fgCell{1}.switchMW.switchChannelName;
+            % fgCell = FrequencyGenerator.getFG();
+            % obj.MWChannel = fgCell{1}.switchMW.switchChannelName;
+            sg = getObjByName(SignalGenerator.NAME);
+            fgCell = sg.FGchannels;
+            obj.MWChannel = fgCell{1}.pgChannelName; % this is temp, it should be chosen based on the default fg in signalGenerator
         end
         
         function cellOfStrings = getAllExpParameterProperties(obj)
@@ -1737,12 +1740,12 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             end
 
             % create the IQ data and load all waveforms to instrument
-            for i = 1:length(sgCell)
-                if ~isempty(waveforms{i})
-                    names = params = cellfun(@(x) x.name, sequences); %, 'UniformOutput', false);
-                    loadAWGInernal(sgCell{i}, waveforms(i,:), names)
-                end
-            end
+            % for i = 1:length(sgCell)
+            %     if ~isempty(waveforms{i})
+            %         names = params = cellfun(@(x) x.name, sequences); %, 'UniformOutput', false);
+            %         loadAWGInernal(sgCell{i}, waveforms(i,:), names)
+            %     end
+            % end
 
             % we need to store somewhere all of the sequences (we already computed them, it's a shame to do so on the fly again)
             obj.sequencesList = sequences;

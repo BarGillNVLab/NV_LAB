@@ -5,7 +5,7 @@ classdef FrequencyGeneratorSRS < FrequencyGenerator
         TYPE = 'srs';
 %         NAME = 'srsFrequencyGenerator';
         
-        NEEDED_FIELDS = {'address', 'port', 'serialNumber', 'minFrequency', 'maxFrequency', 'minAmplitude', 'maxAmplitude', 'MW', 'AWG'}
+        NEEDED_FIELDS = {'address', 'port', 'serialNumber', 'minFrequency', 'maxFrequency', 'minAmplitude', 'maxAmplitude'}
         OPTIONAL_FIELDS = {'keepOn'};
 
         NUM_CHANNELS = 1;
@@ -17,16 +17,13 @@ classdef FrequencyGeneratorSRS < FrequencyGenerator
     end
     
     methods (Access = private)
-        function obj = FrequencyGeneratorSRS(name, address, port, frequencyLimits, amplitudeLimits, keepOn, MW, AWG)
+        function obj = FrequencyGeneratorSRS(name, address, port, frequencyLimits, amplitudeLimits, keepOn)
             % All models are the same in regards to controlling them, but
             % the limitations on the amplitude and on the allowed frequencies may vary.
             obj@FrequencyGenerator(name, frequencyLimits, amplitudeLimits, keepOn);
             obj.t = tcpip(address, port);
             
             obj.initialize;
-            obj.switchMW.channel = MW.switchChannel;
-            obj.switchMW.channelName = MW.switchChannelName;
-            obj.AWG = AWG; % not supported yet
         end
     end
        
@@ -80,9 +77,7 @@ classdef FrequencyGeneratorSRS < FrequencyGenerator
             frequencyLimits = [struct.minFrequency, struct.maxFrequency];
             amplitudeLimits = [struct.minAmplitude, struct.maxAmplitude];
             keepOn = struct.keepOn;
-            MW = struct.MW;
-            AWG = struct.AWG;
-            obj = FrequencyGeneratorSRS(name, struct.address, struct.port, frequencyLimits, amplitudeLimits, keepOn, MW, AWG);
+            obj = FrequencyGeneratorSRS(name, struct.address, struct.port, frequencyLimits, amplitudeLimits, keepOn);
 
             addBaseObject(obj);
         end

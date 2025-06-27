@@ -1,4 +1,4 @@
-classdef (Abstract) SignalGenerator < BaseObject
+classdef SignalGenerator < BaseObject
     %FREQUENCYGENERATOR Abstract class for frequency generators
     % Has 3 public (and Dependent) properties:
     % # output (On/Off),
@@ -21,11 +21,11 @@ classdef (Abstract) SignalGenerator < BaseObject
         phase       % degrees
 
         numChannels
-        defultChannel
+        defaultChannel = 1 % default value, if the json contains a default device this property will be updated accordingly.
     end
     
     properties
-        keepOn      % keep the FG always on
+        % keepOn      % keep the FG always on
         useAWG
 
         FGs
@@ -65,43 +65,46 @@ classdef (Abstract) SignalGenerator < BaseObject
                 % else
                 %     error('Signal Generator type is not supported')
                 % end
-                if currSG.isFreqGen
+                if currSGstruct.isFreqGen
                     obj.FGs{end+1} = FrequencyGenerator.getFG(currSGstruct);
                     for j = 1:length(currSGstruct.fgChannels)
-                        createSwitch(currSGstruct.fgChannels{j});
-                        if ~isfield(currSGstruct.fgChannels{j}, deviceChannel)
-                            currSGstruct.fgChannels{j}.deviceChannel = [];
+                        obj.createSwitch(currSGstruct.fgChannels(j));
+                        if ~isfield(currSGstruct.fgChannels(j), 'deviceChannel')
+                            currSGstruct.fgChannels(j).deviceChannel = [];
                         end
-                        obj.FGchannels{end+1} = struct('pgChannelName', currSGstruct.fgChannels{j}.switchChannelName, ...
-                                                       'pgChannelNumber', currSGstruct.fgChannels{j}.switchChannel, ...
+                        obj.FGchannels{end+1} = struct('pgChannelName', currSGstruct.fgChannels(j).switchChannelName, ...
+                                                       'pgChannelNumber', currSGstruct.fgChannels(j).switchChannel, ...
                                                        'device', obj.FGs{end}, ...
-                                                       'deviceChannel', currSGstruct.fgChannels{j}.deviceChannel);
-                        if isfield(currSGstruct.fgChannels{j}, 'default'); isDefault(i) = currSGstruct.fgChannels{j}.defult; end
+                                                       'deviceChannel', currSGstruct.fgChannels(j).deviceChannel);
+                        if isfield(currSGstruct.fgChannels(j), 'default'); isDefault(i) = currSGstruct.fgChannels(j).default; end
                     end
                 end
-                if currSG.isAWG
-                    obj.AWGs{end+1} = AWG.getFG(currSGstruct);
+                if currSGstruct.isAWG
+                    obj.AWGs{end+1} = AWG.getAWG(currSGstruct);
                     for j = 1:length(currSGstruct.awgChannels)
-                        createSwitch(currSGstruct.awgChannels{j});
+                        obj.createSwitch(currSGstruct.awgChannels(j));
+                        if ~isfield(currSGstruct.awgChannels(j), 'deviceChannel')
+                            currSGstruct.awgChannels(j).deviceChannel = [];
+                        end
                     end
-                        obj.AWGchannels{end+1} = struct('pgChannelName', currSGstruct.awgChannels{j}.switchChannelName, ...
-                                                        'pgChannelNumber', currSGstruct.awgChannels{j}.switchChannel, ...
+                        obj.AWGchannels{end+1} = struct('pgChannelName', currSGstruct.awgChannels(j).switchChannelName, ...
+                                                        'pgChannelNumber', currSGstruct.awgChannels(j).switchChannel, ...
                                                         'device', obj.AWGs{end}, ...
-                                                        'deviceChannel', currSGstruct.awgChannels{j}.deviceChannel);
+                                                        'deviceChannel', currSGstruct.awgChannels(j).deviceChannel);
                 end
             end
             defaultChannelIDX = find(isDefault, 1);
             if all(isDefault) > 1
                 error('can''t be more than one default frequency Generator');
             end
-            obj.defultChannel = find(isDefault, 1); % Identify the default channel
-            % defultChannel
+            obj.defaultChannel = find(isDefault, 1); % Identify the default channel
+            % defaultChannel
             
-            for i=1:length(obj.FGchannels)
-                 obj.frequency(end+1) = obj.queryValue('frequency', obj.FGchannels(i).pgChannelNumber);
-                 obj.amplitude(end+1) = obj.queryValue('amplitude', obj.FGchannels(i).pgChannelNumber);
-                 obj.output(end+1)    = obj.queryValue('enableOutput', obj.FGchannels(i).pgChannelNumber);
-                 obj.phase(end+1)     = obj.queryValue('phase', obj.FGchannels(i).pgChannelNumber);
+            for i=1:length(obj.FGchannels) % there's an issue with the set function
+                 obj.frequency(end+1) = obj.queryValue('frequency', obj.FGchannels{i}.pgChannelNumber);
+                 obj.amplitude(end+1) = obj.queryValue('amplitude', obj.FGchannels{i}.pgChannelNumber);
+                 obj.output(end+1)    = obj.queryValue('enableOutput', obj.FGchannels{i}.pgChannelNumber);
+                 obj.phase(end+1)     = obj.queryValue('phase', obj.FGchannels{i}.pgChannelNumber);
             end
 
             obj.frequency = obj.queryValue('frequency');
@@ -196,7 +199,7 @@ classdef (Abstract) SignalGenerator < BaseObject
             % freqGens = fgCellContainer.cells;
         end
 
-        function createSwitch(outputChannel)
+        function createSwitch(obj, outputChannel)
             if isempty(outputChannel)
                 return;
             end
@@ -214,21 +217,22 @@ classdef (Abstract) SignalGenerator < BaseObject
     
     methods
         function set.output(obj, value, channel)
-            if ~isexist('channel', 'var')
-                channel = 1:obj.numChannels;
-            end
+             if ~exist('channel', 'var') || isempty(channel)
+                channel = cellfun(@(s) s.pgChannelNumber, obj.FGchannels);
+             end
             if length(value) ~= length(channel) && ~isscalar(value)
                 error('Frequency Generator: output vector size mismatch!')
             end
             value = value .* ones(size(channel));
+            idx = find(cellfun(@(s) ismember(s.pgChannelNumber, channel), obj.FGchannels));
             % Enable/Disable the output
             for i = 1:length(channel)
-                fg = getObjByName(obj.FGchannels{i}.instumentName);
+                fg = getObjByName(obj.FGchannels{idx(i)}.device.name);
                 switch value(i)
                     case {'1', 1, 'on', true}
-                        obj.setValue('enableOutput', '1', obj.FGchannels{i}.deviceChannel)
+                        obj.setValue('enableOutput', '1', obj.FGchannels{idx(i)}.deviceChannel)
                     case {'0', 0, 'off', false}
-                        obj.setValue('enableOutput', '0', obj.FGchannels{i}.deviceChannel)
+                        obj.setValue('enableOutput', '0', obj.FGchannels{idx(i)}.deviceChannel)
                     otherwise
                         error('Unknown command. Ignoring')
                 end
@@ -236,72 +240,76 @@ classdef (Abstract) SignalGenerator < BaseObject
         end
         
         function set.amplitude(obj, newAmplitude, channel)  % in dB
-            if ~isexist('channel', 'var')
-                channel = 1:obj.numChannels;
-            end
+             if ~exist('channel', 'var') || isempty(channel)
+                channel = cellfun(@(s) s.pgChannelNumber, obj.FGchannels);
+             end
             if length(newAmplitude) ~= length(channel) && ~isscalar(newAmplitude)
                 error('Frequency Generator: amplitude vector size mismatch!')
             end
             newAmplitude = newAmplitude .* ones(size(channel));
+            idx = find(cellfun(@(s) ismember(s.pgChannelNumber, channel), obj.FGchannels));
             % Change amplitude level of the frequency generator
             for i = 1:length(channel)
-                fg = getObjByName(obj.FGchannels{i}.instumentName);
-                if ~ValidationHelper.isInBorders(newAmplitude(i), fg.minAmpl, obj.maxAmpl)
-                    error('MW amplitude must be between %g and %g.\nRequested: %g', ...
-                        obj.minAmpl, obj.maxAmpl, newAmplitude(i))
+                fg = getObjByName(obj.FGchannels{idx(i)}.device.name);
+                if ~ValidationHelper.isInBorders(newAmplitude(i), fg.minAmpl, fg.maxAmpl)
+                    % error('MW amplitude must be between %g and %g.\nRequested: %g', ...
+                    %     obj.minAmpl, obj.maxAmpl, newAmplitude(i))
                 end
-                fg.setValue('amplitude', newAmplitude(i), obj.FGchannels{i}.deviceChannel);
+                fg.setValue('amplitude', newAmplitude(i), obj.FGchannels{idx(i)}.deviceChannel);
             end
         end
         
         function set.frequency(obj, newFrequency, channel)      % in Hz
-            if ~isexist('channel', 'var')
-                channel = 1:obj.numChannels;
-            end
+             if ~exist('channel', 'var') || isempty(channel)
+                channel = cellfun(@(s) s.pgChannelNumber, obj.FGchannels);
+             end
             if length(newFrequency) ~= length(channel) && ~isscalar(newFrequency)
                 error('Frequency Generator: frequency vector size mismatch!')
             end
             newFrequency = newFrequency .* ones(size(channel));
+            idx = find(cellfun(@(s) ismember(s.pgChannelNumber, channel), obj.FGchannels));
             % Change frequency level of the frequency generator
             for i = 1:length(newFrequency)
-                fg = getObjByName(obj.FGchannels{i}.instumentName);
-                if ~ValidationHelper.isInBorders(newFrequency, fg.minFreq, fg.maxFreq)
-                    error('MW frequency must be between %d and %d.\nRequested: %d', ...
-                        fg.minFreq, fg.maxFreq, newFrequency)
+                fg = getObjByName(obj.FGchannels{idx(i)}.device.name);
+                if ~ValidationHelper.isInBorders(newFrequency(i), fg.minFreq, fg.maxFreq)
+                    % error('MW frequency must be between %d and %d.\nRequested: %d', ...
+                    %     fg.minFreq, fg.maxFreq, newFrequency)
                 end
-                obj.setValue('frequency', newFrequency(i), obj.FGchannels{i}.deviceChannel);
+                obj.setValue('frequency', newFrequency(i), obj.FGchannels{idx(i)}.deviceChannel);
             end
         end
 
         function set.phase(obj, newPhase, channel)      % in degrees
-            if ~isexist('channel', 'var')
-                channel = 1:obj.numChannels;
-            end
+             if ~exist('channel', 'var') || isempty(channel)
+                channel = cellfun(@(s) s.pgChannelNumber, obj.FGchannels);
+             end
             if length(newPhase) ~= length(channel) && ~isscalar(newPhase)
                 error('Frequency Generator: phase vector size mismatch!')
             end
             newPhase = newPhase .* ones(size(channel));
+            idx = find(cellfun(@(s) ismember(s.pgChannelNumber, channel), obj.FGchannels));
             for i = 1:length(newPhase)
-                fg = getObjByName(obj.FGchannels{i}.instumentName);
+                fg = getObjByName(obj.FGchannels{idx(i)}.device.name);
                 % Change phase of the frequency generator
                 newPhase = mod(newPhase-fg.minPhase,360) + fg.minPhase;
-                if ~ValidationHelper.isInBorders(newPhase, fg.minPhase, fg.maxPhase)
-                    error('phase must be between %d and %d.\nRequested: %d', ...
-                        fg.minPhase, fg.maxPhase, newPhase)
+                if ~ValidationHelper.isInBorders(newPhase(i), fg.minPhase, fg.maxPhase)
+                    % error('phase must be between %d and %d.\nRequested: %d', ...
+                    %     fg.minPhase, fg.maxPhase, newPhase)
                 end
-                obj.setValue('phase', newPhase(i), obj.FGchannels{i}.deviceChannel);
+                obj.setValue('phase', newPhase(i), obj.FGchannels{idx(i)}.deviceChannel);
             end
         end
 
         function value = queryValue(obj, what, channel)
             % If channel is not specified, returns value for all channels
             if ~exist('channel', 'var') || isempty(channel)
-                channel = 1:obj.numChannels;
+                channel = cellfun(@(s) s.pgChannelNumber, obj.FGchannels);
             end
+            idx = find(cellfun(@(s) ismember(s.pgChannelNumber, channel), obj.FGchannels));
             value = [];
-            for i = 1:length(channel)
-                fg = getObjByName(obj.FGchannels{i}.instumentName);
-                command = obj.createCommand(what, '?', obj.FGchannels{i}.deviceChannel);
+            for i = idx
+                fg = getObjByName(obj.FGchannels{i}.device.name);
+                command = fg.createCommand(what, '?', obj.FGchannels{i}.deviceChannel);
                 sendCommand(fg, command);
                 value = [value, str2double(fg.readOutput(what))]; %#ok<AGROW>
             end

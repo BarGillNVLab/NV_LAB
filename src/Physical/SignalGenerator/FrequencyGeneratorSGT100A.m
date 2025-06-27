@@ -1,11 +1,11 @@
-classdef FrequencyGeneratorSGT100A < FrequencyGenerator
+classdef FrequencyGeneratorSGT100A < FrequencyGenerator & AWG
     %FREQUENCYGENERATORWINDFREAK Windfreak frequency generator class
     % includes, for now, synthHD & synthNV
     
     properties (Constant, Hidden)
-        TYPE = 'SGT100A';
+        TYPE = 'sgt100a';
         
-        NEEDED_FIELDS = {'address', 'serialNumber', 'minFrequency', 'maxFrequency', 'minAmplitude', 'maxAmplitude', 'MW', 'AWG'}
+        NEEDED_FIELDS = {'address', 'serialNumber', 'minFrequency', 'maxFrequency', 'minAmplitude', 'maxAmplitude'}
         OPTIONAL_FIELDS = {'keepOn', 'mode'};
     end
 
@@ -26,16 +26,14 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator
     end
     
     methods (Access = private)
-        function obj = FrequencyGeneratorSGT100A(name, address, port, frequencyLimits, amplitudeLimits, keepOn, MW, AWG)
+        function obj = FrequencyGeneratorSGT100A(name, address, port, frequencyLimits, amplitudeLimits, keepOn, bandwidth, sampleRate, useAWG, mode, channelName, directAmplitudeControl, wavformPath)
             % All models are the same in regards to controlling them, but
             % the limitations on the amplitude and on the allowed frequencies may vary.
             obj@FrequencyGenerator(name, frequencyLimits, amplitudeLimits, keepOn);
+            obj@AWG(name, bandwidth, sampleRate, useAWG, mode, channelName, directAmplitudeControl, wavformPath);
             [~, obj.visa] = rs_connect('visa', 'ni', address);
             
             obj.initialize;
-            obj.switchMW.channel = MW.switchChannel;
-            obj.switchMW.channelName = MW.switchChannelName;
-            obj.awg = AWG;
         end
     end
 
@@ -114,22 +112,28 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator
     methods (Static)
         function obj = getInstance(struct)
             missingField = FactoryHelper.usualChecks(struct, ...
-                FrequencyGeneratorSRS.NEEDED_FIELDS);
+                FrequencyGeneratorSGT100A.NEEDED_FIELDS);
             if ~isnan(missingField)
                 EventStation.anonymousError(...
                     'Trying to create an SRS frequency generator, encountered missing field - "%s". Aborting',...
                     missingField);
             end
-            struct = FactoryHelper.supplementStruct(struct, FrequencyGeneratorSRS.OPTIONAL_FIELDS);
+            struct = FactoryHelper.supplementStruct(struct, FrequencyGeneratorSGT100A.OPTIONAL_FIELDS);
             
             name = [FrequencyGeneratorSGT100A.TYPE, '-', struct.serialNumber];
             address = ['TCPIP0::', struct.address, '::hislip0,4880::INSTR'];
             frequencyLimits = [struct.minFrequency, struct.maxFrequency];
             amplitudeLimits = [struct.minAmplitude, struct.maxAmplitude];
             keepOn = struct.keepOn;
-            MW = struct.MW;
-            AWG = struct.AWG;
-            obj = FrequencyGeneratorSGT100A(name, address, struct.port, frequencyLimits, amplitudeLimits, keepOn, MW, AWG);
+            bandwidth = 10;
+            sampleRate = 300e6;
+            channelName = 'channel';
+            directAmplitudeControl = false;
+            wavformPath = '';
+            useAWG = true;
+            useMode = '';
+            obj = FrequencyGeneratorSGT100A(name, address, struct.port, frequencyLimits, amplitudeLimits, keepOn, bandwidth, sampleRate, useAWG, useMode, channelName, directAmplitudeControl, wavformPath);
+            % obj =                          (name, bandwidth, sampleRate, useAWG, mode, channelName, directAmplitudeControl, wavformPath)
 
             addBaseObject(obj);
         end
