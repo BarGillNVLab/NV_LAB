@@ -135,9 +135,6 @@ classdef Sequence < handle
                 p = Pulse(duration);
             end
 
-%             if strcmp(channelNames, 'SGT')
-%                 
-% 
             addPulse(obj, p);
         end
         
@@ -312,87 +309,46 @@ classdef Sequence < handle
             % params = varargin2param(defaults, varargin{:});
             params = {'channel', channel, 'channel_2', channel_2, 'trigger_duration', trigger_duration, 'add_trigger', add_trigger, 'mode', mode};
             switch mode
-                case 'external'
-                    changeSequenceToPulse(obj, params)
+                case 'external' % change mode names, direct amplitude modulation (using switching or AWG)
+                    keepChannelOn(obj, params)
                     if add_trigger
                         addTrigger(obj, channel, channel_2, trigger_duration)
+                        % AWG might need 2 triggers: start trigger, next (sequence) trigger
+                        % next trigger needs to happen in changeSequence/setSequence in the experiment
                     end
                 case 'internal'
-                    changePulseToTrigger(obj, channel, trigger_duration)
+                    changePulseToTrigger(obj, channel, trigger_duration, trigger_off) % does trigger_off needs to be implemented? 
                 otherwise
                     EventStation.anonymousWarning('Cannot update sequence. Mode ''%s'' is not supported on channel ''%s''', type, channel) % escape character for a single quote is a single quote (i.e. '')
             end
+            obj.repairSequence(); % make sure the sequence doesn't have adjacent pulses in the same channel
         end
         
-        function changePulseToTrigger(obj, channel) %changePulseToTrigger(obj, varargin) %changePulseToTrigger(obj, channel, channel_2, trigger_duration, add_trigger)
-        
-            % params = varargin2param(defults, varargin{:});
-            % add_trigger = params.add_trigger;
-
-            % find the SGT100 from the list of available FGs
-%             fgCell = FrequencyGenerator.getFG();
-%             fg_names = cellfun(@(c) c.name, fgCell, 'UniformOutput', false);
-%             % sgt_idx = find(contains(fg_names, 'SGT'));
-%             % sgt100 = fgCell{sgt_idx};
-%             fg = fgCell{contains(fg_names, 'SGT')};
-% 
-%             % fg = getObjByName(obj.freqGenName);
-
-
-            % idx = find(cellfun(@(c) isfield(c, channel) , {obj.pulses.onChannels}));
-            % pulseTimes = [0, zeros(1, length(obj.pulses))];
-            % for i = 2:length(pulseTimes)
-            %     pulseTimes(i) = pulseTimes(i-1) + obj.pulses(1,i-1).duration;
-            % end
-            % p1 = Pulse(params.trigger_duration, params.channel, '');
-            % p2 = Pulse(params.trigger_duration, params.channel_2, '');
-            % for i = flip(idx)
-            %     % channels = fieldnames(obj.pulses(1,i).onChannels);
-            %     % obj.pulses(1,i).changeChannels(channels', ~strcmp(channels, params.channel)');
-            %     % obj.addPulseAtGivenTime(pulseTimes(i), p1); %trigger to turn on
-            %     % obj.addPulseAtGivenTime(pulseTimes(i+1), p1); %trigger to turn off
-            %     if params.add_trigger == true
-            %         obj.addPulseAtGivenTime(pulseTimes(i+1)+params.trigger_duration, p2);
-            %     end
-            % end
-
+        function changePulseToTrigger(obj, channel, trigger_duration, trigger_off)
+            % 
             [~, idx, pulseTimes] = getPulsesByChannel(obj, channel);
             p1 = Pulse(trigger_duration, channel, '');
             for i = flip(idx)
                 channels = fieldnames(obj.pulses(1,i).onChannels);
-                obj.pulses(1,i).changeChannels(channels', ~strcmp(channels, params.channel)');
+                obj.pulses(1,i).changeChannels(channels', ~strcmp(channels, channel)');
                 obj.addPulseAtGivenTime(pulseTimes(i), p1); %trigger to turn on
-                obj.addPulseAtGivenTime(pulseTimes(i+1), p1); %trigger to turn off
+                if trigger_off
+                    obj.addPulseAtGivenTime(pulseTimes(i+1), p1); %trigger to turn off
+                end
             end
-
-
-            % current_time_in_sequence = 0;
-            % k = 0;
-            % for i = 1:length(obj.pulses)
-            %     k = k + 1;
-            %     channel_idx = strcmp(fieldnames(obj.pulses(1,k).onChannels), params.channel);
-            %     if any(channel_idx)
-            %         channels = fieldnames(obj.pulses(1,k).onChannels);
-            %         channel_values = ~channel_idx;
-            %         pulse_duration = obj.pulses(1,k).duration;
-            %         obj.pulses(1,k).changeChannels(channels', channel_values');
-            %         p = Pulse(params.trigger_duration, params.channel, '');
-            %         obj.addPulseAtGivenTime(current_time_in_sequence, p) %trigger to turn on
-            %         obj.addPulseAtGivenTime(current_time_in_sequence+pulse_duration, p) %trigger to turn off
-            %         if params.add_trigger == true
-            %             p = Pulse(params.trigger_duration, params.channel_2, '');
-            %             obj.addPulseAtGivenTime(current_time_in_sequence+pulse_duration+params.trigger_duration, p)
-            %             k = k + 1;
-            %         end
-            %         k = k + 2;
-            %         current_time_in_sequence = sum([obj.pulses(1,1:k-1).duration]);
-            %     else
-            %         current_time_in_sequence = sum([obj.pulses(1,1:k).duration]);
-            %     end
-            % end
         end
         
-        function changeSequenceToPulse(obj, vars)
+        function keepChannelOn(obj, channel) %changeSequenceToPulse(obj, vars)
+            % easiest solution is to keep MW on (change function name), get
+            % list of pulses and add the MW channel to onChannels for all
+            % pulses.
+            for i = 1:length(obj.pulses)
+                obj.pulses(1,i).onChannels.(channel) = true;
+                % onChannels = fieldnames(obj.pulses(1,i).onChannels);
+                % if sum(~strcmp(onChannels, channel))
+                %     obj.pulses(1,i).onChannels.(channel) = true;
+                % end
+            end
         end
 
         function addTrigger(obj, channel, trigger_channel, trigger_duration)
@@ -543,11 +499,19 @@ classdef Sequence < handle
         function [pulses, pulseIndexes, pulseTimes] = getPulsesByChannel(obj, channel)
             % Get all pulses and their start times for a specific channel
             pulseIndexes = find(cellfun(@(c) isfield(c, channel) , {obj.pulses.onChannels}));
-            pulseTimes = [0, zeros(1, length(obj.pulses))];
+            pulseTimes = [0, zeros(1, length(obj.pulses))]; % might need to be length(obj.pulseIndexes)
             pulses = obj.pulses(pulseIndexes);
             for i = 2:length(pulseTimes)
                 pulseTimes(i) = pulseTimes(i-1) + obj.pulses(1,i-1).duration;
             end
+
+            pulseTimes = zeros(1, length(pulseIndexes));
+            seqEdgeTimes = edgeTimes(obj);
+            for i = 1:length(pulseTimes)
+                % idx = pulseIndexes(i);
+                pulseTimes(i) = seqEdgeTimes(pulseIndexes(i));
+            end
+            % pulseTimes = sort(pulseTimes);
         end
     
         function ind = indexFromNickname(obj, name)

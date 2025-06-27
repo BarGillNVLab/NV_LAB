@@ -79,6 +79,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         % AWG parameters:
         IQ = struct('IQ_arrays', [], 'clock', 1e9, 'switchWF', true, 'duration', 0.1, 'wfRepeats', -1, 'filename', '', 'function', '', 'useIQ', 0);
         create_triggers
+        envelope                    % function or vector (?)
         phase                       % in radians
         sequencesList               % cell array containing all experiment sequences. Used (mainly) for AWG preloading
         clearAWG = true             % logical. Wheter to clear the sequences from the awg or not. Default is true.
@@ -1432,29 +1433,10 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             end
             pg.repeats = obj.repeats;
             pg.fixDelays = obj.fixDelays;
-
-            %Load AWG if needed
-            if AWG
-               obj.loadAWG(S, pg); 
-            end
-
-            % change pulses to trigger if neccesary
-            fgCell = FrequencyGenerator.getFG();
-            fg_names = cellfun(@(c) c.name, fgCell, 'UniformOutput', false);
-            if exist('fg_names','var') % added by lion - this gives an error if fg_names doesnt exists
-                if any(contains(fg_names, 'SGT'))
-                    if obj.IQ.useIQ == 1
-                        % S.changePulseToTrigger('SGT', 'TRIGGER', 5*1e-3, true);
-                        pg.changeSequence('','','',{'channel', 'SGT', 'channel_2','TRIGGER', 'trigger_duration', 5*1e-3, 'add_trigger', true});
-                        obj.loadAWG();
-                    else
-                        % S.changePulseToTrigger('SGT', 'TRIGGER', 5*1e-3, false);
-                        pg.changeSequence('','','',{'channel', 'SGT', 'channel_2','TRIGGER', 'trigger_duration', 5*1e-3, 'add_trigger', false});
-                    end
-                end
-            end
             
             % Set Frequency Generator
+            % make sure that the data set in the experiment is in a cell
+
             if ~isempty(obj.freqGenName)
                 numChannels = 0;
                 if iscell(obj.freqGenName)
@@ -1505,6 +1487,13 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 if length(obj.frequency) <= numChannels
                     obj.setMultipleFGFrequencies(obj.frequency);
                 end
+            end
+
+            % Load AWG if needed. 
+            % We first set the FG because if we're using AWG we might change
+            % the FG parameters, but if we don't need AWG, we don't need to do anything more.
+            if AWG
+               obj.loadAWG(S, pg); 
             end
             
             % Initialize SPCM
@@ -1598,28 +1587,86 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             end
         end
 
-        function IQinfo = generateIQ(exp, sequence, signalGen) % (obj, I_vec, Q_vec, varargin) % varargin = [clock, startPlayback, KeepLocalFile, path, filename, comment, copyright, no_scaling]
+        function waveform = generateWaveform(exp, sequence, signalGen, signalGen_idx) % (obj, I_vec, Q_vec, varargin) % varargin = [clock, startPlayback, KeepLocalFile, path, filename, comment, copyright, no_scaling]
             % we first need to get some constants
-            dt = 1/signalGen.sampleRate;
-            signalGen_duration = sum(sequence.pulses.duration(sequence.pulses.getOnChannels == signalGen.channelName)); % won't work but that's the gist. It'll be resolved in debugging
+            [pulses, ~, pulseTimes] = getPulsesByChannel(sequence, signalGen.fg.switchMW.switchChannelName);
+            signalGen_duration = sum(pulses.duration);
+            % signalGen_duration = sum(sequence.pulses.duration(sequence.pulses.getOnChannels == signalGen.channelName))+exp.permutable_parameter*number_of_pulses; % won't work but that's the gist. It'll be resolved in debugging
             waveformLength = signalGen_duration + exp.laserInitializationDuration; % we're using laserInitializationDuration but any other experiment constant time can be used. This is only to make sure that the waveform is long enough for the instrument
-            signal = ones(1, waveformLength/dt);
+            waveformLength = min(waveformLengh, signalGen.awg.MIN_WAVEFORM_LENGTH);
+            % signal = ones(1, waveformLength/dt);
+            dt = 1/signalGen.awg.sampleRate;
             t = [0:dt:waveformLength];
-            base_sine = ones(size(exp.frequency), waveformLength/dt);
+            waveform = zeros(size(t));
+
+            % inizialize our variables and make sure they're the right size
+            frequency = exp.frequency{signalGen_idx}*ones(size(pulses));
+            amplitude = exp.amplitude{signalGen_idx}*ones(size(pulses));
+            phase = exp.phase{signalGen_idx}*ones(size(pulses));
+            envelope = exp.envelope{signalGen_idx}*ones(size(pulses));
+
+            % frequency = ones(size(pulses))*frequency;
+            % amplitude = ones(size(pulses))*amplitude;
+            % phase = ones(size(pulses))*phase;
+            % envelope = ones(size(pulses))*envelope;
             
-            % we create the base sine waves
-            for i = 1:size(exp.frequency)
-                base_sine(i,:) = sin(exp.frequency(i)*t + exp.phase(i));
+            baseband = ( max(frequency) + min(frequency) ) / 2;
+            signalGen.awg.baseband = baseband;
+            % base_sine = ones(1, size(exp.frequency), waveformLength/dt);
+            
+            if isempty(envelope)
+                linear_amplitudes = cellfun(@(x) 10^(x / 20), amplitude, 'UniformOutput', false);
+                max_amplitude = max(unique(cell2mat(linear_amplitudes)));
+                envelope = cellfun(@(x) string(abs(x / max_amplitude)), linear_amplitudes, 'UniformOutput', false);
             end
 
-            % we create the sequence shape
-            signal = ; % update signal to be a sequence of rects
+            % frequency = {[2840], [2840]};
+            % phase = {[0], [pi/2]};
+            % envelope = {[1], [1]}; % Define envelope for each frequency
+            % pulseTimes = [0, 5];
+            % PulseDurations = [5, 5];
+
+
+            % baseband = ( max(frequency) + min(frequency) ) / 2;
+            % signalGen.awg.baseband = baseband;
+            % base_sine = ones(1, size(exp.frequency), waveformLength/dt);
+
+            for i = 1:length(frequency)
+                freq = frequency{i};
+                pha = phase{i}*ones(size(freq));
+                % env = envelope{i}*ones(size(freq));
+                env = repmat(envelope{i}, size(freq));
+                startIdx = round(pulseTimes(i) / dt) + 1; % +1 for indexing
+                endIdx = startIdx + round(pulses(i).duration / dt); % -1 for indexing?
+                startTime = pulseTimes(i);
+                endTime = startTime + pulses(i).duration;
+
+                % Ensure endIdx does not exceed the length of the waveform. Shouldn't happen because we make sure that the waveform is longer than the rf sequence
+                if endIdx > length(waveform)
+                    endIdx = length(waveform);
+                end
+                for j = 1:length(freq)
+                    waveform_internal = zeros(size(t));
+                    f = freq(j);
+                    a = @(x) eval(env(j));
+                    timeShift = pulses(i).duration/2;
+                    % sine = a(t-timeShift).*cos(2*pi*f*t + pha(j));
+
+                    sine = a(t-(startTime+timeShift)).*cos(2*pi*f*t + pha(j)) .* (startTime <= t) .* (t < endTime);
+
+                    % waveform_internal(startIdx:endIdx) = sine(1:endIdx-startIdx+1);
+                    % waveform = waveform + waveform_internal;
+                    waveform = waveform + sine;
+                    % waveform = waveform + sine(1:endIdx-startIdx+1);
+                end
+                waveform(startIdx:endIdx) = waveform(startIdx:endIdx)/(length(freq));
+            end
 
             % demodulate the signal to I and Q vectors
-            [I, Q] = getIQfromSignal(signal); 
+            % [I, Q] = getIQfromSignal(signal); 
 
             % generate the wave for the specific instument
-            signalGen.generateIQInternal(I, Q);
+            % signalGen.generateIQInternal(I, Q);
 
             % % find the SGT100 from the list of available FGs
             % fgCell = FrequencyGenerator.getFG();
@@ -1654,14 +1701,18 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             % [Status] = rs_generate_wave( sgt100.visa, IQinfo, IQinfo.StartPlayback, IQinfo.KeepLocalFile )
         end
 
-        function loadAWG(obj, S)
+        function loadAWG(obj, S, pg)
 
             % get a list of all frequency generators
-            fgCell = FrequencyGenerator.getFG();
+            % fgCell = FrequencyGenerator.getFG();
+            sgCell = SignalGenerator.getSG();
+
+            % initialize empty cells for temporary data
+            sequences = cell(obj.permutable_parameter,1);
+            waveforms = cell(size(sgCell,1), size(sequences,1));
 
             % create all sequences from the base sequence and permutated
             % parameter
-            sequences = cell(obj.permutabple_parameter,1);
             for i = 1:size(sequences)
                 obj.changeSequence(obj.permutable_parameter(i));
                 sequences{i} = S.copySequence;
@@ -1669,19 +1720,27 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 sequences{i}.name = seqName;
                 
                 % update the sequence if the signal generator is using AWG
-                for j = 1:length(fgCell)
-                    if fgCell{j}.awg.useIQ
-                         signalChannel = fgCell{j}.switchMW.switchChannelName; % need to get channel name for the fg
-                         AWGChannel = fgCell{j}.awg.switchChannelName;
-                         mode = fgCell{j}.awg.mode;
-                         add_trigger = strcmpi(fgCell{j}.awg.mode, 'external');
+                for j = 1:length(sgCell)
+                    if sgCell{j}.useIQ
+                         signalChannel = sgCell{j}.fg.switchMW.switchChannelName; % need to get channel name for the fg
+                         AWGChannel = sgCell{j}.awg.switchChannelName;
+                         % mode = sgCell{j}.awg.mode;
+                         % add_trigger = strcmpi(sgCell{j}.awg.mode, 'external');
 
                          % we first need to create the waveform according to the experiment sequence
-                         generateIQ(obj, sequences{i}, fgCell{j});
+                         waveforms{j,i} = generateWaveform(obj, sequences{i}, sgCell{j}, j);
 
                          % now we can update the sequence that is sent to the pulse generator
                          sequences{i}.updateInternal(signalChannel, AWGChannel, add_trigger, trigger_duration, mode);
                     end
+                end
+            end
+
+            % create the IQ data and load all waveforms to instrument
+            for i = 1:length(sgCell)
+                if ~isempty(waveforms{i})
+                    names = params = cellfun(@(x) x.name, sequences); %, 'UniformOutput', false);
+                    loadAWGInernal(sgCell{i}, waveforms(i,:), names)
                 end
             end
 

@@ -7,6 +7,8 @@ classdef FrequencyGeneratorSRS < FrequencyGenerator
         
         NEEDED_FIELDS = {'address', 'port', 'serialNumber', 'minFrequency', 'maxFrequency', 'minAmplitude', 'maxAmplitude', 'MW', 'AWG'}
         OPTIONAL_FIELDS = {'keepOn'};
+
+        NUM_CHANNELS = 1;
     end
        
     properties (Access = private)

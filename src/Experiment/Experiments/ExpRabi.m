@@ -143,20 +143,25 @@ classdef ExpRabi < Experiment
             obj.mCurrentXAxisParam.value = obj.tau;
         end
 
-        function changeSequence(obj, tau, idx)
+        function changeSequence(obj, idx)
             % Devices
             pg = getObjByName(PulseGenerator.NAME);
             % Some magic numbers
             maxLastDelay = Experiment.DEFAULT_LAST_DELAY + max(obj.tau);
 
+            % change sequence in the pulse generator
             if ~isempty(obj.sequencesList)
                 pg.setSequence(obj.sequencesList{idx});
             else
-                pg.changeSequence('MW', 'duration', tau);
+                pg.changeSequence('MW', 'duration', obj.tau(idx));
                 if obj.constantTime
-                    pg.changeSequence('lastDelay', 'duration', maxLastDelay - obj.tau(tau));
+                    pg.changeSequence('lastDelay', 'duration', maxLastDelay - obj.tau(idx));
                 end
             end
+
+            % change sequence in the signal generator
+            % might need to add another pulse for the trigger channel
+
         end
         
         function perform(obj)
@@ -193,11 +198,11 @@ classdef ExpRabi < Experiment
                         return;
                     end
                     try
-                        obj.changeSequence(obj.tau(t), t)
-                        pg.changeSequence('MW', 'duration', obj.tau(t));
-                        if obj.constantTime
-                            pg.changeSequence('lastDelay', 'duration', maxLastDelay - obj.tau(t));
-                        end
+                        obj.changeSequence(t)
+                        % pg.changeSequence('MW', 'duration', obj.tau(t));
+                        % if obj.constantTime
+                        %     pg.changeSequence('lastDelay', 'duration', maxLastDelay - obj.tau(t));
+                        % end
                         
                         data = obj.getRawData(pg, spcm);
                         

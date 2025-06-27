@@ -160,12 +160,71 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator
            command = [name, value];
         end
 
-        function LoadAWGInternal(obj, segment_name)
+        function loadAWGInternal(obj, waveforms, waveformNames)
             % what we need to do:
-            % 1. load all waveforms to instrument
-            % 2. create multi segment list
-            % 3. append all sequences
-            % 4. apply settings
+            % 1. create I, Q from waveform
+            % 2. load all waveforms to instrument
+            % 3. create multi segment list
+            % 4. append all sequences
+            % 5. apply settings
+            
+           
+
+            % set defaults for non mandatory fields (and clockrate)
+            defult = {'clock', 300e6, 'duration', 0.1e-6, 'StartPlayback', 0, 'KeepLocalFile', 0, 'path', '/hdd/', 'filename','untitled.wv', 'comment', '', 'copyright', '', 'no_scaling', 0};
+            IQinfo.clock = obj.clock;
+            IQinfo.duration = obj.sampleRate; %length(waveforms)/sampleRate; % needs to be in us
+            % startPlayback = obj.startPlayback;
+            % KeepLocalFile = obj.KeepLocalFile;
+            IQinfo.path = obj.wavformPath;
+            % IQinfo.filename = [waveformNames, '.wv'];
+            IQinfo.comment = obj.comment;
+            IQinfo.copyright = obj.copyright;
+            IQinfo.no_scaling = obj.no_scaling;
+            % populate parameters with user input (if there's no user input use defaults)
+            % IQinfo = varargin2param(defult, varargin);
+
+            % waveform down conversion
+            for i = 1:length(waveforms)
+                [time, I, Q] = generateIQFromWaveform(waveforms(i));
+                [I, Q] = obj.underSampling(time, [I, Q], obj.clock);
+                IQinfo.I_data = I;
+                IQinfo.Q_data = Q;
+                IQinfo.filename = [waveformNames(i), '.wv'];
+
+                [Status] = rs_generate_wave( obj.visa, IQinfo, IQinfo.StartPlayback, IQinfo.KeepLocalFile );
+            end
+
+
+            
+            %  % find the SGT100 from the list of available FGs
+            % fgCell = FrequencyGenerator.getFG();
+            % fg_names = cellfun(@(c) c.name, fgCell, 'UniformOutput', false);
+            % % sgt_idx = find(contains(fg_names, 'SGT'));
+            % % sgt100 = fgCell{sgt_idx};
+            % sgt100 = fgCell{contains(fg_names, 'SGT')};
+            % 
+            % fg = getObjByName(obj.freqGenName);
+            % 
+            % if isempty(IQinfo.filename)  % temp patch
+            %     IQinfo.filename = 'untitled.wv';
+            % end
+            % 
+            % IQinfo.duration = IQinfo.duration*1e-6; %convert to us
+            % 
+            % if length(I_vec) == 1
+            %     I_vec = I_vec*ones(1,(1+IQinfo.clock.*IQinfo.duration));
+            % end
+            % if length(Q_vec) == 1
+            %     Q_vec = Q_vec*ones(1, (1+IQinfo.clock.*IQinfo.duration));
+            % end
+            % 
+            % IQinfo.I_data = I_vec;
+            % IQinfo.Q_data = Q_vec;
+            % 
+            % [Status] = rs_generate_wave( sgt100.visa, IQinfo, IQinfo.StartPlayback, IQinfo.KeepLocalFile )
+            
+            
             
             DELAY_TIME = 0.2;
 
@@ -217,7 +276,7 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator
             state = 'ON';
             for i=1:length(obj.IQ.segment_names)
 %                 segment_name = ['untitled', num2str(i), '.wv']
-                segment_name = [segment_name, '.wv'];
+                waveformNames = [waveformNames, '.wv'];
                 if obj.IQ.repeats(i) == -1
                     obj.IQ.repeats(i) = 1;
                 end
@@ -261,6 +320,13 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator
             % and we make sure that the trigger is actually working
 %             sendCommand(obj, ':BB:ARB:WSEG:NEXT:SOUR NEXT')
             pause(DELAY_TIME)
+        end
+
+        function playlist = createPlaylist(waveformNames, exp_name, avg_number)
+            playlist.name = [exp_name, '_average_', num2str(avg_number), '.wvs'];
+            % we need to create the file according to R&S spec.
+
+            
         end
 
         function disconnectIQ(obj)
