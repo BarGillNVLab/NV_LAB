@@ -22,6 +22,8 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator & AWG
         IQ = struct('output', false, 'segment_names', [], 'list_name', '', 'internal_path', '/var/user/', 'switchWF', true, 'duration', 0.1, 'repeats', -1, 'trigger_next', 1, 'trigger_output', 2);
         awg
         switchMW
+        baseband
+        triggerDuration = 0.05 % double. in us.
                 
     end
     

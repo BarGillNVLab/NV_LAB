@@ -20,34 +20,32 @@ classdef ExpRabi < Experiment
     
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     methods
-        function obj = ExpRabi(FG, MWChannel)
+        function obj = ExpRabi(MWChannel)
             obj@Experiment(ExpRabi.NAME);
             obj.parameterName = 'taus';
             
-%            First, get a frequency generator
+            % First, get a frequency generator
             if exist('MWChannel', 'var')
+                sg = getObjByName(SignalGenerator.NAME);
+                if ~iscell(MWChannel)
+                    MWChannel = {MWChannel};
+                end
+                                % validate the MWChannel exists
+
+                for i = 1:length(MWChannel)
+                    if ischar(MWChannel{i})
+                        tf = cellfun(@(s) strcmp(s.pgChannelName, MWChannel{i}), sg.FGchannels);
+                    else
+                        tf = cellfun(@(s) s.pgChannelNumber == MWChannel{i}, sg.FGchannels);
+                    end
+                    if tf == 0
+                        error('No frequency generator found');
+                    end
+                end
                 obj.MWChannel = MWChannel;
             end
-            if exist('FG', 'var')
-                obj.givenFG = FG;
-            else
-                FG = [];
-            end
-            obj.freqGenName = obj.getFgName(FG);
+            
 
-%             %%% To use MW2 comment the aboove block and unomment the block
-%             %%% below. make sure to pass the amplitude and frequency as a
-%             %%% 2d vector, e.g. frequency=[2870,2870], amplitude=[-10,-10]
-            if ~exist('FGs', 'var')
-                fgCell = FrequencyGenerator.getFG();
-                if fgCell{1}.numChannels == 2 || length(fgCell) == 1
-                    obj.freqGenName = fgCell{1}.name;
-                else
-                    obj.freqGenName = cellfun(@(fg)fg.name, fgCell(1:end), 'UniformOutput' ,0);
-                end
-            else
-                obj.freqGenName = obj.getFgName(FGs);
-            end
             
             obj.repeats = 10000;
             obj.averages = 1000;
@@ -77,7 +75,8 @@ classdef ExpRabi < Experiment
         end
         
         function set.amplitude(obj, newVal) % newVal is in dBm
-            checkAmplitude(obj, newVal)
+            % checkAmplitude(obj, newVal)
+            checkFrequencyVector(obj, newVal) % for now
             % If we got here, then newVal is OK.
             obj.amplitude = newVal;
             obj.changeFlag = true;
@@ -100,8 +99,30 @@ classdef ExpRabi < Experiment
     end
     
     methods
-        function totalParamNum = getTotalNumberOfParams(obj)
+        function [totalParamNum, paramList] = getTotalNumberOfParams(obj)
             totalParamNum = length(obj.tau);
+            paramList = obj.tau;
+        end
+
+        function changeSequence(obj, idx)
+            % Devices
+            pg = getObjByName(PulseGenerator.NAME);
+            % Some magic numbers
+            maxLastDelay = Experiment.DEFAULT_LAST_DELAY + max(obj.tau);
+
+            % change sequence in the pulse generator
+            if ~isempty(obj.sequencesList)
+                pg.setSequence(obj.sequencesList{idx});
+            else
+                pg.changeSequence('MW', 'duration', obj.tau(idx));
+                if obj.constantTime
+                    pg.changeSequence('lastDelay', 'duration', maxLastDelay - obj.tau(idx));
+                end
+            end
+
+            % change sequence in the signal generator
+            % might need to add another pulse for the trigger channel
+
         end
     end
     
@@ -141,28 +162,7 @@ classdef ExpRabi < Experiment
 
             % Set parameter, for saving
             obj.mCurrentXAxisParam.value = obj.tau;
-        end
-
-        function changeSequence(obj, idx)
-            % Devices
-            pg = getObjByName(PulseGenerator.NAME);
-            % Some magic numbers
-            maxLastDelay = Experiment.DEFAULT_LAST_DELAY + max(obj.tau);
-
-            % change sequence in the pulse generator
-            if ~isempty(obj.sequencesList)
-                pg.setSequence(obj.sequencesList{idx});
-            else
-                pg.changeSequence('MW', 'duration', obj.tau(idx));
-                if obj.constantTime
-                    pg.changeSequence('lastDelay', 'duration', maxLastDelay - obj.tau(idx));
-                end
-            end
-
-            % change sequence in the signal generator
-            % might need to add another pulse for the trigger channel
-
-        end
+       end
         
         function perform(obj)
             %%% Initialization

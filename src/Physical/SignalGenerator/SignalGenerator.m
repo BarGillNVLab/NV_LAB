@@ -32,6 +32,9 @@ classdef SignalGenerator < BaseObject
         AWGs
         FGchannels
         AWGchannels
+        FGchannelMap
+        AWGchannelMap
+        % FG2AWGmap
     end
     
     properties (Constant)
@@ -54,6 +57,10 @@ classdef SignalGenerator < BaseObject
             obj.FGchannels = {};
             obj.AWGchannels = {};
             isDefault = zeros(size(SGstruct));
+            FGchannelNames = {};
+            FGchannelNumbers = [];
+            AWGchannelNames = {};
+            AWGchannelNumbers = [];
             for i = 1:length(SGstruct)
                 currSGstruct =  SGstruct{i};
                 % if currSG.isFreqGen && ~currSG.isAWG
@@ -69,13 +76,27 @@ classdef SignalGenerator < BaseObject
                     obj.FGs{end+1} = FrequencyGenerator.getFG(currSGstruct);
                     for j = 1:length(currSGstruct.fgChannels)
                         obj.createSwitch(currSGstruct.fgChannels(j));
+
                         if ~isfield(currSGstruct.fgChannels(j), 'deviceChannel')
                             currSGstruct.fgChannels(j).deviceChannel = [];
                         end
+
+                        if ~isfield(currSGstruct.fgChannels(j), 'linkedAWG')
+                            currSGstruct.fgChannels(j).linkedAWG = [];
+                        end
+
+                        if ~isfield(currSGstruct.fgChannels(j), 'keepPGchannelOn')
+                            currSGstruct.fgChannels(j).keepPGchannelOn = false;
+                        end
+
                         obj.FGchannels{end+1} = struct('pgChannelName', currSGstruct.fgChannels(j).switchChannelName, ...
                                                        'pgChannelNumber', currSGstruct.fgChannels(j).switchChannel, ...
                                                        'device', obj.FGs{end}, ...
-                                                       'deviceChannel', currSGstruct.fgChannels(j).deviceChannel);
+                                                       'deviceChannel', currSGstruct.fgChannels(j).deviceChannel, ...
+                                                       'linkedAWG', {currSGstruct.fgChannels(j).linkedAWG}, ...
+                                                       'keepPGchannelOn', currSGstruct.fgChannels(j).keepPGchannelOn);
+                        FGchannelNames{end+1} = currSGstruct.fgChannels(j).switchChannelName;
+                        FGchannelNumbers(end+1) = currSGstruct.fgChannels(j).switchChannel;
                         if isfield(currSGstruct.fgChannels(j), 'default'); isDefault(i) = currSGstruct.fgChannels(j).default; end
                     end
                 end
@@ -87,12 +108,16 @@ classdef SignalGenerator < BaseObject
                             currSGstruct.awgChannels(j).deviceChannel = [];
                         end
                     end
-                        obj.AWGchannels{end+1} = struct('pgChannelName', currSGstruct.awgChannels(j).switchChannelName, ...
-                                                        'pgChannelNumber', currSGstruct.awgChannels(j).switchChannel, ...
-                                                        'device', obj.AWGs{end}, ...
-                                                        'deviceChannel', currSGstruct.awgChannels(j).deviceChannel);
+                    obj.AWGchannels{end+1} = struct('pgChannelName', currSGstruct.awgChannels(j).switchChannelName, ...
+                                                    'pgChannelNumber', currSGstruct.awgChannels(j).switchChannel, ...
+                                                    'device', obj.AWGs{end}, ...
+                                                    'deviceChannel', currSGstruct.awgChannels(j).deviceChannel);
+                    AWGchannelNames{end+1} = currSGstruct.awgChannels(j).switchChannelName;
+                    AWGchannelNumbers(end+1) = currSGstruct.awgChannels(j).switchChannel;
                 end
             end
+            obj.FGchannelMap = dictionary(FGchannelNames, FGchannelNumbers);
+            obj.AWGchannelMap = dictionary(AWGchannelNames, AWGchannelNumbers);
             defaultChannelIDX = find(isDefault, 1);
             if all(isDefault) > 1
                 error('can''t be more than one default frequency Generator');
@@ -100,12 +125,12 @@ classdef SignalGenerator < BaseObject
             obj.defaultChannel = find(isDefault, 1); % Identify the default channel
             % defaultChannel
             
-            for i=1:length(obj.FGchannels) % there's an issue with the set function
-                 obj.frequency(end+1) = obj.queryValue('frequency', obj.FGchannels{i}.pgChannelNumber);
-                 obj.amplitude(end+1) = obj.queryValue('amplitude', obj.FGchannels{i}.pgChannelNumber);
-                 obj.output(end+1)    = obj.queryValue('enableOutput', obj.FGchannels{i}.pgChannelNumber);
-                 obj.phase(end+1)     = obj.queryValue('phase', obj.FGchannels{i}.pgChannelNumber);
-            end
+            % for i=1:length(obj.FGchannels) % there's an issue with the set function
+            %      obj.frequency(end+1) = obj.queryValue('frequency', obj.FGchannels{i}.pgChannelNumber);
+            %      obj.amplitude(end+1) = obj.queryValue('amplitude', obj.FGchannels{i}.pgChannelNumber);
+            %      obj.output(end+1)    = obj.queryValue('enableOutput', obj.FGchannels{i}.pgChannelNumber);
+            %      obj.phase(end+1)     = obj.queryValue('phase', obj.FGchannels{i}.pgChannelNumber);
+            % end
 
             obj.frequency = obj.queryValue('frequency');
             obj.amplitude = obj.queryValue('amplitude');
@@ -214,89 +239,100 @@ classdef SignalGenerator < BaseObject
             end
         end
     end
-    
+
     methods
-        function set.output(obj, value, channel)
-             if ~exist('channel', 'var') || isempty(channel)
-                channel = cellfun(@(s) s.pgChannelNumber, obj.FGchannels);
+        function set.output(obj, value)
+            if ~strcmp(class(obj), 'SignalGenerator'); obj = getObjByName(SignalGenerator.NAME); end % making sure we're using the superclass and not a child
+             if size(value,2) < 2 && (size(value,1) == length(obj.FGchannels) || size(value,1) == 1)
+                pgChannels = cellfun(@(c) c.pgChannelNumber, obj.FGchannels);
+                value = value .* ones(size(pgChannels))'; % we need a column vector, as each row is for a different fg
+            elseif size(value,1) == 1
+                pgChannels = value(:,2);
+            else
+                error('data input incorrect')
              end
-            if length(value) ~= length(channel) && ~isscalar(value)
-                error('Frequency Generator: output vector size mismatch!')
-            end
-            value = value .* ones(size(channel));
-            idx = find(cellfun(@(s) ismember(s.pgChannelNumber, channel), obj.FGchannels));
+             value(isnan(value(:, 1)), 1) = 0; % if there's no connection and the value is NaN, convert to 0 (output off)
+            idx = find(cellfun(@(s) ismember(s.pgChannelNumber, pgChannels), obj.FGchannels));
             % Enable/Disable the output
-            for i = 1:length(channel)
-                fg = getObjByName(obj.FGchannels{idx(i)}.device.name);
+            for i = 1:length(pgChannels)
+                fg = obj.FGchannels{idx(i)}.device;
                 switch value(i)
                     case {'1', 1, 'on', true}
-                        obj.setValue('enableOutput', '1', obj.FGchannels{idx(i)}.deviceChannel)
+                        fg.setValue('enableOutput', '1', obj.FGchannels{idx(i)}.deviceChannel)
                     case {'0', 0, 'off', false}
-                        obj.setValue('enableOutput', '0', obj.FGchannels{idx(i)}.deviceChannel)
+                        fg.setValue('enableOutput', '0', obj.FGchannels{idx(i)}.deviceChannel)
                     otherwise
                         error('Unknown command. Ignoring')
                 end
             end
         end
         
-        function set.amplitude(obj, newAmplitude, channel)  % in dB
-             if ~exist('channel', 'var') || isempty(channel)
-                channel = cellfun(@(s) s.pgChannelNumber, obj.FGchannels);
-             end
-            if length(newAmplitude) ~= length(channel) && ~isscalar(newAmplitude)
-                error('Frequency Generator: amplitude vector size mismatch!')
+        function set.amplitude(obj, newAmplitude)  % in dB
+            if ~strcmp(class(obj), 'SignalGenerator'); obj = getObjByName(SignalGenerator.NAME); end % making sure we're using the superclass and not a child
+            if size(newAmplitude,2) < 2 && (size(newAmplitude,1) == length(obj.FGchannels) || size(newAmplitude,1) == 1)
+                pgChannels = cellfun(@(c) c.pgChannelNumber, obj.FGchannels);
+                newAmplitude = newAmplitude .* ones(size(pgChannels))'; % we need a column vector, as each row is for a different fg
+            elseif size(newAmplitude,1) == 1
+                pgChannels = newAmplitude(:,2);
+            else
+                error('data input incorrect')
             end
-            newAmplitude = newAmplitude .* ones(size(channel));
-            idx = find(cellfun(@(s) ismember(s.pgChannelNumber, channel), obj.FGchannels));
+            idx = find(cellfun(@(s) ismember(s.pgChannelNumber, pgChannels), obj.FGchannels));
             % Change amplitude level of the frequency generator
-            for i = 1:length(channel)
-                fg = getObjByName(obj.FGchannels{idx(i)}.device.name);
+            for i = 1:length(pgChannels)
+                % fg = getObjByName(obj.FGchannels{idx(i)}.device.name);
+                fg = obj.FGchannels{idx(i)}.device;
                 if ~ValidationHelper.isInBorders(newAmplitude(i), fg.minAmpl, fg.maxAmpl)
                     % error('MW amplitude must be between %g and %g.\nRequested: %g', ...
                     %     obj.minAmpl, obj.maxAmpl, newAmplitude(i))
                 end
-                fg.setValue('amplitude', newAmplitude(i), obj.FGchannels{idx(i)}.deviceChannel);
+                fg.setValue('amplitude', newAmplitude(i,1), obj.FGchannels{idx(i)}.deviceChannel);
             end
         end
-        
-        function set.frequency(obj, newFrequency, channel)      % in Hz
-             if ~exist('channel', 'var') || isempty(channel)
-                channel = cellfun(@(s) s.pgChannelNumber, obj.FGchannels);
-             end
-            if length(newFrequency) ~= length(channel) && ~isscalar(newFrequency)
-                error('Frequency Generator: frequency vector size mismatch!')
+
+        function set.frequency(obj, newFrequency)      % in Hz
+            if ~strcmp(class(obj), 'SignalGenerator'); obj = getObjByName(SignalGenerator.NAME); end % making sure we're using the superclass and not a child
+            if size(newFrequency,2) < 2 && (size(newFrequency,1) == length(obj.FGchannels) || size(newFrequency,1) == 1)
+                pgChannels = cellfun(@(c) c.pgChannelNumber, obj.FGchannels);
+                newFrequency = newFrequency .* ones(size(pgChannels))'; % we need a column vector, as each row is for a different fg
+            elseif size(newFrequency,1) == 1
+                pgChannels = newFrequency(:,2);
+            else
+                error('data input incorrect')
             end
-            newFrequency = newFrequency .* ones(size(channel));
-            idx = find(cellfun(@(s) ismember(s.pgChannelNumber, channel), obj.FGchannels));
+            idx = find(cellfun(@(s) ismember(s.pgChannelNumber, pgChannels), obj.FGchannels));
             % Change frequency level of the frequency generator
-            for i = 1:length(newFrequency)
-                fg = getObjByName(obj.FGchannels{idx(i)}.device.name);
+            for i = 1:length(pgChannels)
+                % fg = getObjByName(obj.FGchannels{idx(i)}.device.name);
+                fg = obj.FGchannels{idx(i)}.device;
                 if ~ValidationHelper.isInBorders(newFrequency(i), fg.minFreq, fg.maxFreq)
                     % error('MW frequency must be between %d and %d.\nRequested: %d', ...
                     %     fg.minFreq, fg.maxFreq, newFrequency)
                 end
-                obj.setValue('frequency', newFrequency(i), obj.FGchannels{idx(i)}.deviceChannel);
+                fg.setValue('frequency', newFrequency(i,1), obj.FGchannels{idx(i)}.deviceChannel);
             end
         end
 
-        function set.phase(obj, newPhase, channel)      % in degrees
-             if ~exist('channel', 'var') || isempty(channel)
-                channel = cellfun(@(s) s.pgChannelNumber, obj.FGchannels);
+        function set.phase(obj, newPhase)      % in degrees
+            if ~strcmp(class(obj), 'SignalGenerator'); obj = getObjByName(SignalGenerator.NAME); end % making sure we're using the superclass and not a child
+             if size(newPhase,2) < 2 && (size(newPhase,1) == length(obj.FGchannels) || size(newPhase,2) == 1)
+                pgChannels = cellfun(@(c) c.pgChannelNumber, obj.FGchannels); 
+                newPhase = newPhase .* ones(size(pgChannels))'; % we need a column vector, as each row is for a different fg
+            elseif size(newPhase,1) == 1
+                pgChannels = newPhase(:,2);
+            else
+                error('data input incorrect')
              end
-            if length(newPhase) ~= length(channel) && ~isscalar(newPhase)
-                error('Frequency Generator: phase vector size mismatch!')
-            end
-            newPhase = newPhase .* ones(size(channel));
-            idx = find(cellfun(@(s) ismember(s.pgChannelNumber, channel), obj.FGchannels));
-            for i = 1:length(newPhase)
-                fg = getObjByName(obj.FGchannels{idx(i)}.device.name);
+            idx = find(cellfun(@(s) ismember(s.pgChannelNumber, pgChannels), obj.FGchannels));
+            for i = 1:length(pgChannels)
+                fg = obj.FGchannels{idx(i)}.device;
                 % Change phase of the frequency generator
                 newPhase = mod(newPhase-fg.minPhase,360) + fg.minPhase;
                 if ~ValidationHelper.isInBorders(newPhase(i), fg.minPhase, fg.maxPhase)
                     % error('phase must be between %d and %d.\nRequested: %d', ...
                     %     fg.minPhase, fg.maxPhase, newPhase)
                 end
-                obj.setValue('phase', newPhase(i), obj.FGchannels{idx(i)}.deviceChannel);
+                fg.setValue('phase', newPhase(i,1), obj.FGchannels{idx(i)}.deviceChannel);
             end
         end
 
@@ -311,21 +347,40 @@ classdef SignalGenerator < BaseObject
                 fg = getObjByName(obj.FGchannels{i}.device.name);
                 command = fg.createCommand(what, '?', obj.FGchannels{i}.deviceChannel);
                 sendCommand(fg, command);
-                value = [value, str2double(fg.readOutput(what))]; %#ok<AGROW>
+                value = [value; str2double(fg.readOutput(what))]; %#ok<AGROW>
             end
         end
         
         function setValue(obj, what, value, channel)
             % If channel is not specified, then checks the length of value.
             if ~exist('channel', 'var') || isempty(channel)
-                channel = 1:obj.numChannels;
+                channel = cellfun(@(s) s.pgChannelNumber, obj.FGchannels);
             end
-            for i = 1:length(channel)
-                fg = getObjByName(obj.FGchannels{i}.instumentName);
-                command = obj.createCommand(what, value, obj.FGchannels{i}.deviceChannel); % 14.1.22 rotem - added indexing to value
+            value = value .* ones(size(channel));
+            idx = find(cellfun(@(s) ismember(s.pgChannelNumber, channel), obj.FGchannels));
+            for i = length(channel)
+                fg = getObjByName(obj.FGchannels{idx(i)}.device.name);
+                command = fg.createCommand(what, value(i), obj.FGchannels{i}.deviceChannel);
                 sendCommand(fg, command);
             end
         end
+
+        function idx = findOrderedFGindex(obj, fgChannel)
+            channelNumbers = cellfun(@(x) x.pgChannelNumber, obj.FGchannels);
+            idx = arrayfun(@(x) find(channelNumbers == x), fgChannel);
+        end
+
+        % function value = validateInput(obj, value)
+        %     % Validate input dimensions and prepare pgChannels
+        %     if size(value, 2) < 2 && (size(value, 1) == length(obj.FGchannels) || size(value, 1) == 1)
+        %         pgChannels = cellfun(@(c) c.pgChannelNumber, obj.FGchannels);
+        %         value = repmat(value, size(pgChannels, 1), 1); % Create a column vector
+        %     elseif size(value, 1) == 1
+        %         pgChannels = value(:, 2);
+        %     else
+        %         error('Data input incorrect');
+        %     end
+        % end
     end
 
     %% Initializtion and Setup

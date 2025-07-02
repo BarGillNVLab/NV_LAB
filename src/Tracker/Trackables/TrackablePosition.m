@@ -119,6 +119,7 @@ classdef TrackablePosition < Trackable % & StageScanner
             
             spcm = getObjByName(Spcm.NAME);
                 if isempty(spcm); throwBaseObjException(Spcm.NAME); end
+            spcm.stopExperimentCount % !!!!NEEDS TO BE CHECKED WITH TIMETAGGER AND PHOTODIODE (shouldn't be an issue because for them we already stop the task in getRawData() )!!!! for the tracking we're going to call spcm.prepareReadByTime so we should stop the DAQ task beforehand.
             spcm.setSPCMEnable(true);
             
             laser = getObjByName(obj.mLaserName);
@@ -133,19 +134,25 @@ classdef TrackablePosition < Trackable % & StageScanner
             
             % Check if MW needs to be turned on
             if ~isempty(obj.parent) && isprop(obj.parent, 'mode') && isequal(obj.parent.mode, 'CW')
-                if iscell(obj.parent.freqGenName)
-                    for i = 1:length(obj.parent.freqGenName)
-                        fg = getObjByName(obj.parent.freqGenName{i});
-                        if isempty(fg); throwBaseObjException(obj.parent.freqGenName{i}); end
-                        fg.amplitude = obj.amplitude(i) - 1.5;
-                    end
-                else
-                    fg = getObjByName(obj.parent.freqGenName);
-                    if isempty(fg); throwBaseObjException(obj.parent.freqGenName); end
-                    if isscalar(obj.parent.amplitude)
-                        fg.amplitude = obj.parent.amplitude - 1.5;
-                    end
-                end
+                % if iscell(obj.parent.freqGenName)
+                %     for i = 1:length(obj.parent.freqGenName)
+                %         fg = getObjByName(obj.parent.freqGenName{i});
+                %         if isempty(fg); throwBaseObjException(obj.parent.freqGenName{i}); end
+                %         fg.amplitude = obj.amplitude(i) - 1.5;
+                %     end
+                % else
+                %     fg = getObjByName(obj.parent.freqGenName);
+                %     if isempty(fg); throwBaseObjException(obj.parent.freqGenName); end
+                %     if isscalar(obj.parent.amplitude)
+                %         fg.amplitude = obj.parent.amplitude - 1.5;
+                %     end
+                % end
+                sg = getObjByName(SignalGenerator.NAME);
+                newAmplitude = zeros(length(obj.parent.MWChannel), 2);
+                newAmplitude(:,1) = cell2mat(obj.parent.amplitude) - 1.5;
+                newAmplitude(:,2) = sg.FGchannelMap(obj.parent.MWChannel)';
+                sg.amplitude = newAmplitude;
+                % obj.parent.setFGparams('amplitude')
                 mwSwitch = getObjByName('MW');
                 mwSwitch.isEnabled = true;
             end
@@ -217,19 +224,24 @@ classdef TrackablePosition < Trackable % & StageScanner
             
             % Check if MW needs to be turned off
             if ~isempty(obj.parent) && isprop(obj.parent, 'mode') && isequal(obj.parent.mode, 'CW')
-                if iscell(obj.parent.freqGenName)
-                    for i = 1:length(obj.parent.freqGenName)
-                        fg = getObjByName(obj.parent.freqGenName{i});
-                        if isempty(fg); throwBaseObjException(obj.parent.freqGenName{i}); end
-                        fg.amplitude = obj.parent.amplitude(i);
-                    end
-                else
-                    fg = getObjByName(obj.parent.freqGenName);
-                    if isempty(fg); throwBaseObjException(obj.parent.freqGenName); end
-                    if isscalar(obj.parent.amplitude)
-                        fg.amplitude = obj.parent.amplitude;
-                    end
-                end
+                % if iscell(obj.parent.freqGenName)
+                %     for i = 1:length(obj.parent.freqGenName)
+                %         fg = getObjByName(obj.parent.freqGenName{i});
+                %         if isempty(fg); throwBaseObjException(obj.parent.freqGenName{i}); end
+                %         fg.amplitude = obj.parent.amplitude(i);
+                %     end
+                % else
+                %     fg = getObjByName(obj.parent.freqGenName);
+                %     if isempty(fg); throwBaseObjException(obj.parent.freqGenName); end
+                %     if isscalar(obj.parent.amplitude)
+                %         fg.amplitude = obj.parent.amplitude;
+                %     end
+                % end
+                sg = getObjByName(SignalGenerator.NAME);
+                newAmplitude = zeros(length(obj.parent.MWChannel), 2);
+                newAmplitude(:,1) = cell2mat(obj.parent.amplitude);
+                newAmplitude(:,2) = sg.FGchannelMap(obj.parent.MWChannel)';
+                sg.amplitude = newAmplitude;
                 mwSwitch = getObjByName('MW');
                 mwSwitch.isEnabled = false;
             end

@@ -202,6 +202,8 @@ classdef SpcmNiDaqControlled < Spcm & NiDaqControlled
             obj.counterExpTask = task;
 
             daq.startTask(obj.counterExpTask);
+
+
         end
         
         function startExperimentCount(obj)

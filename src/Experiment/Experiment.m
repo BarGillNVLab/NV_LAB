@@ -78,11 +78,12 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
 
         % AWG parameters:
         IQ = struct('IQ_arrays', [], 'clock', 1e9, 'switchWF', true, 'duration', 0.1, 'wfRepeats', -1, 'filename', '', 'function', '', 'useIQ', 0);
+        useAWG = false              % logical. When true, the signal generator will use AWG(s)
         create_triggers
         envelope                    % function or vector (?)
         phase                       % in radians
         sequencesList               % cell array containing all experiment sequences. Used (mainly) for AWG preloading
-        clearAWG = true             % logical. Wheter to clear the sequences from the awg or not. Default is true.
+        clearAWG = true             % logical. Whether to clear the sequences from the awg or not. Default is true.
 %         IQ.wv_path;             % string array
 %         IQ.IQ_arrays; % creating a 2x1x3 matrix. [2,i,j] - 2: I&Q, i: IQ vector length, j: number of segments. if IQ vector length = 1, we will create a constant I&Q with that value.
 %         IQ.switchWF; % trigger switching between segments at the end of a segment (1 - switch, 0 - don't switch)
@@ -98,10 +99,10 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         currParamIter = 0;  % Counts the current parameters' iteration
     end
     
-    properties (Hidden, SetAccess = protected)
-        freqGenName = [];   % The name of the FG used in the experiment. Default is empty. Can be a cell array of names.
-        givenFG     = [];   % The FG given during initilization.
-    end
+    % properties (Hidden, SetAccess = protected)
+    %     freqGenName = [];   % The name of the FG used in the experiment. Default is empty. Can be a cell array of names.
+    %     givenFG     = [];   % The FG given during initilization.
+    % end
     
     properties (Hidden, SetAccess = {?Trackable, ?SpcmCounter})
         isRunning = false;          % boolean, used to check if currently running.
@@ -191,7 +192,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             % obj.MWChannel = fgCell{1}.switchMW.switchChannelName;
             sg = getObjByName(SignalGenerator.NAME);
             fgCell = sg.FGchannels;
-            obj.MWChannel = fgCell{1}.pgChannelName; % this is temp, it should be chosen based on the default fg in signalGenerator
+            obj.MWChannel = {fgCell{1}.pgChannelName}; % this is temp, it should be chosen based on the default fg in signalGenerator
         end
         
         function cellOfStrings = getAllExpParameterProperties(obj)
@@ -357,9 +358,9 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             if ~ValidationHelper.isValuePositiveInteger(newVal)
                 obj.sendError('Number of channels must be a positive integer!')
             end
-            if ~ValidationHelper.isInBorders(newVal, 1, FrequencyGenerator.nChannelsAvailable)
-                obj.sendError('Number of channels cannot exceed the number of available channels!')
-            end
+            % if ~ValidationHelper.isInBorders(newVal, 1, FrequencyGenerator.nChannelsAvailable)
+            %     obj.sendError('Number of channels cannot exceed the number of available channels!')
+            % end
         end
         
         function checkBoolean(obj, newVal)
@@ -672,6 +673,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             if isempty(pg); throwBaseObjException(PulseGenerator.Name); end
             axisHandle = pg.plotSequence(varargin{:});
             title(axisHandle, obj.NAME)
+            obj.wrapUp(); % we called obj.prepare(); so we should also turn everything off.
         end
         
         function plotDelayedSequence(obj, varargin)
@@ -1385,29 +1387,51 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             end
 
             % Disconnect FrequencyGenerator
-            if ~isempty(obj.freqGenName)
-                if iscell(obj.freqGenName)
-                    for i = 1:length(obj.freqGenName)
-                        fg = getObjByName(obj.freqGenName{i});
-                        if ~fg.keepOn
-                            fg.output = false(1,fg.numChannels);
-                        end
-                        fg.disconnect;
-                        if isa(fg, 'FrequencyGeneratorSGT100A')
-                            fg.disconnectIQ(fg);
-                        end
-                    end
-                else
-                    fg = getObjByName(obj.freqGenName);
-                    if ~fg.keepOn
-                        fg.output = false;
-                    end
-                    fg.disconnect;
-                    if isa(fg, 'FrequencyGeneratorSGT100A')
-                        fg.disconnectIQ(fg);
-                    end
-                end
-            end
+            % let's make sure all of the MWChannels are listed as their channel number
+            % if obj.useAWG
+            %         % disconnect AWG
+            %     end
+            obj.setFGparams('disconnect', {'output', 0})
+            % sg = getObjByName(SignalGenerator.NAME);
+            % % convertFunction = @(x) ischar(x) * sg.channelMap(x) + isnumeric(x) * x;
+            % fgChannels = cellfun(@(c) sg.FGchannelMap(c), obj.MWChannel);
+            % idx = sg.findOrderedFGindex(fgChannels);
+            % for i = idx
+            %     fg = getObjByName(sg.FGchannels{i}.device.name);
+            %     if ~fg.keepOn
+            %         % fg.output = 0 % there's an issue here because we can't pass the device channel.
+            %         % fg.setvalue('enableOutput', '0', obj.FGchannels{i}.deviceChannel); % workaround
+            %     end
+            %     if obj.useAWG
+            %         % disconnect AWG
+            %     end
+            %     fg.disconnect;
+            % end
+
+
+            % if ~isempty(obj.freqGenName)
+            %     if iscell(obj.freqGenName)
+            %         for i = 1:length(obj.freqGenName)
+            %             fg = getObjByName(obj.freqGenName{i});
+            %             if ~fg.keepOn
+            %                 fg.output = false(1,fg.numChannels);
+            %             end
+            %             fg.disconnect;
+            %             if isa(fg, 'FrequencyGeneratorSGT100A')
+            %                 fg.disconnectIQ(fg);
+            %             end
+            %         end
+            %     else
+            %         fg = getObjByName(obj.freqGenName);
+            %         if ~fg.keepOn
+            %             fg.output = false;
+            %         end
+            %         fg.disconnect;
+            %         if isa(fg, 'FrequencyGeneratorSGT100A')
+            %             fg.disconnectIQ(fg);
+            %         end
+            %     end
+            % end
         end
         
         function prepareInternal(obj, S)
@@ -1437,65 +1461,93 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             pg.repeats = obj.repeats;
             pg.fixDelays = obj.fixDelays;
             
-            % Set Frequency Generator
-            % make sure that the data set in the experiment is in a cell
+            % Set Signal Generator
+            sg = getObjByName(SignalGenerator.NAME);
 
-            if ~isempty(obj.freqGenName)
-                numChannels = 0;
-                if iscell(obj.freqGenName)
-                    % There are multiple FG, and they might have multiple
-                    % channels. For each FG, check the number of channels,
-                    % and set them.
-                    for i = 1:length(obj.freqGenName)
-                        fg = getObjByName(obj.freqGenName{i});
-                        if isempty(fg); throwBaseObjException(obj.freqGenName{i}); end
-                        fg.connect;
-                        numChannels = numChannels + fg.numChannels;
-                        if fg.numChannels > 1
-                            fg.output = obj.WindFreakChannels;
-                        else
-                            fg.output = true(1, fg.numChannels);
-                        end
-                        try
-                            if obj.IQ.useIQ
-                                fg.IQ.output = true;
-                                fg.LoadAWGInternal(fg);
-                            end
-                        catch err
-                            warning('No internal IQ')
-                        end
-                    end
+            % make sure that the data set in the experiment is in a cell
+            % validate the frequency generator channel list
+            if ~iscell(obj.MWChannel)
+                obj.MWChannel = {obj.MWChannel};
+            end
+            for i = 1:length(obj.MWChannel)
+                if ischar(obj.MWChannel{i})
+                    tf = any(cellfun(@(s) strcmp(s.pgChannelName, obj.MWChannel{i}), sg.FGchannels));
                 else
-                    fg = getObjByName(obj.freqGenName);
-                    if isempty(fg); throwBaseObjException(obj.freqGenName); end
-                    fg.connect;
-                    numChannels = numChannels + fg.numChannels;
-                    if ~contains(fg.name, 'TektronixAWG')
-                        fg.output = true(1, fg.numChannels);
-                        try
-                            if obj.IQ.useIQ
-                                fg.IQ.output = true;
-                                fg.LoadAWGInternal(fg);
-                            end
-                        catch
-                            warning('No internal IQ')
-                        end
-                    end
+                    tf = any(cellfun(@(s) s.pgChannelNumber == obj.MWChannel{i}, sg.FGchannels));
                 end
-                
-                if length(obj.amplitude) <= numChannels
-                    obj.setMultipleFGAmplitudes(obj.amplitude);
-                end
-                
-                if length(obj.frequency) <= numChannels
-                    obj.setMultipleFGFrequencies(obj.frequency);
+                if tf == 0
+                    error('No frequency generator found for');
                 end
             end
+            obj.validateCellInput('frequency', 'amplitude', 'phase');
+            obj.setFGparams('connect', 'amplitude', 'frequency', 'phase', {'output', 1})
+
+            % if ~isempty(obj.freqGenName)
+            %     numChannels = 0;
+            %     if iscell(obj.freqGenName)
+            %         % There are multiple FG, and they might have multiple
+            %         % channels. For each FG, check the number of channels,
+            %         % and set them.
+            %         for i = 1:length(obj.freqGenName)
+            %             fg = getObjByName(obj.freqGenName{i});
+            %             if isempty(fg); throwBaseObjException(obj.freqGenName{i}); end
+            %             fg.connect;
+            %             numChannels = numChannels + fg.numChannels;
+            %             if fg.numChannels > 1
+            %                 fg.output = obj.WindFreakChannels;
+            %             else
+            %                 fg.output = true(1, fg.numChannels);
+            %             end
+            %             try
+            %                 if obj.IQ.useIQ
+            %                     fg.IQ.output = true;
+            %                     fg.LoadAWGInternal(fg);
+            %                 end
+            %             catch err
+            %                 warning('No internal IQ')
+            %             end
+            %         end
+            %     else
+            %         fg = getObjByName(obj.freqGenName);
+            %         if isempty(fg); throwBaseObjException(obj.freqGenName); end
+            %         fg.connect;
+            %         numChannels = numChannels + fg.numChannels;
+            %         if ~contains(fg.name, 'TektronixAWG')
+            %             fg.output = true(1, fg.numChannels);
+            %             try
+            %                 if obj.IQ.useIQ
+            %                     fg.IQ.output = true;
+            %                     fg.LoadAWGInternal(fg);
+            %                 end
+            %             catch
+            %                 warning('No internal IQ')
+            %             end
+            %         end
+            %     end
+            % 
+            %     if length(obj.amplitude) <= numChannels
+            %         obj.setMultipleFGAmplitudes(obj.amplitude);
+            %     end
+            % 
+            %     if length(obj.frequency) <= numChannels
+            %         obj.setMultipleFGFrequencies(obj.frequency);
+            %     end
+            % end
 
             % Load AWG if needed. 
             % We first set the FG because if we're using AWG we might change
             % the FG parameters, but if we don't need AWG, we don't need to do anything more.
-            if AWG
+            if obj.useAWG
+                tf = zeros(size(obj.MWChannel));
+                for i = 1:length(obj.MWChannel) % we need to iterate only through the FGs used in the specific experiment
+                    idx = find(cellfun(@(c) strcmp(c.pgChannelName, obj.MWChannel{i}) , sg.FGchannels));
+                    fg = sg.FGchannels{idx};
+                    tf(i) = ~isempty(fg.linkedAWG);
+                end
+                if ~any(tf)
+                    error('no AWG found for FG')
+                end
+                % add a validation that AWG is connected to obj.MWchannel
                obj.loadAWG(S, pg); 
             end
             
@@ -1545,104 +1597,224 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 obj.averagesTimeStamp = zeros(obj.averages, 6);
             end
         end
-        
-        function setMultipleFGAmplitudes(obj, amplitudes)
-            % There are multiple FGs, and each has a different number of
-            % channels. Sets the FGs' channels amplitude according to their
-            % order.
-            if iscell(obj.freqGenName) % Multiple FGs
-                J = 1;
-                for i = 1:length(obj.freqGenName)
-                    fg = getObjByName(obj.freqGenName{i});
-                    if isempty(fg); throwBaseObjException(obj.freqGenName{i}); end
-                    endJ = min(J + fg.numChannels - 1, length(amplitudes));
-                    fg.amplitude = amplitudes(J:endJ);
-                    J = J + fg.numChannels;
+
+        function validateCellInput(obj, varargin)
+            for i=1:length(varargin)
+                try
+                    tf = exist('obj.(varargin{i})', 'var'); % not good
+                catch
+                    error('parameter %s doesn''t exist')
                 end
-            else % Single FG
-                fg = getObjByName(obj.freqGenName);
-                if isempty(fg); throwBaseObjException(obj.freqGenName); end
-                fg.amplitude = amplitudes;
-            end
-        end
-        
-        function setMultipleFGFrequencies(obj, frequencies)
-            % There are multiple FGs, and each has a different number of
-            % channels. Sets the FGs' channels frequencies according to
-            % their order.
-            if iscell(obj.freqGenName) % Multiple FGs
-                J = 1;
-                for i = 1:length(obj.freqGenName)
-                    fg = getObjByName(obj.freqGenName{i});
-                    if ~fg.keepOn || isa(fg, 'FrequencyGeneratorSGT100A')
-                        if isempty(fg); throwBaseObjException(obj.freqGenName{i}); end
-                        endJ = min(J + fg.numChannels - 1, length(frequencies));
-                        fg.frequency = frequencies(J:endJ);
-                    end
-                    J = J + fg.numChannels;
+
+                if isempty(obj.(varargin{i}))
+                    continue % we don't always need to define all the parameters, namely phase.
                 end
-            else % Signle FG
-                fg = getObjByName(obj.freqGenName);
-                if ~fg.keepOn || isa(fg, 'FrequencyGeneratorSGT100A')
-                    if isempty(fg); throwBaseObjException(obj.freqGenName); end
-                    fg.frequency = frequencies;
+                if ~iscell(obj.(varargin{i}))
+                    obj.(varargin{i}) = {obj.(varargin{i})};
                 end
+
+                if (length(obj.(varargin{i})) > 1) && any(size(obj.(varargin{i})) ~= size(obj.MWChannel))
+
+                    error('%s  must be set as a cell array, each cell consisting the %s for a signal generator');
+                end
+
+                if (length(obj.(varargin{i})) == 1) && any(size(obj.(varargin{i})) ~= size(obj.MWChannel))
+                    obj.(varargin{i}) = repmat(obj.(varargin{i}), size(obj.MWChannel)); % so we can initialize all signal generators to the same value.
+                end
+
             end
         end
 
-        function waveform = generateWaveform(exp, sequence, signalGen, signalGen_idx) % (obj, I_vec, Q_vec, varargin) % varargin = [clock, startPlayback, KeepLocalFile, path, filename, comment, copyright, no_scaling]
+        function setFGparams(obj, varargin)
+            sg = getObjByName(SignalGenerator.NAME);
+            pgChannels = sg.FGchannelMap(obj.MWChannel);
+
+            connect = find(strcmp(varargin, 'connect'));
+            try varargin(connect) = []; end % in 'try' so we don't get an error if the string 'connect' wasn't found.
+            disconnect = find(strcmp(varargin, 'disconnect'));
+            try varargin(disconnect) = []; end % in 'try' so we don't get an error if the string 'disconnect' wasn't found.
+            
+            for i = 1:length(pgChannels)
+                newVal = zeros(1,2);
+                newVal(2) = pgChannels(i);
+                idx = sg.findOrderedFGindex(pgChannels(i));
+                fg = sg.FGchannels{idx};
+
+                if connect
+                    fg.device.connect;
+                end
+
+                for j = 1:length(varargin)
+                    if iscellstr(varargin(j)) % we only have a parameter name
+                        paramName = varargin{j};
+                    else % we have both a parameter name and its value
+                        paramName = varargin{j}{1};
+                        if ( length(varargin{j})-1 ) == length(pgChannels) % the first cell is the paramName, so we need to subtract 1
+                        paramValue = varargin{j}{i+1};
+                        else % we assume there's only one value
+                            paramValue = varargin{j}{2};
+                        end
+                    end
+
+                    switch paramName
+                        case 'frequency'
+                            currFreq = obj.frequency{i};
+                            if iscell(currFreq)
+                                currFreq = cell2mat(currFreq);
+                            end
+                            if length(currFreq) > 1
+                                currFreq = (max(currFreq) + min(currFreq)) / 2;
+                            end
+                            newVal(1) = currFreq;
+                        case 'amplitude'
+                            currAmplitude = obj.amplitude{i};
+                            if iscell(currAmplitude)
+                                currAmplitude = cell2mat(currAmplitude);
+                            end
+                            if length(currAmplitude) > 1
+                                currAmplitude = max(currAmplitude);
+                            end
+                            newVal(1) = currAmplitude;
+                        case 'output'
+                            % currState = fg.queryValue(varargin{j}, sg.FGchannels{fgChannel}.pgChannelNumber);
+                            % newOutput = ~currState;
+                            newOutput = paramValue;
+                            newVal(1) = newOutput;
+                        case 'phase'
+                            if isempty(obj.phase) || length(obj.phase{i}) > 1
+                                continue;
+                            end
+                            newVal(1) = obj.phase{i};
+                    end
+
+                    fg.device.(paramName) = newVal;
+                end
+                if disconnect
+                    fg.device.disconnect;
+                end
+            end
+        end
+        
+        % function setMultipleFGAmplitudes(obj, amplitudes)
+        %     % There are multiple FGs, and each has a different number of
+        %     % channels. Sets the FGs' channels amplitude according to their
+        %     % order.
+        %     if iscell(obj.freqGenName) % Multiple FGs
+        %         J = 1;
+        %         for i = 1:length(obj.freqGenName)
+        %             fg = getObjByName(obj.freqGenName{i});
+        %             if isempty(fg); throwBaseObjException(obj.freqGenName{i}); end
+        %             endJ = min(J + fg.numChannels - 1, length(amplitudes));
+        %             fg.amplitude = amplitudes(J:endJ);
+        %             J = J + fg.numChannels;
+        %         end
+        %     else % Single FG
+        %         fg = getObjByName(obj.freqGenName);
+        %         if isempty(fg); throwBaseObjException(obj.freqGenName); end
+        %         fg.amplitude = amplitudes;
+        %     end
+        % end
+        % 
+        % function setMultipleFGFrequencies(obj, frequencies)
+        %     % There are multiple FGs, and each has a different number of
+        %     % channels. Sets the FGs' channels frequencies according to
+        %     % their order.
+        %     if iscell(obj.freqGenName) % Multiple FGs
+        %         J = 1;
+        %         for i = 1:length(obj.freqGenName)
+        %             fg = getObjByName(obj.freqGenName{i});
+        %             if ~fg.keepOn || isa(fg, 'FrequencyGeneratorSGT100A')
+        %                 if isempty(fg); throwBaseObjException(obj.freqGenName{i}); end
+        %                 endJ = min(J + fg.numChannels - 1, length(frequencies));
+        %                 fg.frequency = frequencies(J:endJ);
+        %             end
+        %             J = J + fg.numChannels;
+        %         end
+        %     else % Signle FG
+        %         fg = getObjByName(obj.freqGenName);
+        %         if ~fg.keepOn || isa(fg, 'FrequencyGeneratorSGT100A')
+        %             if isempty(fg); throwBaseObjException(obj.freqGenName); end
+        %             fg.frequency = frequencies;
+        %         end
+        %     end
+        % end
+
+        function waveform = generateWaveform(exp, sequence, fg) %signalGen, FGidx) % (obj, I_vec, Q_vec, varargin) % varargin = [clock, startPlayback, KeepLocalFile, path, filename, comment, copyright, no_scaling]
             % we first need to get some constants
-            [pulses, ~, pulseTimes] = getPulsesByChannel(sequence, signalGen.fg.switchMW.switchChannelName);
-            signalGen_duration = sum(pulses.duration);
+            % fg = signalGen.device;
+            % fg = signalGen.FGchannels{FGidx}.device;
+            % if ischar(signalGen.FGchannels{FGidx}.linkedAWG)
+            %     AWGidx = find(cellfun(@(s) strcmp(s.pgChannelName, signalGen.FGchannels{FGidx}.linkedAWG), signalGen.AWGchannels));
+            % else
+            %     AWGidx = find(cellfun(@(s) s.pgChannelNumber == signalGen.FGchannels{FGidx}.linkedAWG, signalGen.AWGchannels));
+            % end
+            % pgChannelName = signalGen.FGchannels{FGidx}.pgChannelName;
+            % awg = signalGen.AWGchannels{AWGidx}.device;
+            % [pulses, ~, pulseTimes] = getPulsesByChannel(sequence, signalGen.pgChannelName);
+            % [pulses, ~, pulseTimes] = getPulsesByChannel(sequence, signalGen.FGchannels{FGidx}.pgChannelName);
+            [pulses, ~, pulseTimes] = getPulsesByChannel(sequence, fg.pgChannelName);
+            signalGen_duration = sum([pulses.duration]);
             % signalGen_duration = sum(sequence.pulses.duration(sequence.pulses.getOnChannels == signalGen.channelName))+exp.permutable_parameter*number_of_pulses; % won't work but that's the gist. It'll be resolved in debugging
-            waveformLength = signalGen_duration + exp.laserInitializationDuration; % we're using laserInitializationDuration but any other experiment constant time can be used. This is only to make sure that the waveform is long enough for the instrument
-            waveformLength = min(waveformLengh, signalGen.awg.MIN_WAVEFORM_LENGTH);
+            waveformLength = (signalGen_duration + exp.laserInitializationDuration); % we're using laserInitializationDuration but any other experiment constant time can be used. This is only to make sure that the waveform is long enough for the instrument
+            % waveformLength = min(waveformLengh, signalGen.awg.MIN_WAVEFORM_LENGTH);
             % signal = ones(1, waveformLength/dt);
-            dt = 1/signalGen.awg.sampleRate;
-            t = [0:dt:waveformLength];
-            waveform = zeros(size(t));
+            % dt = 1/(awg.sampleRate*1e-6);
+            % t = [0:dt:waveformLength];
+            % waveform = zeros(size(t));
 
             % inizialize our variables and make sure they're the right size
-            frequency = exp.frequency{signalGen_idx}*ones(size(pulses));
-            amplitude = exp.amplitude{signalGen_idx}*ones(size(pulses));
-            phase = exp.phase{signalGen_idx}*ones(size(pulses));
-            envelope = exp.envelope{signalGen_idx}*ones(size(pulses));
+            idx = find(cellfun(@(c) strcmp(fg.pgChannelName, c), exp.MWChannel));
 
-            % frequency = ones(size(pulses))*frequency;
-            % amplitude = ones(size(pulses))*amplitude;
-            % phase = ones(size(pulses))*phase;
-            % envelope = ones(size(pulses))*envelope;
-            
-            baseband = ( max(frequency) + min(frequency) ) / 2;
-            signalGen.awg.baseband = baseband;
-            % base_sine = ones(1, size(exp.frequency), waveformLength/dt);
-            
-            if isempty(envelope)
+            frequency = repmat(exp.frequency{idx}, size(pulses)./size(exp.frequency{idx})); %{exp.frequency{1}.*ones(size(pulses))};
+            if ~iscell(frequency)
+                frequency = num2cell(frequency);
+            end
+
+            amplitude = repmat(exp.amplitude{idx}, size(pulses)./size(exp.amplitude{idx}));
+            if ~iscell(amplitude)
+                amplitude = num2cell(amplitude);
+            end
+
+            if ~isempty(exp.phase)
+                phase = repmat(exp.phase{idx}, size(pulses)./size(exp.phase{idx}));
+                if ~iscell(phase)
+                    phase = num2cell(phase);
+                end
+            end
+
+            if ~isempty(exp.envelope)
+                envelope = repmat(exp.envelope{idx}, size(pulses)./size(exp.envelope{idx}));
+            else % there's no exp.envelope so we'll create envelope using the amplitude parameter
                 linear_amplitudes = cellfun(@(x) 10^(x / 20), amplitude, 'UniformOutput', false);
                 max_amplitude = max(unique(cell2mat(linear_amplitudes)));
                 envelope = cellfun(@(x) string(abs(x / max_amplitude)), linear_amplitudes, 'UniformOutput', false);
+                % linear_amplitudes = 10.^( amplitude ./ 20);
+                % max_amplitude = max(unique(linear_amplitudes));
+                % envelope = string(abs(linear_amplitudes./ max_amplitude));
             end
+            
+            baseband = ( max(cell2mat(frequency)) + min(cell2mat(frequency)) ) / 2;
+            awg.baseband = baseband;
 
-            % frequency = {[2840], [2840]};
-            % phase = {[0], [pi/2]};
-            % envelope = {[1], [1]}; % Define envelope for each frequency
-            % pulseTimes = [0, 5];
-            % PulseDurations = [5, 5];
+            %%% for testing %%%
+            dt = 1/(5*baseband);
+            waveformLength = sequence.duration;
+            t = [0:dt:waveformLength];
+            waveform = zeros(size(t));
 
 
-            % baseband = ( max(frequency) + min(frequency) ) / 2;
-            % signalGen.awg.baseband = baseband;
-            % base_sine = ones(1, size(exp.frequency), waveformLength/dt);
-
-            for i = 1:length(frequency)
+            for i = 1:length(pulses)
                 freq = frequency{i};
+                if ~exist('phase', 'var')
+                    phase = {0};
+                end
                 pha = phase{i}*ones(size(freq));
                 % env = envelope{i}*ones(size(freq));
                 env = repmat(envelope{i}, size(freq));
                 startIdx = round(pulseTimes(i) / dt) + 1; % +1 for indexing
                 endIdx = startIdx + round(pulses(i).duration / dt); % -1 for indexing?
                 startTime = pulseTimes(i);
-                endTime = startTime + pulses(i).duration;
+                endTime = (startTime + pulses(i).duration);
 
                 % Ensure endIdx does not exceed the length of the waveform. Shouldn't happen because we make sure that the waveform is longer than the rf sequence
                 if endIdx > length(waveform)
@@ -1708,36 +1880,56 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
 
             % get a list of all frequency generators
             % fgCell = FrequencyGenerator.getFG();
-            sgCell = SignalGenerator.getSG();
+            sg = getObjByName(SignalGenerator.NAME);
+
 
             % initialize empty cells for temporary data
-            sequences = cell(obj.permutable_parameter,1);
-            waveforms = cell(size(sgCell,1), size(sequences,1));
+            % changed permutable_parameter to tau for now
+            totalParamNum = getTotalNumberOfParams(obj);
+            sequences = cell(totalParamNum,1);
+            for i = 1:totalParamNum
+                obj.changeSequence(i);
+                sequences{i} = S.copySequence;
+                seqName = [obj.NAME, '_', num2str(i)];
+                sequences{i}.name = seqName;
+            end
+
+            waveforms = cell(size(obj.MWChannel,1), size(sequences,1));
 
             % create all sequences from the base sequence and permutated
             % parameter
-            for i = 1:size(sequences)
-                obj.changeSequence(obj.permutable_parameter(i));
-                sequences{i} = S.copySequence;
-                seqName = [obj.NAME, '_', num2str(j)];
-                sequences{i}.name = seqName;
-                
-                % update the sequence if the signal generator is using AWG
-                for j = 1:length(sgCell)
-                    if sgCell{j}.useIQ
-                         signalChannel = sgCell{j}.fg.switchMW.switchChannelName; % need to get channel name for the fg
-                         AWGChannel = sgCell{j}.awg.switchChannelName;
-                         % mode = sgCell{j}.awg.mode;
-                         % add_trigger = strcmpi(sgCell{j}.awg.mode, 'external');
+            % update the sequence if the signal generator is using AWG
+            for i = 1:length(obj.MWChannel) % we need to iterate only through the FGs used in the specific experiment
+                idx = sg.findOrderedFGindex(sg.FGchannelMap({obj.MWChannel{i}}));
+                fg = sg.FGchannels{idx};
+                if ~isempty(fg.linkedAWG)
+                    FGchannel = fg.pgChannelName; % need to get channel name for the fg
+                    % waveforms = cell(size(obj.MWChannel,1), size(sequences,1));
+                    for j = 1:totalParamNum
+                        waveforms{i,j} = obj.generateWaveform(sequences{j}, fg);
 
-                         % we first need to create the waveform according to the experiment sequence
-                         waveforms{j,i} = generateWaveform(obj, sequences{i}, sgCell{j}, j);
+                        for k = 1:length(fg.linkedAWG) % multiple AWGs connected to a single FG isn't supported yet
+                            % AWGchannel = fg.linkedAWG{k};
+                            awg = sg.AWGchannels{sg.AWGchannelMap({fg.linkedAWG{k}})};
 
-                         % now we can update the sequence that is sent to the pulse generator
-                         sequences{i}.updateInternal(signalChannel, AWGChannel, add_trigger, trigger_duration, mode);
+                            % now we can update the sequence that is sent to the pulse generator
+                            if strcmp(class(fg.device), class(awg.device))
+                                opMode = 'internal';
+                            else
+                                opMode = 'external';
+                            end
+                            sequences{j}.updateInternal(FGchannel, awg.pgChannelName, awg.device.triggerDuration, fg.keepPGchannelOn, opMode);
+                        end
+                        % We have all the waveforms, now we can load them into the AWG.
+                        % awg.loadAWGinternal(waveforms{i,:})
                     end
                 end
             end
+
+           
+
+            % we need to store somewhere all of the sequences (we already computed them, it's a shame to do so on the fly again)
+            obj.sequencesList = sequences;
 
             % create the IQ data and load all waveforms to instrument
             % for i = 1:length(sgCell)
@@ -1747,8 +1939,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             %     end
             % end
 
-            % we need to store somewhere all of the sequences (we already computed them, it's a shame to do so on the fly again)
-            obj.sequencesList = sequences;
+            
 % 
 % 
 %             % fgCell = FrequencyGenerator.getFG();
