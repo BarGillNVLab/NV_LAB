@@ -94,6 +94,8 @@ classdef Camera < BaseObject & EventSender
 
         imageCPP(obj, what, handles)
         % this function calls for the CPP functions for the camera
+        readExperimentData(obj)
+        % read data from an experiment
 
     end
 

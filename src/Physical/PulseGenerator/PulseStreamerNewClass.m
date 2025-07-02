@@ -11,11 +11,13 @@ classdef (Sealed) PulseStreamerNewClass < PulseGenerator
         NEEDED_FIELDS = {'ipAddress', 'trigger'}
     end
     
-    properties (Access = private)
+    properties 
         ps          % PulseStreamer object. Scalar local variable for communication with PS.
         trigger     % PSStart object.
         automaticRearm % PSTriggerMode object
         currentOnChannels
+        analogChannel0Value = 0
+        analogChannel1Value = 0
     end
     
     %% 
@@ -90,8 +92,9 @@ classdef (Sealed) PulseStreamerNewClass < PulseGenerator
         end
 
         function sendToHardware(obj)
-            % Creates sequence in form legible to hardware
-            finalOutputState = OutputState(0,0,0);
+            % Creates sequence in form legible to hardware, keeps the
+            % initial analog channel values
+            finalOutputState = OutputState(0,obj.analogChannel0Value,obj.analogChannel1Value);
             
             % settings for sequence generation
             seq = BooleanHelper.ifTrueElse(obj.delayFixed, obj.delayFixedSequence, obj.sequence);
@@ -102,7 +105,7 @@ classdef (Sealed) PulseStreamerNewClass < PulseGenerator
             for i = 1:numberOfSequences
                 p = pulses(i);
                 onChannels = obj.channelName2Address(p.getOnChannels);
-                newSequence = P(p.duration * 1e3, onChannels, 0, 0);
+                newSequence = P(p.duration * 1e3, onChannels, obj.analogChannel0Value, obj.analogChannel1Value);
                 sequences = sequences + newSequence;
             end
             seq_new = convert_PPH_to_PSSequence(sequences); % In the future, need to use the new builder functions
@@ -159,8 +162,10 @@ classdef (Sealed) PulseStreamerNewClass < PulseGenerator
 
             function chooseAnalogOutput(obj, channel, value)
                 if channel == 0
+                    obj.analogChannel0Value = value;
                     output = OutputState(obj.onChannelsBinary,value,0);
                 elseif channel == 1
+                    obj.analogChannel1Value = value;
                     output = OutputState(obj.onChannelsBinary,0,value);
                 else
                     obj.sendError('incorrect channel input')

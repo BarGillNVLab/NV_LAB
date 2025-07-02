@@ -1,4 +1,4 @@
-classdef (Sealed) Helmholtz < BaseObject & EventSender
+classdef (Sealed) Helmholtz < BaseObject & EventSender & Savable
     %UNTITLED Summary of this class goes here
     %   Detailed explanation goes here
     properties (Constant)
@@ -48,6 +48,24 @@ classdef (Sealed) Helmholtz < BaseObject & EventSender
         digitalName
         flipAvailable
         flipControl
+    end
+
+    properties (Constant, Access = private)
+        % names of saved fields (for Savable)
+        SAVE_PROPERTY_B = 'B';
+        SAVE_PROPERTY_I = 'I';
+        SAVE_PROPERTY_FLIP = 'flip';
+        SAVE_PROPERTY_NORMAL = 'normal';
+        SAVE_PROPERTY_EDGE = 'edge';
+        SAVE_PROPERTY_D_ROTATE = 'D_rotate';
+        SAVE_PROPERTY_D_THETA = 'D_theta';
+        SAVE_PROPERTY_D_PHI = 'D_phi';
+        SAVE_PROPERTY_DONT_CHANGE = 'dontChange';
+        SAVE_PROPERTY_STEP_SIZE_D = 'stepSizeD';
+        SAVE_PROPERTY_STEP_SIZE = 'stepSize';
+        SAVE_PROPERTY_STEP_SIZE_I = 'stepSizeI';
+        SAVE_PROPERTY_VIEW_ANG = 'viewAng';
+
     end
     
     properties
@@ -111,6 +129,7 @@ classdef (Sealed) Helmholtz < BaseObject & EventSender
         function obj = Helmholtz()
             obj@BaseObject(Helmholtz.NAME);
             obj@EventSender(Helmholtz.NAME);
+            obj@Savable(Helmholtz.NAME);
             obj.Initialize;
             addBaseObject(obj);  % so it can be reached by getObjByName()
             obj.helmOn = 0;
@@ -997,5 +1016,160 @@ end
             camlight(gAxes);
             lighting(gAxes, 'phong');
         end
+    end
+    %% overriding from Savable
+    methods (Access = protected)
+        function outStruct = saveStateAsStruct(obj, category, type)
+            % Saves the state as struct. Overriden from Savable
+            
+            outStruct = NaN;
+            % Save only if you have the right category...
+            if ~any(strcmp(category, {...
+                    Savable.CATEGORY_EXPERIMENTS}))
+                return;
+            end
+            % and the right type of data (i.e. experiment parameter)
+            if ~strcmp(type,Savable.TYPE_PARAMS)
+                return;
+            end
+            
+            outStruct = struct;
+            outStruct.(obj.SAVE_PROPERTY_B) = obj.B;
+            outStruct.(obj.SAVE_PROPERTY_I ) = obj.I;
+            outStruct.(obj.SAVE_PROPERTY_FLIP ) = obj.flip;
+            outStruct.(obj.SAVE_PROPERTY_NORMAL) = obj.normal;
+            outStruct.(obj.SAVE_PROPERTY_EDGE ) = obj.edge;
+            outStruct.(obj.SAVE_PROPERTY_D_ROTATE) = obj.D_rotate;
+            outStruct.(obj.SAVE_PROPERTY_D_THETA) = obj.D_theta;
+            outStruct.(obj.SAVE_PROPERTY_D_PHI ) = obj.D_phi;
+            outStruct.(obj.SAVE_PROPERTY_DONT_CHANGE) = obj.dontChange;
+            outStruct.(obj.SAVE_PROPERTY_STEP_SIZE_D) = obj.stepSizeD;
+            outStruct.(obj.SAVE_PROPERTY_STEP_SIZE) = obj.stepSize;
+            outStruct.(obj.SAVE_PROPERTY_STEP_SIZE_I) = obj.stepSizeI;
+            outStruct.(obj.SAVE_PROPERTY_VIEW_ANG) = obj.viewAng;
+
+        end
+        
+        function loadStateFromStruct(obj, savedStruct, category, subCategory)
+            % Loads the state from a struct.
+            % To support older versoins, always check for a value in the
+            % struct before using it. view example in the first line.
+            % category - a string, some savable objects will load stuff
+            %            only for the 'image_lasers' category and not for
+            %            'image_stages' category, for example
+            % subCategory - string. could be empty string
+            
+            % load only if you're in need to load:
+            %       @ if the category is Experiment
+            %       @ or, category is image, and subCat is "default" or "laser"
+            
+            catIsExp = strcmp(category, Savable.CATEGORY_EXPERIMENTS);
+            subcatImageIsOk = any(strcmp(subCategory, {Savable.SUB_CATEGORY_DEFAULT}));
+            shouldLoad = catIsExp || (catIsImage && subcatImageIsOk);
+            
+            if ~shouldLoad; return; end
+            
+            if isfield(savedStruct, obj.SAVE_PROPERTY_SWITCH)
+                obj.aomSwitch.isEnabled = savedStruct.(obj.SAVE_PROPERTY_SWITCH);
+            end
+            
+            expStruct = savedStruct;
+            obj.setB(expStruct.B);
+            obj.flipDirection(expStruct.flip);
+            obj.normal = expStruct.normal;
+            obj.edge = expStruct.edge;
+            obj.D_rotate = expStruct.D_rotate;
+            obj.D_theta = expStruct.D_theta;
+            obj.D_phi = expStruct.D_phi;
+            obj.dontChange = expStruct.dontChange;
+            obj.stepSizeD = expStruct.stepSizeD;
+            obj.stepSize = expStruct.stepSize;
+            obj.stepSizeI = expStruct.stepSizeI;
+            obj.viewAng = expStruct.viewAng;
+            clear expStruct;
+        end
+        
+        function string = returnReadableString(obj, savedStruct)
+            indentation = 10;
+        
+            
+            string = '';
+        
+            % Magnetic field B
+            if isfield(savedStruct, obj.SAVE_PROPERTY_B)
+                B_val = savedStruct.B;
+                B_string = sprintf('B field: %.2f G', B_val);  % adjust unit as needed
+                string = sprintf('%s\n%s', string, StringHelper.indent(B_string, indentation));
+            end
+        
+            % Flip direction
+            if isfield(savedStruct, obj.SAVE_PROPERTY_FLIP)
+                flip_string = BooleanHelper.boolToOnOff(savedStruct.flip);
+                string = sprintf('%s\n%s', string, ...
+                    StringHelper.indent(sprintf('Flip direction: %s', flip_string), indentation));
+            end
+        
+            % Vector fields
+            if isfield(savedStruct, obj.SAVE_PROPERTY_NORMAL)
+                norm_str = mat2str(savedStruct.normal, 3);
+                string = sprintf('%s\n%s', string, ...
+                    StringHelper.indent(['Normal vector: ', norm_str], indentation));
+            end
+        
+            if isfield(savedStruct, 'edge')
+                edge_str = mat2str(savedStruct.edge, 3);
+                string = sprintf('%s\n%s', string, ...
+                    StringHelper.indent(['Edge vector: ', edge_str], indentation));
+            end
+        
+            % Rotation matrix or angles
+            if isfield(savedStruct, 'D_rotate')
+                D_rot_str = mat2str(savedStruct.D_rotate, 2);
+                string = sprintf('%s\n%s', string, ...
+                    StringHelper.indent(['Rotation matrix D: ', D_rot_str], indentation));
+            end
+        
+            % Orientation angles
+            if isfield(savedStruct, 'D_theta')
+                string = sprintf('%s\n%s', string, ...
+                    StringHelper.indent(sprintf('Theta: %.2f°', savedStruct.D_theta), indentation));
+            end
+        
+            if isfield(savedStruct, 'D_phi')
+                string = sprintf('%s\n%s', string, ...
+                    StringHelper.indent(sprintf('Phi: %.2f°', savedStruct.D_phi), indentation));
+            end
+        
+            % Step sizes
+            if isfield(savedStruct, 'stepSizeD')
+                string = sprintf('%s\n%s', string, ...
+                    StringHelper.indent(sprintf('Step size D: %.2f', savedStruct.stepSizeD), indentation));
+            end
+        
+            if isfield(savedStruct, 'stepSize')
+                string = sprintf('%s\n%s', string, ...
+                    StringHelper.indent(sprintf('Step size: %.2f', savedStruct.stepSize), indentation));
+            end
+        
+            if isfield(savedStruct, 'stepSizeI')
+                string = sprintf('%s\n%s', string, ...
+                    StringHelper.indent(sprintf('Step size I: %.2f', savedStruct.stepSizeI), indentation));
+            end
+        
+            % Don't change flag
+            if isfield(savedStruct, 'dontChange')
+                dontChange_string = BooleanHelper.boolToOnOff(savedStruct.dontChange);
+                string = sprintf('%s\n%s', string, ...
+                    StringHelper.indent(['Don''t change: ', dontChange_string], indentation));
+            end
+        
+            % View angle
+            if isfield(savedStruct, 'viewAng')
+                viewAng_str = mat2str(savedStruct.viewAng, 2);
+                string = sprintf('%s\n%s', string, ...
+                    StringHelper.indent(['View angle: ', viewAng_str], indentation));
+            end
+        end
+
     end
 end

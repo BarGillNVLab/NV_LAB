@@ -4,7 +4,7 @@ classdef ExpESR < Experiment
     properties (Constant)
         NAME = 'ESR'
         
-        ZERO_FIELD_SPLITTING = 2.87e3     % in Mhz
+        ZERO_FIELD_SPLITTING = 2.87e3     % in MHz
     end
     
     properties
@@ -190,7 +190,7 @@ end
     methods (Access = protected)
         function prepare(obj)
             % Initialize devices (SPCM, PulseGenerator, etc.)
-            
+            obj.checkDetectinDuration;
             % Sequence
             %%% Useful parameters for what follows
             isSingleMeasurement = (isempty(obj.mirrorSweepAround) || obj.nChannels > 1);
@@ -198,7 +198,8 @@ end
             obj.runsPerPerform = (1 + ~isSingleMeasurement);
             obj.freqMirrored = obj.mirrorFrequency;
             MWChannel = obj.MWChannel;
-            
+            obj.checkDetectinDuration;
+
             %%% Create
             S = Sequence;
             switch obj.mode
@@ -215,7 +216,6 @@ end
                             obj.sendError('What should we do here?')
                     end
                     
-%                     S.addEvent(1000,                       '');
                     S.addEvent(obj.laserInitializationDuration,     {MWChannel, 'greenLaser'});
                     S.addPulse(P);
                     S.addEvent(obj.laserInitializationDuration,     {'greenLaser'});
@@ -280,9 +280,12 @@ end
             % Some magic numbers
             isSingleMeasurement = (isempty(obj.mirrorSweepAround) || obj.nChannels > 1);
             n = obj.detectionPeriodsPerRepeat * obj.runsPerPerform;
-            
-            sig = zeros(1, n);
-            sterr = zeros(1, n);
+            % Camera pixels (if exist):
+            M = obj.imageSize(1);
+            N = obj.imageSize(2);
+
+            sig = zeros(n, M, N);
+            sterr = zeros(n, M, N);
             
             % Run - Go over all frequencies, in random order
             for k = 1:len
@@ -310,23 +313,23 @@ end
                         end
                         data = obj.getRawData(pg, spcm);
                         if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled')
-                            [sig(1:2), sterr(1:2)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(1+~isSingleMeasurement)*(k-1)+1:end));%obj.detectionPeriodsPerRepeat*obj.repeats*k));
+                            [sig(1:2,:,:), sterr(1:2,:,:)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(1+~isSingleMeasurement)*(k-1)+1:end, :, :));%obj.detectionPeriodsPerRepeat*obj.repeats*k));
                         else
-                            [sig(1:2), sterr(1:2)] = obj.processData(data);
+                            [sig(1:2,:,:), sterr(1:2,:,:)] = obj.processData(data);
                         end
                         
                         if ~isSingleMeasurement % run another sweep with the same source
                             fg.frequency = obj.freqMirrored(i);
                             data = obj.getRawData(pg, spcm);
                             if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled')
-                                [sig(3:4), sterr(3:4)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*2*(k-0.5)+1:end));%obj.detectionPeriodsPerRepeat*obj.repeats*k));
+                                [sig(3:4,:,:), sterr(3:4,:,:)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*2*(k-0.5)+1:end, :, :));%obj.detectionPeriodsPerRepeat*obj.repeats*k));
                             else
-                                [sig(3:4), sterr(3:4)] = obj.processData(data);
+                                [sig(3:4,:,:), sterr(3:4,:,:)] = obj.processData(data);
                             end
                         end
                         
-                        obj.signal(:, i, obj.currIter) = sig;
-                        obj.sterr(:, i, obj.currIter) = sterr;
+                        obj.signal(:, i, obj.currIter, :, :) = sig;
+                        obj.sterr(:, i, obj.currIter, :, :) = sterr;
                         
                         success = true;
                         obj.currParamIter = obj.currParamIter + 1;
@@ -379,23 +382,23 @@ end
             end
             
             %if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled') %maybe check something different
-            if length(data) == obj.detectionPeriodsPerRepeat*obj.repeats*obj.getTotalNumberOfParams*(1+~isSingleMeasurement) %if true we're proccessing data at the end of the average
+            if size(data, 1) == obj.detectionPeriodsPerRepeat*obj.repeats*obj.getTotalNumberOfParams*(1+~isSingleMeasurement) %if true we're proccessing data at the end of the average
                 for k = 1:len
-                    [sig(1:2), sterr(1:2)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(1+~isSingleMeasurement)*(k-1)+(1:obj.detectionPeriodsPerRepeat*obj.repeats)));
+                    [sig(1:2,:,:), sterr(1:2,:,:)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(1+~isSingleMeasurement)*(k-1)+(1:obj.detectionPeriodsPerRepeat*obj.repeats), :, :));
                     if ~isSingleMeasurement % run another sweep with the same source
-                         [sig(3:4), sterr(3:4)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*2*(k-0.5)+(1:obj.detectionPeriodsPerRepeat*obj.repeats)));
+                         [sig(3:4,:,:), sterr(3:4,:,:)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*2*(k-0.5)+(1:obj.detectionPeriodsPerRepeat*obj.repeats), :, :));
                     end
-                    obj.signal(:, f1(k), obj.currIter) = sig';
-                    obj.sterr(:, f1(k), obj.currIter) = sterr';
+                    obj.signal(:, f1(k), obj.currIter, : ,:) = sig;
+                    obj.sterr(:, f1(k), obj.currIter, :, :) = sterr;
                 end
             end
                 
                 
             
-            S1 = squeeze(obj.signal(1, :, 1:obj.currIter));
-            S1sterr = squeeze(obj.sterr(1, :, 1:obj.currIter));
-            S2 = squeeze(obj.signal(2, :, 1:obj.currIter));
-            S2sterr = squeeze(obj.sterr(2, :, 1:obj.currIter));
+            S1 = squeeze(obj.signal(1, :, 1:obj.currIter, :, :));
+            S1sterr = squeeze(obj.sterr(1, :, 1:obj.currIter, :, :));
+            S2 = squeeze(obj.signal(2, :, 1:obj.currIter, :, :));
+            S2sterr = squeeze(obj.sterr(2, :, 1:obj.currIter, :, :));
             
             [value, sterr] = getRatioDistributionValues(obj, S1, S2, S1sterr, S2sterr);
             obj.signalParam.value = value;
@@ -404,10 +407,10 @@ end
             if isSingleMeasurement
                 obj.signalParam2.value = [];
             else
-                S3 = squeeze(obj.signal(3, :, 1:obj.currIter));
-                S3sterr = squeeze(obj.sterr(3, :, 1:obj.currIter));
-                S4 = squeeze(obj.signal(4, :, 1:obj.currIter));
-                S4sterr = squeeze(obj.sterr(4, :, 1:obj.currIter));
+                S3 = squeeze(obj.signal(3, :, 1:obj.currIter, :, :));
+                S3sterr = squeeze(obj.sterr(3, :, 1:obj.currIter, :, :));
+                S4 = squeeze(obj.signal(4, :, 1:obj.currIter, :, :));
+                S4sterr = squeeze(obj.sterr(4, :, 1:obj.currIter, :, :));
                 
                 [value, sterr] = getRatioDistributionValues(obj, S3, S4, S3sterr, S4sterr);
                 obj.signalParam2.value = value;
@@ -436,10 +439,10 @@ end
                 params = ExpResultDoubleVector('FL', [], [], 'kcps', obj.NAME);
                 return
             end
-            S1 = squeeze(obj.signal(1, :, 1:obj.currIter));
-            S1sterr = squeeze(obj.sterr(1, :, 1:obj.currIter));
-            S2 = squeeze(obj.signal(2, :, 1:obj.currIter));
-            S2sterr = squeeze(obj.sterr(2, :, 1:obj.currIter));
+            S1 = squeeze(obj.signal(1, :, 1:obj.currIter, :, :));
+            S1sterr = squeeze(obj.sterr(1, :, 1:obj.currIter, :, :));
+            S2 = squeeze(obj.signal(2, :, 1:obj.currIter, :, :));
+            S2sterr = squeeze(obj.sterr(2, :, 1:obj.currIter, :, :));
             if obj.currIter ~= 1
                 % Calculate the mean
                 S1sterr = obj.getCombinedSterr(S1, S1sterr);
@@ -452,10 +455,10 @@ end
             
             isSingleMeasurement = (isempty(obj.mirrorSweepAround) || obj.nChannels > 1);
             if ~isSingleMeasurement
-                S3 = squeeze(obj.signal(3, :, 1:obj.currIter));
-                S3sterr = squeeze(obj.sterr(3, :, 1:obj.currIter));
-                S4 = squeeze(obj.signal(4, :, 1:obj.currIter));
-                S4sterr = squeeze(obj.sterr(4, :, 1:obj.currIter));
+                S3 = squeeze(obj.signal(3, :, 1:obj.currIter, :, :));
+                S3sterr = squeeze(obj.sterr(3, :, 1:obj.currIter, :, :));
+                S4 = squeeze(obj.signal(4, :, 1:obj.currIter, :, :));
+                S4sterr = squeeze(obj.sterr(4, :, 1:obj.currIter, :, :));
                 
                 if obj.currIter ~= 1
                     % Calculate the mean

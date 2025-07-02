@@ -736,6 +736,25 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             end
             JsonInfoReader.setParams(paramsStruct, jsonLocation);
         end
+
+        function checkDetectinDuration(obj)
+            spcm = getObjByName(Spcm.NAME);
+            if isempty(spcm); throwBaseObjException(Spcm.Name); end
+            if spcm.hasCamera
+                obj.isTracking = false;
+                detectiontime = obj.detectionDuration;
+                referencetime = obj.referenceDetectionDuration;
+                exposuretime = spcm.camera.imgparams.exposuretime;
+                if exposuretime > detectiontime
+                    obj.detectionDuration = exposuretime; %should be in microseconds
+                    fprintf('Detection duration has been set to %d milliseconds\n', obj.detectionDuration/1000);
+                end
+                if exposuretime > referencetime
+                    obj.referenceDetectionDuration = exposuretime; %should be in microseconds
+                    fprintf('Reference duration has been set to %d milliseconds\n', obj.referenceDetectionDuration/ 1000);
+                end
+            end
+        end
         
     end
     
@@ -852,7 +871,8 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             if isempty(obj.gAxes)
                 return
             end
-            
+            isImageData = prod(obj.imageSize) > 1;
+
             % Check whether we have an alternate plot
             if obj.isPlotAlternate && obj.currIter > 0
                 params = obj.alternateSignal();
@@ -896,6 +916,8 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             end
             data = dataParam.value;
             err = dataParam.sterr;
+            if isImageData; data = mean(mean(data, ndims(data)), ndims(data)-1); end
+            if isImageData; err = sqrt(sum(sum(err.^2, ndims(err)), ndims(err)-1)) / prod(obj.imageSize); end
             
             if isempty(data) || all(all(isnan(data)))
                 % Default plot
@@ -961,12 +983,16 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                     for i = 1:length(dataParam2Plus)
                         data = dataParam2Plus{i}.value;
                         err = dataParam2Plus{i}.sterr;
+                        if isImageData; data = mean(mean(data, ndims(data)), ndims(data)-1); end
+                        if isImageData; err = sqrt(sum(sum(err.^2, ndims(err)), ndims(err)-1)) / prod(obj.imageSize); end
                         AxesHelper.add(obj.gAxes, data, firstAxisVector, err)
                         legendForPlot{i+1} = dataParam2Plus{i}.desc;
                     end
                 else
                     data = dataParam2Plus.value;
                     err = dataParam2Plus.sterr;
+                    if isImageData; data = mean(mean(data, ndims(data)), ndims(data)-1); end
+                    if isImageData; err = sqrt(sum(sum(err.^2, ndims(err)), ndims(err)-1)) / prod(obj.imageSize); end
                     AxesHelper.add(obj.gAxes, data, firstAxisVector, err)
                     legendForPlot{2} = dataParam2Plus.desc;
                 end
@@ -1091,10 +1117,10 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
     %% Helper functions
     methods (Static, Access = protected)
         function s = getRawData(pg, spcm)
-            if spcm.hasPhotodiode; spcm.startExperimentCount; end
+            if spcm.hasPhotodiode || spcm.hasCamera; spcm.startExperimentCount; end
             pg.run;
             s = spcm.readFromExperiment;
-            if spcm.hasPhotodiode; spcm.stopExperimentCount; end
+            if spcm.hasPhotodiode || spcm.hasCamera; spcm.stopExperimentCount; end
             if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled'); spcm.stopExperimentCount; end
         end
         
@@ -1129,45 +1155,23 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             kc = 1e3;     % kilocounts
             musec = 1e-6;   % microseconds
             
+            if isrow(rawData); rawData = rawData'; end
             n = obj.repeats;
-            
-%             spcm = getObjByName(Spcm.NAME);
-%             if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled') %added by rotem 29.1.21
-%                 %n = obj.repeats*obj.getTotalNumberOfParams;
-%                 start_index = obj.detectionPeriodsPerRepeat*obj.repeats*obj.currParamIter+1;
-%                 end_index = obj.detectionPeriodsPerRepeat*obj.repeats*obj.currParamIter+obj.detectionPeriodsPerRepeat*obj.repeats;
-%                 rawData = rawData(start_index:end_index);
-%                 if sum(all(rawData,1)) ~= length(rawData)
-%                     disp('bad')
-%                 else
-%                     disp('good')
-%                 end
-%                 
-%                 signal = -1;
-%                 sterr = -1;
-%                 return;
-%             end
-            
-%             if length(rawData) == obj.detectionPeriodsPerRepeat*obj.repeats*obj.getTotalNumberOfParams %skip proccessing and delay to the end of the average 
-%                 signal = -1;
-%                 sterr = -1;
-%                 return;
-%             end
-            spcm = getObjByName(Spcm.NAME);
-            M = obj.imageSize(1);  N = obj.imageSize(2);
-            
-            m = size(rawData, 1)/n;  % Number of reads each repeat, if using camera we need only the 1st dimension.
-            
+            m = size(rawData, 1)/n;
+            M = obj.imageSize(1);
+            N = obj.imageSize(2);
+
             % added by rotem 18.4.21 %
             if mod(10,m)
                 if ~obj.digitizerFullDataAcquisition
                     m = obj.detectionPeriodsPerRepeat;
-                    n = floor(length(rawData)/m);
+                    n = floor(size(rawData, 1)/m);
                     rawData = rawData(1:m*n);
                 end
             end
             
-            s = (reshape(rawData, m, n))';
+            s = reshape(rawData, [m, n, M, N]);
+            s = permute(s, [2, 1, 3, 4]);
             
             timeNormalization = [obj.detectionDuration obj.referenceDetectionDuration]*musec;
             if isprop(obj, 'weakDetectionDuration') timeNormalization = [obj.weakDetectionDuration(obj.param_idx) obj.detectionDuration obj.referenceDetectionDuration]*musec; end;
@@ -1187,23 +1191,24 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 s = obj.checkGlitchInRawData(rawData, s);
             end
 
-            start = BooleanHelper.ifTrueElse(size(s,1) > 10, 2, 1);     % removing the first repeat because the first detection is not after init sequence. Yachel 08.05.22
+            spcm = getObjByName(Spcm.NAME);
+            start = BooleanHelper.ifTrueElse(n > 10, 2, 1);     % removing the first repeat because the first detection is not after init sequence. Yachel 08.05.22
             if spcm.hasPhotodiode
                 % normalization of the signal before avarage, to reduce low frequency noise. Yachel 03/25
-                refSignal = s(:, 1:2:end) ./ s(:, 2:2:end);
-                ref = mean(s(start:end, 2:2:end), "omitnan");
-                s(:, 1:2:end) = ref .* refSignal;
-                s(:, 2:2:end) = ref +  refSignal * 0;
+                refSignal = s(:, 1:2:end, :, :) ./ s(:, 2:2:end, :, :);
+                ref = mean(s(start:end, 2:2:end, :, :), 1, "omitnan");
+                s(:, 1:2:end, :, :) = ref .* refSignal;
+                s(:, 2:2:end, :, :) = ref +  refSignal * 0;
             end
 
-            signal = mean(s(start:end, :), "omitnan");                  % "omitnan" to ignore bad repeat and not throw all this point. added by yachel 23.07.23
-            sterr = ste(s(start:end, :));
+            signal = mean(s(start:end, :, :, :), 1, "omitnan");                  % "omitnan" to ignore bad repeat and not throw all this point. added by yachel 23.07.23
+            sterr = ste(s(start:end, :, :, :), 0, 1);
 
-            if ~spcm.hasPhotodiode
+            if ~spcm.hasPhotodiode && ~spcm.hasCamera
                 signal = signal./timeNormalization/kc;      %kcounts per second
                 sterr = sterr./timeNormalization/kc;        % convert to kcps
             else
-                if spcm.detectionWithGI
+                if spcm.hasGatedIntegrator
                     timeNormalization = timeNormalization / musec;
                     signal = signal./timeNormalization./spcm.GIgain; %kcounts per second
                     sterr = sterr./timeNormalization./spcm.GIgain; % convert to kcps
@@ -1211,9 +1216,9 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             end
 
             if obj.digitizerFullDataAcquisition
-                d =  obj.detectionPeriodsPerRepeat;
-                signal = reshape(signal, d, m/d);
-                sterr = reshape(sterr, d, m/d);
+                d = obj.detectionPeriodsPerRepeat;
+                signal = reshape(signal, d, m/d, M, N);
+                sterr = reshape(sterr, d, m/d, M, N);
             end
         end
 
@@ -1221,51 +1226,55 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             spcm = getObjByName(Spcm.NAME);
             if ~spcm.hasPhotodiode
                 if obj.referenceDetectionDuration > 2*obj.detectionDuration % Makes sure that the reference is much longer than the detection duration. Also checks that there is a reference.
-                    sTwoColumns = reshape(rawData, 2, length(rawData)/2)';
-                    % We want to average enough of S & Ref such that they will
-                    % be 3 sigma apart: k*R - 4*sqrt(k*R) > k*S + 4*sqrt(k*S).
-                    % k is the number os terms we are averaging and R * S are
-                    % the means for the reference and signal.
-                    % We assume that at least k*R is normally distrubuted,
-                    % which means k*R > 20.
-                    % This leads to a quadrtic equation with the solution
-                    % k = 16 * (sqrt(R) + sqrt(S))^2 ./ (R-S)^2.
-                    %                 if any(sTwoColumns(:,1) > sTwoColumns(:,2));
-                    %                     any(sTwoColumns(:,1) > sTwoColumns(:,2))
-                    %                 end
-                    meanS = mean(sTwoColumns(:,1));
-                    meanRef = mean(sTwoColumns(:,2));
-                    k = ceil(16 * (sqrt(meanRef) + sqrt(meanS))^2 / (meanRef-meanS)^2);
+                    for i = 1:M
+                        for j = 1:N
+                            sTwoColumns = reshape(rawData(:,:,i,j), 2, size(rawData,1)/2)';
+                            % We want to average enough of S & Ref such that they will
+                            % be 3 sigma apart: k*R - 4*sqrt(k*R) > k*S + 4*sqrt(k*S).
+                            % k is the number os terms we are averaging and R * S are
+                            % the means for the reference and signal.
+                            % We assume that at least k*R is normally distrubuted,
+                            % which means k*R > 20.
+                            % This leads to a quadrtic equation with the solution
+                            % k = 16 * (sqrt(R) + sqrt(S))^2 ./ (R-S)^2.
+                            %                 if any(sTwoColumns(:,1) > sTwoColumns(:,2));
+                            %                     any(sTwoColumns(:,1) > sTwoColumns(:,2))
+                            %                 end
+                            meanS = mean(sTwoColumns(:,1));
+                            meanRef = mean(sTwoColumns(:,2));
+                            k = ceil(16 * (sqrt(meanRef) + sqrt(meanS))^2 / (meanRef-meanS)^2);
 
-                    % If there was a glitch, then the meanS and meanRef are
-                    % wrong! This gives a bound for 4 sigma.
-                    sumBoth = (meanS+meanRef);
-                    MeanSTheory = sumBoth * obj.detectionDuration / (obj.detectionDuration + obj.referenceDetectionDuration);
-                    MeanRefTheory = sumBoth * obj.referenceDetectionDuration / (obj.detectionDuration + obj.referenceDetectionDuration);
-                    maxK = ceil(25 * (sqrt(MeanRefTheory) + sqrt(MeanSTheory))^2 / (MeanRefTheory-MeanSTheory)^2);
+                            % If there was a glitch, then the meanS and meanRef are
+                            % wrong! This gives a bound for 4 sigma.
+                            sumBoth = (meanS+meanRef);
+                            MeanSTheory = sumBoth * obj.detectionDuration / (obj.detectionDuration + obj.referenceDetectionDuration);
+                            MeanRefTheory = sumBoth * obj.referenceDetectionDuration / (obj.detectionDuration + obj.referenceDetectionDuration);
+                            maxK = ceil(25 * (sqrt(MeanRefTheory) + sqrt(MeanSTheory))^2 / (MeanRefTheory-MeanSTheory)^2);
 
-                    k = min(k, maxK);
-                    smoothedS = movmean(sTwoColumns, k, 1);
-                    if any(smoothedS(:, 1) > smoothedS(:, 2))
-                        glitchesIndices = smoothedS(:, 1) > smoothedS(:, 2);
-                        numOfGlitches = sum(abs(diff(glitchesIndices)));
-                        if k > 5
-                            %                         obj.sendWarning(sprintf('Voodoo ground glitch detected %.2f%% of the times, total of %d :o', 100*numOfGlitches/length(sTwoColumns), numOfGlitches));
-                            obj.sendError(sprintf('Voodoo ground glitch detected %.2f%% of the times, total of %d :o', 100*numOfGlitches/length(sTwoColumns), numOfGlitches));
-                        else
-                            sTwoColumns(glitchesIndices, :) = fliplr(sTwoColumns(glitchesIndices, :));
-                            s = (reshape(sTwoColumns', m, n))';
-                            obj.sendWarning(sprintf('Voodoo ground glitch detected (and fixed!) %.2f%% of the times, total of %d :o', 100*numOfGlitches/length(sTwoColumns), numOfGlitches));
+                            k = min(k, maxK);
+                            smoothedS = movmean(sTwoColumns, k, 1);
+                            if any(smoothedS(:, 1) > smoothedS(:, 2))
+                                glitchesIndices = smoothedS(:, 1) > smoothedS(:, 2);
+                                numOfGlitches = sum(abs(diff(glitchesIndices)));
+                                if k > 5
+                                    %                         obj.sendWarning(sprintf('Voodoo ground glitch detected %.2f%% of the times, total of %d :o', 100*numOfGlitches/length(sTwoColumns), numOfGlitches));
+                                    obj.sendError(sprintf('Voodoo ground glitch detected %.2f%% of the times, total of %d :o', 100*numOfGlitches/length(sTwoColumns), numOfGlitches));
+                                else
+                                    sTwoColumns(glitchesIndices, :) = fliplr(sTwoColumns(glitchesIndices, :));
+                                    s(:,:,i,j) = (reshape(sTwoColumns', m, n))';
+                                    obj.sendWarning(sprintf('Voodoo ground glitch detected (and fixed!) %.2f%% of the times, total of %d :o', 100*numOfGlitches/length(sTwoColumns), numOfGlitches));
+                                end
+                            end
                         end
                     end
                 end
             else
                 start = BooleanHelper.ifTrueElse(size(s,1) > 10, 2, 1);
-                sig = mean(s(start:end, :), "omitnan");           
-                sigma = std(s(start:end, :), "omitnan");
+                sig = mean(s(start:end, :, :, :), 1, "omitnan");           
+                sigma = std(s(start:end, :, :, :), 0, 1, "omitnan");
                 glitchesIndices = abs(s - sig) > 4*sigma;
                 glitchesIndices = any(glitchesIndices, 2);
-                s(glitchesIndices, :) = nan;
+                s(glitchesIndices, :, :, :) = nan;
             end
         end
         
@@ -1276,7 +1285,9 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             % lablog:
             % https://en.wikipedia.org/wiki/Ratio_distribution#Uncorrelated_noncentral_normal_ratio
             % http://www.bargilllab.com/lablog/2017/05/14/attempting-to-better-extract-coherence-curves/
-            
+            M = obj.imageSize(1);
+            N = obj.imageSize(2);
+
             if obj.currIter == 1
                 % Nothing to calculate the mean over
                 value = S1./S2;
@@ -1284,20 +1295,22 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 S2mean = S2;
             else
                 dataSize = size(S1);
-                dim = length(dataSize);
+                dim = length(dataSize) -(M>1)-(N>1);
                 if dim > 2
-                    S1 = reshape(S1, [], dataSize(end));
-                    S2 = reshape(S2, [], dataSize(end));
-                    S1sterr = reshape(S1sterr, [], dataSize(end));
-                    S2sterr = reshape(S2sterr, [], dataSize(end));
+                    S1 = reshape(S1, [], dataSize(end-(M>1)-(N>1)));
+                    S2 = reshape(S2, [], dataSize(end-(M>1)-(N>1)));
+                    S1sterr = reshape(S1sterr, [], dataSize(end-(M>1)-(N>1)));
+                    S2sterr = reshape(S2sterr, [], dataSize(end-(M>1)-(N>1)));
                 end
-                value = mean(S1./S2, 2);
-                S1mean = mean(S1, 2);
-                S2mean = mean(S2, 2);
+                value = mean(S1./S2, 2, "omitnan");
+                S1mean = mean(S1, 2, "omitnan");
+                S2mean = mean(S2, 2, "omitnan");
                 S1sterr = obj.getCombinedSterr(S1, S1sterr);
                 S2sterr = obj.getCombinedSterr(S2, S2sterr);
                 if dim > 2
-                    dataSize = dataSize(1:end-1);
+                    sz = 1:length(dataSize);
+                    imageDim = BooleanHelper.ifTrueElse(M > 1, sz(end-1:end), []);
+                    dataSize = dataSize([1:end-1-(M>1)-(N>1), imageDim]);
                     value = reshape(value, dataSize);
                     S1mean = reshape(S1mean, dataSize);
                     S2mean = reshape(S2mean, dataSize);
@@ -1315,21 +1328,22 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             % Note that it was adjusted for standard error (and not
             % deviation), and runs iteratively.
             m = obj.repeats;
-            meanSoFar = means(:,1);
-            sterrSoFar = sterrs(:,1);
+            meanSoFar = means(:,1,:,:);
+            sterrSoFar = sterrs(:,1,:,:);
             for i = 2:size(means, 2)
                 n = m * (i-1);
-                meanSoFar = ((i-2)*meanSoFar+means(:,i-1))/(i-1);
-                sterrSoFar = sqrt(((n*(n-1)*sterrSoFar.^2)+(m*(m-1)*sterrs(:,i).^2))./((n+m)*(n+m-1)) + n*m*(meanSoFar-means(:,i)).^2 ./ ((n+m)^2*(n+m-1)));
+                meanSoFar = ((i-2)*meanSoFar+means(:,i-1,:,:))/(i-1);
+                sterrSoFar = sqrt(((n*(n-1)*sterrSoFar.^2)+(m*(m-1)*sterrs(:,i,:,:).^2))./((n+m)*(n+m-1)) + n*m*(meanSoFar-means(:,i,:,:)).^2 ./ ((n+m)^2*(n+m-1)));
             end
             sterr = sterrSoFar;
         end
         
         function reset(obj)
             % All Experiments need this.
-            
-            obj.signal = zeros(obj.detectionPeriodsPerRepeat * obj.runsPerPerform, obj.getTotalNumberOfParams, obj.averages);
-            obj.sterr = zeros(obj.detectionPeriodsPerRepeat * obj.runsPerPerform, obj.getTotalNumberOfParams, obj.averages);
+            M = obj.imageSize(1);
+            N = obj.imageSize(2);
+            obj.signal = zeros(obj.detectionPeriodsPerRepeat * obj.runsPerPerform, obj.getTotalNumberOfParams, obj.averages, M, N);
+            obj.sterr = zeros(obj.detectionPeriodsPerRepeat * obj.runsPerPerform, obj.getTotalNumberOfParams, obj.averages, M, N);
             
             obj.signalParam.value = [];
             obj.signalParam2.value = [];
@@ -1373,6 +1387,9 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             spcm = getObjByName(Spcm.NAME);
             spcm.setSPCMEnable(false);
             spcm.stopExperimentCount;
+            if spcm.hasCamera    
+                spcm.returnToDefault;
+            end
             if spcm.hasGatedIntegrator()
                 spcm.detectionWithGI = 0;
             end
@@ -1412,11 +1429,21 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             % Things to do when experiment is starting (that all
             % experiments need):
             % Prepare the SPCM, FG and PG
+            % the spcm is instanced because we need to make changes for the
+            % case of a camera
             % S is the sequence which is loaded into the PG
             
             % Send to PulseGenerator
             pg = getObjByName(PulseGenerator.NAME);
             if isempty(pg); throwBaseObjException(PulseGenerator.Name); end
+            % Initialize SPCM
+            spcm = getObjByName(Spcm.NAME);
+            if isempty(spcm); throwBaseObjException(Spcm.Name); end
+            if spcm.hasCamera
+                delay = spcm.camera.DELAY_BETWEEN_TRIGGERS;
+                S.addDelayAfterDetection(delay, 'greenLaser');
+            end
+
            
             try
                 pg.setSequence(S);
@@ -1504,9 +1531,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 end
             end
             
-            % Initialize SPCM
-            spcm = getObjByName(Spcm.NAME);
-            if isempty(spcm); throwBaseObjException(Spcm.Name); end
+            
             if spcm.hasGatedIntegrator() && any(strcmp(S.activeChannelNames,'GIgate'))
                 spcm.detectionWithGI = 1;
             end

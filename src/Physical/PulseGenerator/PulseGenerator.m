@@ -48,7 +48,7 @@ classdef (Abstract) PulseGenerator < EventSender
                                 % Should be either vector of doubles or cell of char arrays
     end
     
-    methods (Access = protected)
+    methods 
         function obj = PulseGenerator
             % Default constructor.
             name = PulseGenerator.NAME;

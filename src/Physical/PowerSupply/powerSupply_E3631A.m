@@ -28,7 +28,7 @@ classdef powerSupply_E3631A < powerSupply
         
         function reset(obj)
             obj.sendCommand('*RST');
-            obj.updateParameters;
+%             obj.updateParameters;
         end
         
         function setCurrent(obj, I, channel)
@@ -105,7 +105,7 @@ classdef powerSupply_E3631A < powerSupply
             try
                 writeline(obj.id, what);
                 if contains(what, '?')
-                    answer = readline(obj.id);
+                    answer = 0;%readline(obj.id);
                 else
                     answer = '';
                 end
@@ -114,7 +114,7 @@ classdef powerSupply_E3631A < powerSupply
                 writeline(obj.id, what);
                 pause(0.5);
                 if contains(what, '?')
-                    answer = readline(obj.id);
+                    answer = 0; %readline(obj.id);
                 else
                     answer = '';
                 end

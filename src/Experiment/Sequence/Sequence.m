@@ -440,6 +440,31 @@ classdef Sequence < handle
                 S.addPulse(p);
             end
         end
+
+        function addDelayAfterDetection(obj, delay, delayOnChannel)
+
+            % to be used for widefield setups or any place a detector might
+            % need a cooldown in order to prepare for another detection
+            % this function adds a dummy pulse with a given length after a
+            % detection has occured
+
+            assert(isnumeric(delay) && isscalar(delay) && delay >= 0, 't must be a non-negative scalar');
+
+            % Copy current pulses
+            originalPulses = obj.pulses;
+            obj.pulses = [];  % Clear existing sequence to rebuild
+        
+            for i = 1:length(originalPulses)
+                pulse = originalPulses(i);
+                obj.addPulse(pulse);  % Add original pulse back
+        
+                % Add dummy pulse if 'detector' is in the channel list
+                if isfield(pulse.onChannels, 'detector') 
+                    obj.addEvent(delay, {delayOnChannel});  % laser is continoues
+                end
+            end
+        end
+
     end
     
     methods (Access = private)    

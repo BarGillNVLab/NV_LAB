@@ -147,21 +147,30 @@ classdef CameraControlled < Spcm & NiDaqControlled
             end
             obj.nExpIntegration = nReads;
             obj.expTimeoutTime = timeout;
-            obj.camera.prepareAcquisition(obj.nExpIntegration)
+            obj.camera.prepareExperiment(obj.nExpIntegration, obj.expTimeoutTime);
         end
-        
+    
         function startExperimentCount(obj)
-            obj.camera.startExperiment;
+            obj.camera.stopRead;
+            obj.camera.StartRead;
         end
-        
+    
         function images = readFromExperiment(obj)
-            iamgesFull = obj.camera.readExperimentData();
-            images = iamgesFull;
+            if obj.camera.IsLoggin
+                obj.camera.stopRead;
+            end
+            iamgesFull = obj.camera.readExperimentData(obj.nExpIntegration);
+            images = double(permute(iamgesFull, [4, 1, 2, 3]));
         end
-        
+    
         function stopExperimentCount(obj)
         end
-        
+
+        function returnToDefault(obj)
+            obj.camera.resetToDefault;
+        end
+
+    
         function clearExperimentRead(obj)
         end
     %%% End (by PulseGenerator) %%%
