@@ -1640,9 +1640,9 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 idx = sg.findOrderedFGindex(pgChannels(i));
                 fg = sg.FGchannels{idx};
 
-                if connect
-                    fg.device.connect;
-                end
+                % if connect
+                %     fg.device.connect;
+                % end
 
                 for j = 1:length(varargin)
                     if iscellstr(varargin(j)) % we only have a parameter name
@@ -1689,9 +1689,9 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
 
                     fg.device.(paramName) = newVal;
                 end
-                if disconnect
-                    fg.device.disconnect;
-                end
+                % if disconnect
+                %     fg.device.disconnect;
+                % end
             end
         end
         
@@ -1739,7 +1739,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         %     end
         % end
 
-        function waveform = generateWaveform(exp, sequence, fg) %signalGen, FGidx) % (obj, I_vec, Q_vec, varargin) % varargin = [clock, startPlayback, KeepLocalFile, path, filename, comment, copyright, no_scaling]
+        function waveform = generateWaveform(exp, sequence, fg, idx) %signalGen, FGidx) % (obj, I_vec, Q_vec, varargin) % varargin = [clock, startPlayback, KeepLocalFile, path, filename, comment, copyright, no_scaling]
             % we first need to get some constants
             % fg = signalGen.device;
             % fg = signalGen.FGchannels{FGidx}.device;
@@ -1752,10 +1752,11 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             % awg = signalGen.AWGchannels{AWGidx}.device;
             % [pulses, ~, pulseTimes] = getPulsesByChannel(sequence, signalGen.pgChannelName);
             % [pulses, ~, pulseTimes] = getPulsesByChannel(sequence, signalGen.FGchannels{FGidx}.pgChannelName);
-            [pulses, ~, pulseTimes] = getPulsesByChannel(sequence, fg.pgChannelName);
+            % [pulses, ~, pulseTimes] = getPulsesByChannel(sequence, fg.pgChannelName);
+            [pulses, ~, pulseTimes] = getPulsesByChannel(sequence, fg);
             signalGen_duration = sum([pulses.duration]);
             % signalGen_duration = sum(sequence.pulses.duration(sequence.pulses.getOnChannels == signalGen.channelName))+exp.permutable_parameter*number_of_pulses; % won't work but that's the gist. It'll be resolved in debugging
-            waveformLength = (signalGen_duration + exp.laserInitializationDuration); % we're using laserInitializationDuration but any other experiment constant time can be used. This is only to make sure that the waveform is long enough for the instrument
+            % waveformLength = (signalGen_duration + exp.laserInitializationDuration); % we're using laserInitializationDuration but any other experiment constant time can be used. This is only to make sure that the waveform is long enough for the instrument
             % waveformLength = min(waveformLengh, signalGen.awg.MIN_WAVEFORM_LENGTH);
             % signal = ones(1, waveformLength/dt);
             % dt = 1/(awg.sampleRate*1e-6);
@@ -1763,8 +1764,10 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             % waveform = zeros(size(t));
 
             % inizialize our variables and make sure they're the right size
-            idx = find(cellfun(@(c) strcmp(fg.pgChannelName, c), exp.MWChannel));
+            % idx = find(cellfun(@(c) strcmp(fg.pgChannelName, c), exp.MWChannel));
 
+            [pulses, ~, pulseTimes] = getPulsesByChannel(sequence, fg);
+            
             frequency = repmat(exp.frequency{idx}, size(pulses)./size(exp.frequency{idx})); %{exp.frequency{1}.*ones(size(pulses))};
             if ~iscell(frequency)
                 frequency = num2cell(frequency);
@@ -1780,6 +1783,8 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 if ~iscell(phase)
                     phase = num2cell(phase);
                 end
+            else
+                phase = cell(size(pulses));
             end
 
             if ~isempty(exp.envelope)
@@ -1788,92 +1793,95 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 linear_amplitudes = cellfun(@(x) 10^(x / 20), amplitude, 'UniformOutput', false);
                 max_amplitude = max(unique(cell2mat(linear_amplitudes)));
                 envelope = cellfun(@(x) string(abs(x / max_amplitude)), linear_amplitudes, 'UniformOutput', false);
-                % linear_amplitudes = 10.^( amplitude ./ 20);
-                % max_amplitude = max(unique(linear_amplitudes));
-                % envelope = string(abs(linear_amplitudes./ max_amplitude));
+                % envelope = cellfun(@(x) convertStringsToChars(x), envelope, 'UniformOutput', false);                
             end
             
             baseband = ( max(cell2mat(frequency)) + min(cell2mat(frequency)) ) / 2;
-            awg.baseband = baseband;
+            % awg.baseband = baseband;
 
-            %%% for testing %%%
-            dt = 1/(5*baseband);
-            waveformLength = sequence.duration;
-            t = [0:dt:waveformLength];
-            waveform = zeros(size(t));
+            % %%% for testing %%%
+            % dt = 1/(10*baseband);
+            % waveformLength = pulses(end).duration + (pulseTimes(end)-pulseTimes(1));
+            % pulseTimes = pulseTimes - pulseTimes(1); % all pulses relevant to the first pulse.
+            % t = [0:dt:waveformLength];
+            % waveform = zeros(size(t));
+            % 
+            % 
+            % for i = 1:length(pulses)
+            %     freq = frequency{i};
+            %     if ~exist('phase', 'var')
+            %         phase = {0};
+            %     end
+            %     pha = phase{i}*ones(size(freq));
+            %     env = repmat(envelope{i}, size(freq));
+            %     startIdx = round(pulseTimes(i) / dt) + 1; % +1 for indexing
+            %     endIdx = startIdx + round(pulses(i).duration / dt); % -1 for indexing?
+            %     startTime = pulseTimes(i);
+            %     endTime = (startTime + pulses(i).duration);
+            % 
+            % 
+            %     % Ensure endIdx does not exceed the length of the waveform. Shouldn't happen because we make sure that the waveform is longer than the rf sequence
+            %     if endIdx > length(waveform)
+            %         endIdx = length(waveform);
+            %     end
+            % 
+            %     for j = 1:length(freq)
+            %         f = freq(j);
+            %         a = @(x) eval(env(j));
+            %         timeShift = pulses(i).duration/2;
+            %         sine = a(t-(startTime+timeShift)).*cos(2*pi*f*t + pha(j)) .* (startTime <= t) .* (t < endTime);
+            %         waveform = waveform + sine;
+            % 
+            %     end
+            %     waveform(startIdx:endIdx) = waveform(startIdx:endIdx)/(length(freq));
+            % end
+            % % waveform1 = waveform;
 
+            dt = 1 / (10 * baseband);
+            waveformLength = pulses(end).duration + (pulseTimes(end) - pulseTimes(1));
+            pulseTimes = pulseTimes - pulseTimes(1);  % Shift all pulses to be relative to the first one.
+            t = [0:dt:waveformLength];  % Time vector for the entire waveform
+            waveform = zeros(size(t));  % Pre-allocate waveform
 
+            waveformObj = struct();
+            waveformObj.emptyWaveform = zeros(size(t));  % Pre-allocate empty waveform
+            waveformObj.pulseTimes = pulseTimes;  % Store normalized pulse times
+            waveformObj.pulseIndices = zeros(length(pulses), 2);  % Store start and end indices for each pulse
+            waveformObj.pulseWaveform = cell(length(pulses), 1);  % Cell array to store pulse waveforms
+
+            % Iterate over pulses and build waveform
             for i = 1:length(pulses)
                 freq = frequency{i};
-                if ~exist('phase', 'var')
-                    phase = {0};
-                end
-                pha = phase{i}*ones(size(freq));
-                % env = envelope{i}*ones(size(freq));
-                env = repmat(envelope{i}, size(freq));
-                startIdx = round(pulseTimes(i) / dt) + 1; % +1 for indexing
-                endIdx = startIdx + round(pulses(i).duration / dt); % -1 for indexing?
-                startTime = pulseTimes(i);
-                endTime = (startTime + pulses(i).duration);
+                pha = phase{i} * ones(size(freq));  % Phase for each frequency
+                env = repmat(envelope{i}, size(freq));  % Envelope for each frequency
 
-                % Ensure endIdx does not exceed the length of the waveform. Shouldn't happen because we make sure that the waveform is longer than the rf sequence
-                if endIdx > length(waveform)
-                    endIdx = length(waveform);
-                end
+                % Determine the indices for the current pulse
+                startIdx = round(pulseTimes(i) / dt) + 1;  % Convert time to index
+                endIdx = startIdx + round(pulses(i).duration / dt);  % Duration to indices
+                endIdx = min(endIdx, length(waveform)); % Ensure the end index does not exceed the length of the waveform
+
+                % Store pulse indices
+                waveformObj.pulseIndices(i, :) = [startIdx, endIdx];
+
+                % Define time vector for the current pulse only
+                tPulse = t(startIdx:endIdx);  % Extract the time slice for the current pulse
+
                 for j = 1:length(freq)
-                    waveform_internal = zeros(size(t));
-                    f = freq(j);
-                    a = @(x) eval(env(j));
-                    timeShift = pulses(i).duration/2;
-                    % sine = a(t-timeShift).*cos(2*pi*f*t + pha(j));
+                    % Calculate the time-shifted sine wave for the pulse
+                    % a = @(x) eval(env(j));  % Envelope function for the j-th frequency
+                    a = str2func("@(t) " + env(j));  % Envelope function for the j-th frequency
+                    timeShift = pulses(i).duration / 2;  % Time shift for the pulse center
+                    sineWave = a(tPulse - timeShift) .* cos(2 * pi * freq(j) * tPulse + pha(j));
 
-                    sine = a(t-(startTime+timeShift)).*cos(2*pi*f*t + pha(j)) .* (startTime <= t) .* (t < endTime);
-
-                    % waveform_internal(startIdx:endIdx) = sine(1:endIdx-startIdx+1);
-                    % waveform = waveform + waveform_internal;
-                    waveform = waveform + sine;
-                    % waveform = waveform + sine(1:endIdx-startIdx+1);
+                    % Add the current sine wave to the waveform at the relevant indices
+                    waveform(startIdx:endIdx) = waveform(startIdx:endIdx) + sineWave;
                 end
-                waveform(startIdx:endIdx) = waveform(startIdx:endIdx)/(length(freq));
+
+                % Normalize the segment if there are multiple frequencies
+                waveform(startIdx:endIdx) = waveform(startIdx:endIdx) / length(freq);
+                waveformObj.pulseWaveform{i} = waveform(startIdx:endIdx);
             end
-
-            % demodulate the signal to I and Q vectors
-            % [I, Q] = getIQfromSignal(signal); 
-
-            % generate the wave for the specific instument
-            % signalGen.generateIQInternal(I, Q);
-
-            % % find the SGT100 from the list of available FGs
-            % fgCell = FrequencyGenerator.getFG();
-            % fg_names = cellfun(@(c) c.name, fgCell, 'UniformOutput', false);
-            % % sgt_idx = find(contains(fg_names, 'SGT'));
-            % % sgt100 = fgCell{sgt_idx};
-            % sgt100 = fgCell{contains(fg_names, 'SGT')};
-            % 
-            % fg = getObjByName(obj.freqGenName);
-            % 
-            % % set defaults for non mandatory fields (and clockrate)
-            % defult = {'clock', 300e6, 'duration', 0.1e-6, 'StartPlayback', 0, 'KeepLocalFile', 0, 'path', '/hdd/', 'filename','untitled.wv', 'comment', '', 'copyright', '', 'no_scaling', 0};
-            % % populate parameters with user input (if there's no user input use defaults)
-            % IQinfo = varargin2param(defult, varargin);
-            % 
-            % if isempty(IQinfo.filename)  % temp patch
-            %     IQinfo.filename = 'untitled.wv';
-            % end
-            % 
-            % IQinfo.duration = IQinfo.duration*1e-6; %convert to us
-            % 
-            % if length(I_vec) == 1
-            %     I_vec = I_vec*ones(1,(1+IQinfo.clock.*IQinfo.duration));
-            % end
-            % if length(Q_vec) == 1
-            %     Q_vec = Q_vec*ones(1, (1+IQinfo.clock.*IQinfo.duration));
-            % end
-            % 
-            % IQinfo.I_data = I_vec;
-            % IQinfo.Q_data = Q_vec;
-            % 
-            % [Status] = rs_generate_wave( sgt100.visa, IQinfo, IQinfo.StartPlayback, IQinfo.KeepLocalFile )
+            
         end
 
         function loadAWG(obj, S, pg)
@@ -1895,7 +1903,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             end
 
             waveforms = cell(size(obj.MWChannel,1), size(sequences,1));
-
+            a=tic;
             % create all sequences from the base sequence and permutated
             % parameter
             % update the sequence if the signal generator is using AWG
@@ -1905,12 +1913,17 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 if ~isempty(fg.linkedAWG)
                     FGchannel = fg.pgChannelName; % need to get channel name for the fg
                     % waveforms = cell(size(obj.MWChannel,1), size(sequences,1));
-                    for j = 1:totalParamNum
-                        waveforms{i,j} = obj.generateWaveform(sequences{j}, fg);
+                    for j = 1:length(fg.linkedAWG) % multiple AWGs connected to a single FG isn't supported yet
+                        % AWGchannel = fg.linkedAWG{k};
+                        awg = sg.AWGchannels{sg.AWGchannelMap({fg.linkedAWG{j}})};
+                        pgChannelName = fg.pgChannelName;
 
-                        for k = 1:length(fg.linkedAWG) % multiple AWGs connected to a single FG isn't supported yet
-                            % AWGchannel = fg.linkedAWG{k};
-                            awg = sg.AWGchannels{sg.AWGchannelMap({fg.linkedAWG{k}})};
+                        for k = 1:totalParamNum
+                            if isempty(waveforms{i,k})
+                                % waveforms{i,k} = obj.generateWaveform(sequences{k}, fg);
+                                waveforms{i,k} = obj.generateWaveform(sequences{k}, pgChannelName, i);
+                                waveforms{i,k} = Waveform(obj, sequences{k}, pgChannelName, i);
+                            end
 
                             % now we can update the sequence that is sent to the pulse generator
                             if strcmp(class(fg.device), class(awg.device))
@@ -1918,18 +1931,19 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                             else
                                 opMode = 'external';
                             end
-                            sequences{j}.updateInternal(FGchannel, awg.pgChannelName, awg.device.triggerDuration, fg.keepPGchannelOn, opMode);
+                            sequences{k}.updateInternal(FGchannel, awg.pgChannelName, awg.device.triggerDuration, fg.keepPGchannelOn, opMode);
                         end
                         % We have all the waveforms, now we can load them into the AWG.
                         % awg.loadAWGinternal(waveforms{i,:})
                     end
                 end
             end
+            toc(a)
 
            
 
             % we need to store somewhere all of the sequences (we already computed them, it's a shame to do so on the fly again)
-            obj.sequencesList = sequences;
+            % obj.sequencesList = sequences;
 
             % create the IQ data and load all waveforms to instrument
             % for i = 1:length(sgCell)

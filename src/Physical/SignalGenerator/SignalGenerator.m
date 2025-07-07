@@ -20,7 +20,7 @@ classdef SignalGenerator < BaseObject
         output      % logical. On/off
         phase       % degrees
 
-        numChannels
+        % numChannels
         defaultChannel = 1 % default value, if the json contains a default device this property will be updated accordingly.
     end
     
@@ -264,6 +264,7 @@ classdef SignalGenerator < BaseObject
                     otherwise
                         error('Unknown command. Ignoring')
                 end
+                obj.output(idx(i)) = value(i);
             end
         end
         
@@ -287,6 +288,7 @@ classdef SignalGenerator < BaseObject
                     %     obj.minAmpl, obj.maxAmpl, newAmplitude(i))
                 end
                 fg.setValue('amplitude', newAmplitude(i,1), obj.FGchannels{idx(i)}.deviceChannel);
+                obj.amplitude(idx(i)) = newAmplitude(i,1);
             end
         end
 
@@ -310,6 +312,7 @@ classdef SignalGenerator < BaseObject
                     %     fg.minFreq, fg.maxFreq, newFrequency)
                 end
                 fg.setValue('frequency', newFrequency(i,1), obj.FGchannels{idx(i)}.deviceChannel);
+                obj.frequency(idx(i)) = newFrequency(i,1);
             end
         end
 
@@ -333,6 +336,7 @@ classdef SignalGenerator < BaseObject
                     %     fg.minPhase, fg.maxPhase, newPhase)
                 end
                 fg.setValue('phase', newPhase(i,1), obj.FGchannels{idx(i)}.deviceChannel);
+                obj.phase(idx(i)) = newPhase(i,1);
             end
         end
 
@@ -344,10 +348,11 @@ classdef SignalGenerator < BaseObject
             idx = find(cellfun(@(s) ismember(s.pgChannelNumber, channel), obj.FGchannels));
             value = [];
             for i = idx
-                fg = getObjByName(obj.FGchannels{i}.device.name);
-                command = fg.createCommand(what, '?', obj.FGchannels{i}.deviceChannel);
-                sendCommand(fg, command);
-                value = [value; str2double(fg.readOutput(what))]; %#ok<AGROW>
+                fg = obj.FGchannels{i};
+                value = [value; fg.device.queryValue(what, fg.deviceChannel)]; %#ok<AGROW>
+                % command = fg.createCommand(what, '?', obj.FGchannels{i}.deviceChannel);
+                % sendCommand(fg, command);
+                % value = [value; str2double(fg.readOutput(what))]; %#ok<AGROW>
             end
         end
         

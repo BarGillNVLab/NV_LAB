@@ -16,6 +16,12 @@ classdef FrequencyGeneratorWindfreak < FrequencyGenerator %& SerialControlled
 
         NEEDED_FIELDS = {'address', 'serialNumber', 'minFrequency', 'maxFrequency', 'minAmplitude', 'maxAmplitude'}
         OPTIONAL_FIELDS = {'keepOn'};
+
+        NUM_CHANNELS = 2;
+    end
+
+    properties (Access = private)
+        s       % serialport object
     end
     
     methods (Access = private)
@@ -23,33 +29,37 @@ classdef FrequencyGeneratorWindfreak < FrequencyGenerator %& SerialControlled
             obj@FrequencyGenerator(name, frequencyLimits, amplitudeLimits, keepOn);
             %obj@SerialControlled(address); % there's an issue with NAME property when calling SerialControlled
             
-            obj.initialize;
+            obj.s = serialport(address, 115200); % using 115200 as default, if doesn't work we should check for the windfreak's expected baudrate.
+            obj.s.Timeout = 1; % change timeout to 1s , defult is 10s
 
-           InstrObject.Timeout = 1; % change timeout to 1s , defult is 10s
+            obj.initialize;
         end
     end
 
     methods
         function connect(obj)
-            obj.open(); % SerialControlled
+            % obj.open(); % SerialControlled
         end
 
         function disconnect(obj)
-            obj.close(); % SerialControlled
+            % obj.close(); % SerialControlled
         end
 
         function delete(obj)
-            delete@SerialControlled(obj); % Just to make it implicit
+            % delete@SerialControlled(obj); % Just to make it implicit
+            delete(obj.s)
         end
         
         function sendCommand(obj, command)
             % Actually sends command to hardware
-            sendCommand@SerialControlled(obj, command) % Just to make it implicit
+            % sendCommand@SerialControlled(obj, command) % Just to make it implicit
+            writeline(obj.s, command);
         end
         
-        function value = readOutput(obj, what) %#ok<INUSD>
+        function value = readOutput(obj, command) %#ok<INUSD>
             % Get value returned from object
-            value = obj.readAll(); % SerialControlled
+            % value = obj.readAll(); % SerialControlled
+            value = writeread(obj.s, command);
         end
         
         function command = createCommand(obj, what, value, channel)

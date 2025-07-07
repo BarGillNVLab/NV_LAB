@@ -12,16 +12,16 @@ classdef FrequencyGeneratorSRS < FrequencyGenerator
     end
        
     properties (Access = private)
-        t       % tcpip object
-        switchMW
+        tcpClient       % the SRS is a tcpip client
     end
     
     methods (Access = private)
-        function obj = FrequencyGeneratorSRS(name, address, port, frequencyLimits, amplitudeLimits, keepOn)
+        function obj = FrequencyGeneratorSRS(name, address, port, frequencyLimits, amplitudeLimits, numChannels, keepOn)
             % All models are the same in regards to controlling them, but
             % the limitations on the amplitude and on the allowed frequencies may vary.
-            obj@FrequencyGenerator(name, frequencyLimits, amplitudeLimits, keepOn);
-            obj.t = tcpip(address, port);
+            obj@FrequencyGenerator(name, frequencyLimits, amplitudeLimits, numChannels, keepOn);
+            % obj.t = tcpip(address, port);
+            obj.tcpClient = tcpclient(address, port);
             
             obj.initialize;
         end
@@ -29,35 +29,37 @@ classdef FrequencyGeneratorSRS < FrequencyGenerator
        
     methods
         function connect(obj)
-            if strcmp(obj.t.Status, 'closed')
-                fopen(obj.t);
-            end
+            % if strcmp(obj.tcpServer.Status, 'closed')
+                % fopen(obj.tcpServer);
+            % end
         end
 
         function disconnect(obj)
-            if strcmp(obj.t.Status, 'open')
-                fclose(obj.t);
-            end
+            % if strcmp(obj.tcpServer.Status, 'open')
+                % fclose(obj.tcpServer);
+            % end
         end
 
         function delete(obj)
-            obj.disconnect;
-            delete(obj.t)
+            % obj.disconnect;
+            delete(obj.tcpClient)
         end
 
         function sendCommand(obj, command)
             % Actually sends command to hardware
-            obj.connect() % Only happens if it is closed
-            fprintf(obj.t, command);
+            % obj.connect() % Only happens if it is closed
+            % fprintf(obj.t, command);
+            writeline(obj.tcpClient, command);
         end
         
-        function value = readOutput(obj, what)
+        function value = readOutput(obj, command)
             % Get value returned from object
-            value = fscanf(obj.t, '%s');
-            switch what
-                case {'frequency', 'freq', 'f'}
-                    value = num2str(str2double(value)/1e6);  % convert Hz to MHz
-            end
+            value = writeread(obj.tcpClient, command);
+
+            % switch command
+            %     case {'frequency', 'freq', 'f'}
+            %         value = num2str(str2double(value)/1e6);  % convert Hz to MHz
+            % end
         end
     end
     
@@ -77,7 +79,8 @@ classdef FrequencyGeneratorSRS < FrequencyGenerator
             frequencyLimits = [struct.minFrequency, struct.maxFrequency];
             amplitudeLimits = [struct.minAmplitude, struct.maxAmplitude];
             keepOn = struct.keepOn;
-            obj = FrequencyGeneratorSRS(name, struct.address, struct.port, frequencyLimits, amplitudeLimits, keepOn);
+            numChannels = FrequencyGeneratorSRS.NUM_CHANNELS;
+            obj = FrequencyGeneratorSRS(name, struct.address, struct.port, frequencyLimits, amplitudeLimits, numChannels, keepOn);
 
             addBaseObject(obj);
         end

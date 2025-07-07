@@ -14,7 +14,9 @@ classdef (Abstract) FrequencyGenerator < SignalGenerator
     % 2. call obj.initialize by the end of the constructor
     
     properties
-        keepOn      % keep the FG always on
+        keepOn          % keep the FG always on
+        numChannels     % double
+
     end
     
     properties (Abstract, Constant)
@@ -43,7 +45,7 @@ classdef (Abstract) FrequencyGenerator < SignalGenerator
     end
     
     methods (Access = protected)
-        function obj = FrequencyGenerator(name, freqLimits, amplLimits, keepOn)
+        function obj = FrequencyGenerator(name, freqLimits, amplLimits, numChannels, keepOn)
             obj@SignalGenerator(name);
             
             obj.minFreq = freqLimits(1);
@@ -52,6 +54,7 @@ classdef (Abstract) FrequencyGenerator < SignalGenerator
             obj.maxAmpl = amplLimits(2);
             obj.minPhase = -180;
             obj.maxPhase = 180;
+            obj.numChannels = numChannels;
             
             if ~exist('keepOn', 'var')
                 keepOn = false;
@@ -163,8 +166,12 @@ classdef (Abstract) FrequencyGenerator < SignalGenerator
             value = [];
             for i = 1:length(channel)
                 command = obj.createCommand(what, '?', channel(i));
-                sendCommand(obj, command);
-                value = [value, str2double(obj.readOutput(what))]; %#ok<AGROW>
+                % sendCommand(obj, command);
+                value = [value, str2double(obj.readOutput(command))]; %#ok<AGROW>
+                % value = [value, str2double(obj.readOutput(what))]; %#ok<AGROW>
+                if value(i) > 1e6
+                    value(i) = value(i)*1e-6; % convert frequency to MHz
+                end
             end
         end
         

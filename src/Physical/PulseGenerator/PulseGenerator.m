@@ -115,6 +115,10 @@ classdef (Abstract) PulseGenerator < EventSender
             % stores it in obj.delayFixedSequence. Saves previously stored
             % seqeunces in a map, to save calculation time.
             
+            % if the on/off delay is exactly the same length of a pulse, we'll get an error in the calculation.
+            % So we define a tolerance level
+            % tolerance = 1e-10;
+
             % If we upgrade to 2018+, we can switch to https://www.mathworks.com/help/releases/R2020a/rptgen/ug/mlreportgen.utils.hash.html
             sequenceKey = DataHash(obj.sequence); % Calculates a key for the current sequence.
             if obj.delayFixedSequenceMap.isKey(sequenceKey) % key exists, so just load the previously found sequence.
@@ -133,8 +137,8 @@ classdef (Abstract) PulseGenerator < EventSender
                     startTimes = channelsStruct(i).pulsesStartTime;
                     endTimes = channelsStruct(i).pulsesEndTime;
                     % delays fix by json:
-                    startTimes = startTimes - onDelay;
-                    endTimes = endTimes - offDelay;
+                    startTimes = double( single(startTimes) - single(onDelay) ); % workaround. overcoming a precision error (that happens sometimes) if startTimes == onDelay
+                    endTimes = double( single(endTimes) - single(offDelay) ); % workaround. overcoming a precision error (that happens sometimes) if startTimes == onDelay
                     % search for pulse with negative start time and postive
                     % end time, and split.
                     indSplit = find((startTimes < 0) & (endTimes > 0));

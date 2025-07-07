@@ -7,6 +7,7 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator & AWG
         
         NEEDED_FIELDS = {'address', 'serialNumber', 'minFrequency', 'maxFrequency', 'minAmplitude', 'maxAmplitude'}
         OPTIONAL_FIELDS = {'keepOn', 'mode'};
+        NUM_CHANNELS = 1;
     end
 
 %     properties (Constant, Hidden)
@@ -24,16 +25,18 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator & AWG
         switchMW
         baseband
         triggerDuration = 0.05 % double. in us.
+
                 
     end
     
     methods (Access = private)
-        function obj = FrequencyGeneratorSGT100A(name, address, port, frequencyLimits, amplitudeLimits, keepOn, bandwidth, sampleRate, useAWG, mode, channelName, directAmplitudeControl, wavformPath)
+        function obj = FrequencyGeneratorSGT100A(name, address, port, frequencyLimits, amplitudeLimits, numChannels, keepOn, bandwidth, sampleRate, useAWG, mode, channelName, directAmplitudeControl, wavformPath)
             % All models are the same in regards to controlling them, but
             % the limitations on the amplitude and on the allowed frequencies may vary.
-            obj@FrequencyGenerator(name, frequencyLimits, amplitudeLimits, keepOn);
+            obj@FrequencyGenerator(name, frequencyLimits, amplitudeLimits, numChannels, keepOn);
             obj@AWG(name, bandwidth, sampleRate, useAWG, mode, channelName, directAmplitudeControl, wavformPath);
-            [~, obj.visa] = rs_connect('visa', 'ni', address);
+            % [~, obj.visa] = rs_connect('visa', 'ni', address);
+            obj.visa = visadev(address);
             
             obj.initialize;
         end
@@ -42,7 +45,8 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator & AWG
     methods
         function connect(obj)
             if ~isa(obj.visa, 'visa')
-                [status, obj.visa] = rs_connect( 'visa', 'ni', obj.address ); % connects and closes the connection.
+                % [status, obj.visa] = rs_connect( 'visa', 'ni', obj.address ); % connects and closes the connection.
+                fopen(obj.visa);
             else % the object exists but the instrument is disconnected, so we just need to connect to it %% might not be needed, the rs_command and rs_query open and close the connection
 %                 fopen(obj.visa);
             end
@@ -59,18 +63,20 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator & AWG
         end
 
         function delete(obj)
-            obj.disconnect;
+            % obj.disconnect;
             delete(obj.visa);
         end
 
         function sendCommand(obj, command)
             % Actually sends command to hardware
-            [Status] = rs_send_command(obj.visa, command);
+            % [Status] = rs_send_command(obj.visa, command);
+            writeline(obj.visa, command)
         end
 
         function value = readOutput(obj, command)
             % Get value returned from object
-            [Status, value] = rs_send_query(obj.visa, command);
+            % [Status, value] = rs_send_query(obj.visa, command);
+            value = writeread(obj.visa, command);
             % value = fscanf(obj.t, '%s');
             % switch what
             %     case {'frequency', 'freq', 'f'}
@@ -78,19 +84,22 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator & AWG
             % end
         end
 
-        function value = queryValue(obj, what, channel)
-            if ~exist('channel', 'var') || isempty(channel)
-                channel = 1:obj.numChannels;
-            end
-            value = [];
-            for i = 1:length(channel)
-                command = obj.createCommand(what, '?', channel(i));
-                value = [value, str2double(readOutput(obj, command))];
-%                 value = [value, str2double(obj.readOutput(what))]; %#ok<AGROW>
-            end
+%         function value = queryValue(obj, what, channel)
+%             if ~exist('channel', 'var') || isempty(channel)
+%                 channel = 1:obj.numChannels;
+%             end
+%             value = [];
+%             for i = 1:length(channel)
+%                 command = obj.createCommand(what, '?', channel(i));
+%                 value = [value, str2double(obj.readOutput(command))]; %#ok<AGROW>
+% %                 value = [value, str2double(obj.readOutput(what))]; %#ok<AGROW>
+%                 if value(i) > 1e6
+%                     value(i) = value(i)*1e-6; % convert frequency to MHz
+%                 end
+%             end
 %             command = createCommand(what, '?', channel);
 %             value = readOutput(obj, command);
-        end
+        % end
 
 %         function set.IQ.output(obj, newState)
 %             checkBoolean(obj, newState);
@@ -134,7 +143,8 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator & AWG
             wavformPath = '';
             useAWG = true;
             useMode = '';
-            obj = FrequencyGeneratorSGT100A(name, address, struct.port, frequencyLimits, amplitudeLimits, keepOn, bandwidth, sampleRate, useAWG, useMode, channelName, directAmplitudeControl, wavformPath);
+            numChannels = FrequencyGeneratorSGT100A.NUM_CHANNELS;
+            obj = FrequencyGeneratorSGT100A(name, address, struct.port, frequencyLimits, amplitudeLimits, numChannels, keepOn, bandwidth, sampleRate, useAWG, useMode, channelName, directAmplitudeControl, wavformPath);
             % obj =                          (name, bandwidth, sampleRate, useAWG, mode, channelName, directAmplitudeControl, wavformPath)
 
             addBaseObject(obj);
@@ -177,7 +187,7 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator & AWG
            
 
             % set defaults for non mandatory fields (and clockrate)
-            defult = {'clock', 300e6, 'duration', 0.1e-6, 'StartPlayback', 0, 'KeepLocalFile', 0, 'path', '/hdd/', 'filename','untitled.wv', 'comment', '', 'copyright', '', 'no_scaling', 0};
+            default = {'clock', 300e6, 'duration', 0.1e-6, 'StartPlayback', 0, 'KeepLocalFile', 0, 'path', '/hdd/', 'filename','untitled.wv', 'comment', '', 'copyright', '', 'no_scaling', 0};
             IQinfo.clock = obj.clock;
             IQinfo.duration = obj.sampleRate; %length(waveforms)/sampleRate; % needs to be in us
             % startPlayback = obj.startPlayback;
