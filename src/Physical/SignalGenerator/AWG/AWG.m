@@ -8,7 +8,7 @@ classdef (Abstract) AWG < SignalGenerator
         waveforms
         channelName
         directAmplitudeControl  % logical. Can the AWG control amplitude (true) or phase only (false)
-        wavformPath             % string. Waveform location path in the instrument
+        waveformPath             % string. Waveform location path in the instrument
         segmentIQ               % cell array. Each cell is a matrix 2xN (I,Q by IQ length) containing the IQ data for a specific pulse in the sequence.
     end
 
@@ -29,7 +29,7 @@ classdef (Abstract) AWG < SignalGenerator
             obj.mode = mode;
             obj.channelName = channelName;
             obj.directAmplitudeControl = directAmplitudeControl;
-            obj.wavformPath = wavformPath;
+            obj.waveformPath = wavformPath;
             obj.waveforms = {}; % Initialize waveforms as an empty cell array
         end
 
@@ -48,30 +48,46 @@ classdef (Abstract) AWG < SignalGenerator
 
         loadAWGInternal(obj, waveform, waveformName)
 
+        setPlayList(obj, idx)
+
     end
 
-    methods
-        function [I, Q] = generateIQFromWaveform(waveform, f0, Fs)
+    methods (Static)
+        function [t, I, Q] = generateIQFromWaveform(waveform, f0, Fs)
+            decimationFactor = 2;
             persistent dwnConv;
             dwnConv = dsp.DigitalDownConverter(...
-                DecimationFactor=2,...
-                SampleRate=Fs,...
-                PassbandRipple=0.001,...
-                Bandwidth=f0/2,...   % must be less than SampleRate/DecimationFactor
-                CenterFrequency=f0);  % The value of center frequency must be less than or equal to half the value of the SampleRate
+                DecimationFactor = decimationFactor,...
+                SampleRate = Fs,...
+                PassbandRipple = 0.00001,...
+                Bandwidth = f0/decimationFactor,...   % must be less than SampleRate/DecimationFactor
+                CenterFrequency = f0);  % The value of center frequency must be less than or equal to half the value of the SampleRate
 
+            % pad the waveform with zeros from both sides
+            waveform = [zeros(1,500), waveform, zeros(1,500)]; % temp
+            if mod(length(waveform),2)
+                waveform = waveform(1:end-1);
+            end
+            
             signal = dwnConv(waveform');
+            % dwnConv.release();
+            % signal = dwnConv(signal');
 
             I = sqrt(2)*real(signal);
             Q = sqrt(2)*imag(signal);
+            
+            dt = 1/(Fs/decimationFactor);
+            t = 0:dt:(length(signal)-1)*dt;
 
         end
 
         function [outputTime, outputSignal] = underSampling(time, signal, destSampleRate)
             % Validate inputs
-            if length(time) ~= size(signal, 2)
+            if length(time) ~= size(signal, 1)
                 error('Time and signal vectors must be the same length.');
             end
+
+            destSampleRate = destSampleRate*1e-6; % convert to MHz
 
             % Estimate original sampling rate
             dt = mean(diff(time));
@@ -82,9 +98,9 @@ classdef (Abstract) AWG < SignalGenerator
 
             % Resample the signal
             outputSignal = [];
-            for i = 1:size(signal, 1)
-                outputSignal(i, :) = resample(signal, P, Q);  % uses linear-phase FIR filter
-            end
+            % for i = 1:size(signal, 1)
+                outputSignal = resample(signal, P, Q);  % uses linear-phase FIR filter
+            % end
 
             % Compute new time vector
             outputTime = (0:length(outputSignal)-1) / destSampleRate;

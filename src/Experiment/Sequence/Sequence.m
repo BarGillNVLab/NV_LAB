@@ -317,6 +317,7 @@ classdef Sequence < handle
                 case 'internal'
                     obj.keepChannelStatic(fgChannel, 'off') % turn off the channel
                     obj.addEventAtGivenTime(pulseTimes(1), triggerDuration, fgChannel, '') % and keep only a trigger pulse
+                    obj.addEventAtGivenTime(pulseTimes(1), triggerDuration, awgChannel, '') % and keep only a trigger pulse
                 otherwise
                     EventStation.anonymousWarning('Cannot update sequence. Mode ''%s'' is not supported on channel ''%s''', type, fgChannel) % escape character for a single quote is a single quote (i.e. '')
             end

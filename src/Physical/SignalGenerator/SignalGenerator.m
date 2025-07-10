@@ -375,6 +375,20 @@ classdef SignalGenerator < BaseObject
             idx = arrayfun(@(x) find(channelNumbers == x), fgChannel);
         end
 
+        function setSequence(obj, paramIdx, fgChannels)
+            if ~iscell(fgChannels)
+                fgChannels = cell(fgChannels);
+            end
+            fgIdx = obj.findOrderedFGindex(obj.FGchannelMap(fgChannels));
+            for i = fgIdx
+                fg = obj.FGchannels{i};
+                for j = 1:length(fg.linkedAWG)
+                    awg = obj.AWGchannels{obj.AWGchannelMap({fg.linkedAWG{j}})}.device;
+                    awg.setPlayList(awg, paramIdx);
+                end
+            end
+        end
+
         % function value = validateInput(obj, value)
         %     % Validate input dimensions and prepare pgChannels
         %     if size(value, 2) < 2 && (size(value, 1) == length(obj.FGchannels) || size(value, 1) == 1)
@@ -387,6 +401,7 @@ classdef SignalGenerator < BaseObject
         %     end
         % end
     end
+
 
     %% Initializtion and Setup
     methods (Static)

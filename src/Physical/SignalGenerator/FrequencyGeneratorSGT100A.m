@@ -8,6 +8,8 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator & AWG
         NEEDED_FIELDS = {'address', 'serialNumber', 'minFrequency', 'maxFrequency', 'minAmplitude', 'maxAmplitude'}
         OPTIONAL_FIELDS = {'keepOn', 'mode'};
         NUM_CHANNELS = 1;
+        WF_PATH = '/var/user/';
+        USE_VISA = false;            % true - use visa; false - use visadev
     end
 
 %     properties (Constant, Hidden)
@@ -24,19 +26,23 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator & AWG
         awg
         switchMW
         baseband
-        triggerDuration = 0.05 % double. in us.
+        triggerDuration = 0.05  % double. in us.
 
                 
     end
     
     methods (Access = private)
-        function obj = FrequencyGeneratorSGT100A(name, address, port, frequencyLimits, amplitudeLimits, numChannels, keepOn, bandwidth, sampleRate, useAWG, mode, channelName, directAmplitudeControl, wavformPath)
+        function obj = FrequencyGeneratorSGT100A(name, address, port, frequencyLimits, amplitudeLimits, numChannels, keepOn, bandwidth, sampleRate, useAWG, mode, channelName, directAmplitudeControl, waveformPath)
             % All models are the same in regards to controlling them, but
             % the limitations on the amplitude and on the allowed frequencies may vary.
             obj@FrequencyGenerator(name, frequencyLimits, amplitudeLimits, numChannels, keepOn);
-            obj@AWG(name, bandwidth, sampleRate, useAWG, mode, channelName, directAmplitudeControl, wavformPath);
+            obj@AWG(name, bandwidth, sampleRate, useAWG, mode, channelName, directAmplitudeControl, waveformPath);
             % [~, obj.visa] = rs_connect('visa', 'ni', address);
-            obj.visa = visadev(address);
+            if FrequencyGeneratorSGT100A.USE_VISA
+                obj.visa = visa('ni', address);
+            else
+                obj.visa = visadev(address);
+            end
             
             obj.initialize;
         end
@@ -70,13 +76,28 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator & AWG
         function sendCommand(obj, command)
             % Actually sends command to hardware
             % [Status] = rs_send_command(obj.visa, command);
-            writeline(obj.visa, command)
+            if obj.USE_VISA
+                fopen(obj.visa);
+                % fwrite(obj.visa, command, 'uchar');
+                fprintf(obj.visa, command);
+                fclose(obj.visa);
+            else % using visadev
+                writeline(obj.visa, command)
+            end
         end
 
         function value = readOutput(obj, command)
             % Get value returned from object
             % [Status, value] = rs_send_query(obj.visa, command);
-            value = writeread(obj.visa, command);
+            if obj.USE_VISA
+                fopen(obj.visa);
+                % fwrite(obj.visa, [command, char(10)], 'uchar');
+                % value = fread(obj.visa, obj.visa.BytesAvailable, 'uchar');
+                value = query(obj.visa, command);
+                fclose(obj.visa);
+            else % using visadev
+                value = writeread(obj.visa, command);
+            end
             % value = fscanf(obj.t, '%s');
             % switch what
             %     case {'frequency', 'freq', 'f'}
@@ -144,7 +165,8 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator & AWG
             useAWG = true;
             useMode = '';
             numChannels = FrequencyGeneratorSGT100A.NUM_CHANNELS;
-            obj = FrequencyGeneratorSGT100A(name, address, struct.port, frequencyLimits, amplitudeLimits, numChannels, keepOn, bandwidth, sampleRate, useAWG, useMode, channelName, directAmplitudeControl, wavformPath);
+            waveformPath = FrequencyGeneratorSGT100A.WF_PATH;
+            obj = FrequencyGeneratorSGT100A(name, address, struct.port, frequencyLimits, amplitudeLimits, numChannels, keepOn, bandwidth, sampleRate, useAWG, useMode, channelName, directAmplitudeControl, waveformPath);
             % obj =                          (name, bandwidth, sampleRate, useAWG, mode, channelName, directAmplitudeControl, wavformPath)
 
             addBaseObject(obj);
@@ -188,154 +210,199 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator & AWG
 
             % set defaults for non mandatory fields (and clockrate)
             default = {'clock', 300e6, 'duration', 0.1e-6, 'StartPlayback', 0, 'KeepLocalFile', 0, 'path', '/hdd/', 'filename','untitled.wv', 'comment', '', 'copyright', '', 'no_scaling', 0};
-            IQinfo.clock = obj.clock;
-            IQinfo.duration = obj.sampleRate; %length(waveforms)/sampleRate; % needs to be in us
-            % startPlayback = obj.startPlayback;
-            % KeepLocalFile = obj.KeepLocalFile;
-            IQinfo.path = obj.wavformPath;
-            % IQinfo.filename = [waveformNames, '.wv'];
-            IQinfo.comment = obj.comment;
-            IQinfo.copyright = obj.copyright;
-            IQinfo.no_scaling = obj.no_scaling;
-            % populate parameters with user input (if there's no user input use defaults)
-            % IQinfo = varargin2param(defult, varargin);
+            IQinfo.clock = obj.sampleRate;
+            IQinfo.duration = length(waveforms{1}.emptyWaveform); %length(waveforms)/sampleRate; % needs to be in us
+            IQinfo.StartPlayback = 0;
+            IQinfo.KeepLocalFile = 0;
+            IQinfo.path = obj.waveformPath;
+            IQinfo.comment = '';
+            IQinfo.copyright = '';
+            IQinfo.no_scaling = 0;
+
 
             % waveform down conversion
             for i = 1:length(waveforms)
-                [time, I, Q] = generateIQFromWaveform(waveforms(i));
-                [I, Q] = obj.underSampling(time, [I, Q], obj.clock);
-                IQinfo.I_data = I;
-                IQinfo.Q_data = Q;
-                IQinfo.filename = [waveformNames(i), '.wv'];
+                [time, I, Q] = obj.generateIQFromWaveform(waveforms{i}.reconstructWaveform, waveforms{i}.baseband, 1/waveforms{i}.dt);
+                [tUnder, signalUnder] = obj.underSampling(time, [I, Q], obj.sampleRate);
+                IQinfo.I_data = signalUnder(:,1);
+                IQinfo.Q_data = signalUnder(:,2);
+                IQinfo.filename = [waveforms{i}.name, '.wv'];
 
-                [Status] = rs_generate_wave( obj.visa, IQinfo, IQinfo.StartPlayback, IQinfo.KeepLocalFile );
+                if obj.USE_VISA
+                    [Status] = rs_generate_wave( obj.visa, IQinfo, IQinfo.StartPlayback, IQinfo.KeepLocalFile );
+                else
+                    [Status] = rs_generate_wave_visadev( obj.visa, IQinfo, IQinfo.StartPlayback, IQinfo.KeepLocalFile );
+                end
             end
-
-
-            
-            %  % find the SGT100 from the list of available FGs
-            % fgCell = FrequencyGenerator.getFG();
-            % fg_names = cellfun(@(c) c.name, fgCell, 'UniformOutput', false);
-            % % sgt_idx = find(contains(fg_names, 'SGT'));
-            % % sgt100 = fgCell{sgt_idx};
-            % sgt100 = fgCell{contains(fg_names, 'SGT')};
-            % 
-            % fg = getObjByName(obj.freqGenName);
-            % 
-            % if isempty(IQinfo.filename)  % temp patch
-            %     IQinfo.filename = 'untitled.wv';
-            % end
-            % 
-            % IQinfo.duration = IQinfo.duration*1e-6; %convert to us
-            % 
-            % if length(I_vec) == 1
-            %     I_vec = I_vec*ones(1,(1+IQinfo.clock.*IQinfo.duration));
-            % end
-            % if length(Q_vec) == 1
-            %     Q_vec = Q_vec*ones(1, (1+IQinfo.clock.*IQinfo.duration));
-            % end
-            % 
-            % IQinfo.I_data = I_vec;
-            % IQinfo.Q_data = Q_vec;
-            % 
-            % [Status] = rs_generate_wave( sgt100.visa, IQinfo, IQinfo.StartPlayback, IQinfo.KeepLocalFile )
             
             
-            
+            %%
             DELAY_TIME = 0.2;
+            % 
+            % % make sure that pulse modulation is turned on
+            % % sendCommand(obj, ':PULM:STAT ON')
+            % sendCommand(obj, ':PULM:STAT OFF')
+            % pause(DELAY_TIME)
+            % % sendCommand(obj, ':BB:ARB:WSEG:NEXT:SOUR NEXT')
+            % pause(DELAY_TIME)
 
-            % make sure that pulse modulation is turned on
-            % sendCommand(obj, ':PULM:STAT ON')
-            sendCommand(obj, ':PULM:STAT OFF')
-            pause(DELAY_TIME)
-            % sendCommand(obj, ':BB:ARB:WSEG:NEXT:SOUR NEXT')
-            pause(DELAY_TIME)
-
-            % make sure the correct channel is configured for triggering
-            trigger_command = [':CONNector:USER', num2str(obj.IQ.trigger_output), ':OMODe TRIG'];
+            % % make sure the correct channel is configured for triggering
+            % trigger_command = [':CONNector:USER', num2str(obj.IQ.trigger_output), ':OMODe TRIG'];
             % trigger_command = [':CONNector:USER', num2str(obj.IQ.trigger_output), ':OMODe NEXT'];
             % trigger_command = [':CONNector:USER', num2str(obj.IQ.trigger_output), ':OMODe PEMSource'];
-            sendCommand(obj, trigger_command)
-            pause(DELAY_TIME)
-            % make sure trigger mode is armed_auto
+            % trigger_command = [':CONNector:USER1:OMODe TRIG'];
+            % sendCommand(obj, trigger_command)
+            % pause(DELAY_TIME)
+
+            % % make sure trigger mode is single
 %             sendCommand(obj, ':BB:ARB:TRIG:SEQ AAUT')
-            sendCommand(obj, ':BB:ARB:TRIG:SEQ RETR')
-            pause(DELAY_TIME)
-            if obj.IQ.trigger_next
-                trigger_command = [':CONNector:USER', num2str(obj.IQ.trigger_next), ':OMODe NEXT'];
-                % trigger_command = [':CONNector:USER', num2str(obj.IQ.trigger_next), ':OMODe TRIG'];
-                sendCommand(obj, trigger_command)
-                pause(DELAY_TIME)
-                % if we're working with two trigger channels, make sure trigger mode is auto
-%                 sendCommand(obj, 'BB:ARB:TRIG:SEQ AUTO')  % NEEDS TO BE TESTED
-            end
+            % sendCommand(obj, ':BB:ARB:TRIG:SEQ RETR')
+            % sendCommand(obj, ':BB:ARB:TRIG:SEQ SING');
+            % pause(DELAY_TIME)
+%             if obj.IQ.trigger_next
+%                 trigger_command = [':CONNector:USER', num2str(obj.IQ.trigger_next), ':OMODe NEXT'];
+%                 % trigger_command = [':CONNector:USER', num2str(obj.IQ.trigger_next), ':OMODe TRIG'];
+%                 sendCommand(obj, trigger_command)
+%                 pause(DELAY_TIME)
+%                 % if we're working with two trigger channels, make sure trigger mode is auto
+% %                 sendCommand(obj, 'BB:ARB:TRIG:SEQ AUTO')  % NEEDS TO BE TESTED
+%             end
 
             % arm the instrument
 %             sendCommand(obj, ':BB:ARB:TRIG:ARM:EXEC')
             pause(DELAY_TIME)
 
             % choose list file-name
-            if ~exist(obj.IQ.list_name)
-                obj.IQ.list_name = 'untitled_list';
-            end
+            % if ~exist(obj.IQ.list_name)
+            %     obj.IQ.list_name = 'untitled_list';
+            % end
 %             sendCommand(obj, [':BB:ARB:WSEG:CONF:OFIL ', char(39), obj.IQ.list_name, char(39)]) % char(39) is the special character single apostrophe (')
-            sendCommand(obj, [':BB:ARB:WSEG:CONF:SEL ', char(39), obj.IQ.list_name, char(39)])
-            pause(DELAY_TIME)
-            sendCommand(obj, [':BB:ARB:WSEG:CONF:OFIL ', char(39), obj.IQ.list_name, char(39)])
+            % sendCommand(obj, [':BB:ARB:WSEG:CONF:SEL ', char(39), obj.IQ.list_name, char(39)])
+            expName = split(waveforms{1}.name, '_');
+            listName = [expName{1}, '_', 'list'];
+
+
+            % set the working directory
+            sendCommand(obj, [':MMEM:CDIR ', char(39), obj.waveformPath, char(39)]);
+            
+            % create new multi-segment waveform list
+            sendCommand(obj, [':BB:ARB:WSEG:CONF:SEL ', char(39), listName, char(39)]);
             pause(DELAY_TIME)
 
-            % create new play list
-            sendCommand(obj, ['BB:ARB:WSEG:SEQ:SEL ', char(39), obj.IQ.internal_path, obj.IQ.list_name, char(39)])
+            % append all waveforms to the list
+            for i = 1:length(waveforms)
+                sendCommand(obj, [':BB:ARB:WSEG:CONF:SEGM:APP ', char(39), waveforms{i}.name, '.wv', char(39)]);
+                % pause(DELAY_TIME)
+                % status = 0;
+                % while status < 1
+                %     status = obj.readOutput('*OPC?');
+                %     pause(0.01);
+                % end
+            end
+
+            % select output (multi-segment waveform file) file name
+            sendCommand(obj, [':BB:ARB:WSEG:CONF:OFIL ', char(39), expName{1}, char(39)]);
+            pause(DELAY_TIME)
+
+            % create and load the output file
+            sendCommand(obj, [':BB:ARB:WSEG:CLO ', char(39), obj.waveformPath, listName, '.inf_mswv', char(39)])
+            % This can take time, so we'll check when the instrument is finished
+            for i = 1:5
+                try
+                    obj.readOutput('*OPC?');
+                    break
+                catch
+                    obj.visa.Timeout = Timeout + 5;
+                end
+            end
+            obj.visa.Timeout = obj.visa.Timeout - 5*(i-1);
+
+            % status = 0;
+            % while status < 1
+            %     status = str2double(obj.readOutput('*OPC?'));
+            %     pause(0.01);
+            % end
+            % pause(DELAY_TIME);
+            
+            % create sequencing play lists - for now each playlist has a
+            % single waveform. In the future this might need to be changed
+            % to a function to create more elaborate sequencing play lists.
+            for i = 1:length(waveforms)
+                % create new sequencing play list
+                sendCommand(obj, ['BB:ARB:WSEG:SEQ:SEL ', char(39), waveforms{i}.name, char(39)]);
+                pause(DELAY_TIME)
+                sendCommand(obj, [':BB:ARB:WSEG:SEQuence:APP ', 'ON,', num2str(i-1),',', '1,', 'NEXT']);
+                pause(DELAY_TIME)
+            end
+
+            % make sure the correct trigger channel is used
+            sendCommand(obj, ':CONNector:USER1:OMODe TRIG')
             pause(DELAY_TIME)
             
-            % load the new list to append segments
-            state = 'ON';
-            for i=1:length(obj.IQ.segment_names)
-%                 segment_name = ['untitled', num2str(i), '.wv']
-                waveformNames = [waveformNames, '.wv'];
-                if obj.IQ.repeats(i) == -1
-                    obj.IQ.repeats(i) = 1;
-                end
-                sendCommand(obj, [':BB:ARB:WSEG:CONF:SEGM:APP ', char(39), convertStringsToChars(obj.IQ.segment_names(i)), char(39)]);
-                pause(DELAY_TIME)
-                sendCommand(obj, [':BB:ARB:WSEG:SEQuence:APP ', state,',', num2str(i-1),',', num2str(obj.IQ.repeats(i)),',', 'NEXT'])
-                pause(DELAY_TIME)
-                sendCommand(obj, [':BB:ARB:WSEG:CONF:BLANk:APP ',  '',num2str(300e6)])
-            end
-
-            % creat list with the chosen filename
-%             full_filename
-            sendCommand(obj, [':BB:ARB:WSEG:CRE ', char(39), obj.IQ.internal_path, obj.IQ.list_name, '.inf_mswv', char(39)])
-            pause(DELAY_TIME)
-
             % make sure trigger source is external
             sendCommand(obj, ':BB:ARB:TRIG:SOUR EXT')
             pause(DELAY_TIME)
 
-            % make sure trigger mode in multi segment is "Next Segment Seamless"
-            sendCommand(obj, ':BB:ARBitrary:TRIGger:SMOD NSE')
-            % sendCommand(obj, ':BB:ARBitrary:TRIGger:SMOD NEXT')
+            % make sure trigger mode in multi segment is "Next Segment"
+            sendCommand(obj, ':BB:ARBitrary:TRIGger:SMOD NEXT')
             pause(DELAY_TIME)
+
+            % make sure trigger mode is single
+            sendCommand(obj, ':BB:ARB:TRIG:SEQ SING');
+
+            % now we select the multi-segment waveform
+            sendCommand(obj, [':BB:ARB:WAV:SEL ', char(39), obj.waveformPath, expName{1}, '.wv', char(39)])
+            pause(DELAY_TIME)
+
+            % turn off output sync with trigger
+            sendCommand(obj, ':BB:ARB:TRIG:EXT:SYNC:OUTP OFF');
+            
+            % and finally turn on
+            sendCommand(obj, ':BB:ARB:STAT ON');
+            pause(DELAY_TIME)
+
+            obj.waveforms = waveforms;
+
+            
+
+
+%             % load the new sequencing play list to append segments
+%             state = 'ON';
+%             for i=1:length(obj.IQ.segment_names)
+% %                 segment_name = ['untitled', num2str(i), '.wv']
+%                 waveformNames = [waveformNames, '.wv'];
+%                 if obj.IQ.repeats(i) == -1
+%                     obj.IQ.repeats(i) = 1;
+%                 end
+%                 sendCommand(obj, [':BB:ARB:WSEG:CONF:SEGM:APP ', char(39), convertStringsToChars(obj.IQ.segment_names(i)), char(39)]);
+%                 pause(DELAY_TIME)
+%                 sendCommand(obj, [':BB:ARB:WSEG:SEQuence:APP ', state,',', num2str(i-1),',', num2str(obj.IQ.repeats(i)),',', 'NEXT'])
+%                 pause(DELAY_TIME)
+%                 % sendCommand(obj, [':BB:ARB:WSEG:CONF:BLANk:APP ',  '',num2str(300e6)])
+%             end
+
+%             % create multi segment list with the chosen filename
+% %             full_filename
+%             sendCommand(obj, [':BB:ARB:WSEG:CRE ', char(39), obj.waveformPath, listName, '.inf_mswv', char(39)])
+%             pause(DELAY_TIME)
+
+            
 
             % make sure trigger mode is armed_auto
 %             sendCommand(obj, ':BB:ARB:TRIG:SEQ AAUT')
 
-            sendCommand(obj, [':BB:ARB:WSEG:CLO ', char(39), obj.IQ.internal_path, obj.IQ.list_name, '.inf_mswv', char(39)])
-            pause(DELAY_TIME)
+            % sendCommand(obj, [':BB:ARB:WSEG:CLO ', char(39), obj.IQ.internal_path, obj.IQ.list_name, '.inf_mswv', char(39)])
+            % pause(DELAY_TIME)
 
-            % now we select the multi-segment waveform
-            sendCommand(obj, [':BB:ARB:WAV:SEL ', char(39), obj.IQ.internal_path, obj.IQ.list_name, '.wv', char(39)])
-            pause(DELAY_TIME)
-            % and finally turn on
-            sendCommand(obj, ':BB:ARB:STAT ON')
-            pause(DELAY_TIME)
-
-            % turn off output sync with trigger
-            sendCommand(obj, ':BB:ARB:TRIG:EXT:SYNC:OUTP ON');
-
+            
             % and we make sure that the trigger is actually working
 %             sendCommand(obj, ':BB:ARB:WSEG:NEXT:SOUR NEXT')
-            pause(DELAY_TIME)
+            % pause(DELAY_TIME)
+            %%
+        end
+
+        function setPlayList(obj, idx)
+            sendCommand(obj, [':BB:ARB:WSEG:SEQ:SEL ', char(39), obj.waveformPath, obj.waveforms{idx}.name, char(39)]);
         end
 
         function playlist = createPlaylist(waveformNames, exp_name, avg_number)
@@ -349,21 +416,24 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator & AWG
             % turn off ARB
             sendCommand(obj, ':BB:ARB:STAT OFF')
 
-            % turn off RF
-            obj.output = false;
+            % % turn off RF
+            % obj.output = false;
 
-            % delete segment wf from the machine
-            for i = 1:length(obj.IQ.segment_names)
-                filename = [obj.IQ.internal_path, convertStringsToChars(obj.IQ.segment_names(i))];
-                sendCommand(obj, [':MMEM:DEL ', char(39), filename, char(39)])
+            % delete waveforms and playlists from the instrument
+            for i = 1:length(obj.waveforms)
+                sendCommand(obj, [':MMEM:DEL ', char(39), obj.waveformPath, obj.waveforms{i}.name, '.wv', char(39)])
+                sendCommand(obj, [':MMEM:DEL ', char(39), obj.waveformPath, obj.waveforms{i}.name, '.wvs', char(39)])
             end
 
-            % delete list and config file and play list
-            sendCommand(obj, [':MMEM:DEL ', char(39), obj.IQ.internal_path, obj.IQ.list_name, '.wv', char(39)])
-            sendCommand(obj, [':MMEM:DEL ', char(39), obj.IQ.internal_path, obj.IQ.list_name, '.inf_mswv', char(39)])
-            sendCommand(obj, [':MMEM:DEL ', char(39), obj.IQ.internal_path, obj.IQ.list_name, '.wvs', char(39)])
+            expName = split(obj.waveforms{1}.name, '_');
+            listName = [expName{1}, '_list'];
 
-            %
+            % delete list and multi-segment waveform
+            sendCommand(obj, [':MMEM:DEL ', char(39), obj.waveformPath, expName{1}, '.wv', char(39)])
+            sendCommand(obj, [':MMEM:DEL ', char(39), obj.waveformPath, listName, '.inf_mswv', char(39)])
+
+            % clear all the stored waveforms
+            obj.waveforms = {};
         end
 
         function generateWaveForm()

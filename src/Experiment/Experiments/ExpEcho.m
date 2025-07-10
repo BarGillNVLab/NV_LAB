@@ -179,11 +179,13 @@ classdef ExpEcho < Experiment
         function changeSequence(obj, idx)
             % Devices
             pg = getObjByName(PulseGenerator.NAME);
+            sg = getObjByName(SignalGenerator.NAME);
             % Some magic numbers
             maxLastDelay = Experiment.DEFAULT_LAST_DELAY + 2 * max(obj.tau);
 
             % change sequence in the pulse generator
             if ~isempty(obj.sequencesList)
+                sg.setSequence(idx, obj.MWChannel);
                 pg.setSequence(obj.sequencesList{idx});
             else
                 pg.changeSequence('tau', 'duration', obj.tau(idx));
@@ -230,6 +232,8 @@ classdef ExpEcho < Experiment
                 else % Half Pi for double measurement (For Readout)
                     if obj.useIQ % With IQ
                         S.addEvent(obj.halfPiTime,          {'I', 'Q', MWChannel});             % MW in -x
+                    elseif obj.useAWG % still halfPiTime, this time we need to define the phase
+                        S.addEvent(obj.halfPiTime,                  MWChannel);                 % MW in -x
                     else  % Half Pi Pulse Without IQ
                         S.addEvent(obj.threeHalvesPiTime,   MWChannel);                         % MW in -x
                     end

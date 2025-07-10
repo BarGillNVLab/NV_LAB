@@ -83,7 +83,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         envelope                    % function or vector (?)
         phase                       % in radians
         sequencesList               % cell array containing all experiment sequences. Used (mainly) for AWG preloading
-        clearAWG = true             % logical. Whether to clear the sequences from the awg or not. Default is true.
+        % clearAWG = true             % logical. Whether to clear the sequences from the awg or not. Default is true.
 %         IQ.wv_path;             % string array
 %         IQ.IQ_arrays; % creating a 2x1x3 matrix. [2,i,j] - 2: I&Q, i: IQ vector length, j: number of segments. if IQ vector length = 1, we will create a constant I&Q with that value.
 %         IQ.switchWF; % trigger switching between segments at the end of a segment (1 - switch, 0 - don't switch)
@@ -110,6 +110,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         emergencyStopFlag = false;  % if true, we stop the experiment as soon as possible
         restartFlag = true;         % if true, then starting now the experiment will delete old data
         pausedAverage = false;
+        clearAWG = true;            % if true, clear all waveforms and sequences from memory
     end
     
     properties (Dependent, Access = {?Experiment, ?ViewExperimentPlot}) % Inclusion of ?Experiment gives access to its subclasses
@@ -614,7 +615,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             obj.wrapUp;
             sendEventExpPaused(obj);
             
-            % Torn off helmholtz if exist
+            % Turn off helmholtz if exist
             if ~isempty(h)
                 if strcmp(h.helmControl, h.CONTROL_STATE{2})
                     h.output('off');
@@ -1346,7 +1347,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
 
             % clear all sequences from the experiment object and AWG instrument
             if obj.clearAWG
-                obj.sequencesList = {};
+                % obj.sequencesList = {};
                 % need to write function to clear the AWG
             end
             
@@ -1392,6 +1393,18 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             %         % disconnect AWG
             %     end
             obj.setFGparams('disconnect', {'output', 0})
+            if obj.useAWG && obj.clearAWG
+                obj.sequencesList = [];
+                sg = getObjByName(SignalGenerator.NAME);
+                fgIdx = sg.findOrderedFGindex(sg.FGchannelMap(obj.MWChannel));
+                for i = fgIdx
+                    fg = sg.FGchannels{i};
+                    for j = 1:length(fg.linkedAWG)
+                        awg = sg.AWGchannels{sg.AWGchannelMap({fg.linkedAWG{j}})}.device;
+                        awg.disconnectIQ(awg);
+                    end
+                end
+            end
             % sg = getObjByName(SignalGenerator.NAME);
             % % convertFunction = @(x) ischar(x) * sg.channelMap(x) + isnumeric(x) * x;
             % fgChannels = cellfun(@(c) sg.FGchannelMap(c), obj.MWChannel);
@@ -1480,6 +1493,26 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 end
             end
             obj.validateCellInput('frequency', 'amplitude', 'phase');
+
+            % Load AWG if needed. 
+            % We first set the FG because if we're using AWG we might change
+            % the FG parameters, but if we don't need AWG, we don't need to do anything more.
+            if obj.useAWG && ~obj.isRunning % If we're already running we don't need to inizialize the AWG again
+                tf = zeros(size(obj.MWChannel));
+                for i = 1:length(obj.MWChannel) % we need to iterate only through the FGs used in the specific experiment
+                    idx = find(cellfun(@(c) strcmp(c.pgChannelName, obj.MWChannel{i}) , sg.FGchannels));
+                    fg = sg.FGchannels{idx};
+                    tf(i) = ~isempty(fg.linkedAWG);
+                end
+                if ~any(tf)
+                    error('no AWG found for FG')
+                end
+                if isempty(obj.sequencesList) % if it's not empty that means that the flag clearAWG is set to false
+                    obj.loadAWG(S, pg);
+                end
+            end
+
+            % set the frequency generators' parameters
             obj.setFGparams('connect', 'amplitude', 'frequency', 'phase', {'output', 1})
 
             % if ~isempty(obj.freqGenName)
@@ -1533,23 +1566,6 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             %         obj.setMultipleFGFrequencies(obj.frequency);
             %     end
             % end
-
-            % Load AWG if needed. 
-            % We first set the FG because if we're using AWG we might change
-            % the FG parameters, but if we don't need AWG, we don't need to do anything more.
-            if obj.useAWG
-                tf = zeros(size(obj.MWChannel));
-                for i = 1:length(obj.MWChannel) % we need to iterate only through the FGs used in the specific experiment
-                    idx = find(cellfun(@(c) strcmp(c.pgChannelName, obj.MWChannel{i}) , sg.FGchannels));
-                    fg = sg.FGchannels{idx};
-                    tf(i) = ~isempty(fg.linkedAWG);
-                end
-                if ~any(tf)
-                    error('no AWG found for FG')
-                end
-                % add a validation that AWG is connected to obj.MWchannel
-               obj.loadAWG(S, pg); 
-            end
             
             % Initialize SPCM
             spcm = getObjByName(Spcm.NAME);
@@ -1837,10 +1853,10 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             % end
             % % waveform1 = waveform;
 
-            dt = 1 / (10 * baseband);
+            dt = 1 / (20 * baseband);
             waveformLength = pulses(end).duration + (pulseTimes(end) - pulseTimes(1));
             pulseTimes = pulseTimes - pulseTimes(1);  % Shift all pulses to be relative to the first one.
-            t = [0:dt:waveformLength];  % Time vector for the entire waveform
+            t = [0:dt:waveformLength+dt*2];  % Time vector for the entire waveform adding dt to make sure that we get the full down conversion later.
             waveform = zeros(size(t));  % Pre-allocate waveform
 
             waveformObj = struct();
@@ -1881,7 +1897,8 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 waveform(startIdx:endIdx) = waveform(startIdx:endIdx) / length(freq);
                 waveformObj.pulseWaveform{i} = waveform(startIdx:endIdx);
             end
-            
+            waveformObj.emptyWaveform = waveform;
+            waveform = waveformObj;
         end
 
         function loadAWG(obj, S, pg)
@@ -1903,6 +1920,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             end
 
             waveforms = cell(size(obj.MWChannel,1), size(sequences,1));
+            waveforms1 = cell(size(obj.MWChannel,1), size(sequences,1));
             a=tic;
             % create all sequences from the base sequence and permutated
             % parameter
@@ -1922,7 +1940,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                             if isempty(waveforms{i,k})
                                 % waveforms{i,k} = obj.generateWaveform(sequences{k}, fg);
                                 waveforms{i,k} = obj.generateWaveform(sequences{k}, pgChannelName, i);
-                                waveforms{i,k} = Waveform(obj, sequences{k}, pgChannelName, i);
+                                waveforms1{i,k} = Waveform(obj, sequences{k}, pgChannelName, i);
                             end
 
                             % now we can update the sequence that is sent to the pulse generator
@@ -1931,19 +1949,20 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                             else
                                 opMode = 'external';
                             end
+                            opMode = fg.opMode;
                             sequences{k}.updateInternal(FGchannel, awg.pgChannelName, awg.device.triggerDuration, fg.keepPGchannelOn, opMode);
                         end
                         % We have all the waveforms, now we can load them into the AWG.
-                        % awg.loadAWGinternal(waveforms{i,:})
+                        awg.device.loadAWGInternal(awg.device, {waveforms1{i,:}})
                     end
                 end
             end
             toc(a)
 
-           
-
             % we need to store somewhere all of the sequences (we already computed them, it's a shame to do so on the fly again)
-            % obj.sequencesList = sequences;
+            if isempty(obj.sequencesList)
+                obj.sequencesList = sequences;
+            end
 
             % create the IQ data and load all waveforms to instrument
             % for i = 1:length(sgCell)
