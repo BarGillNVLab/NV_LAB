@@ -46,7 +46,7 @@ classdef ExpESR < Experiment
             obj.parameterName = 'frequencies';
 
             % First, get a frequency generator
-            if exist('MWChannel', 'var')
+            if exist('MWChannel', 'var') && ~isempty(MWChannel)
                 sg = getObjByName(SignalGenerator.NAME);
                 if ~iscell(MWChannel)
                     MWChannel = {MWChannel};

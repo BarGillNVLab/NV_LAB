@@ -14,7 +14,7 @@ classdef (Abstract) PulseGenerator < EventSender
                                     % Default is true.
     end
     
-    properties (Access = protected)
+    properties %(Access = protected)
         sequenceInMemory            % logical. Flag for whether obj.sequence is the same as the one in the hardware.
         delayFixed                  % logical. Flag for whether the delay fixed version of the current seqeunce, stored in 'delayFixedSequence', is valid.
         sequence                    % Sequence object, configured in experiment.

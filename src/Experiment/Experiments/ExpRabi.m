@@ -16,6 +16,7 @@ classdef ExpRabi < Experiment
         nChannels
         constantTime    % logical
         tau_permutations
+        waveform
     end
     
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -55,6 +56,8 @@ classdef ExpRabi < Experiment
             obj.tau = 0.005:0.005:0.25; % in us
             obj.tau_permutations = zeros(obj.averages, length(obj.tau));
             obj.constantTime = true;
+            obj.phase = 0; % in degree, AWG parameter
+            obj.appendBlank = 2; % in us, AWG parameter to extend waveform length.
             
             obj.detectionDuration = 0.25; % detection window, in us
             obj.referenceDetectionDuration = 5; % in us. Detection duration of the reference read
@@ -84,6 +87,7 @@ classdef ExpRabi < Experiment
         
         function set.tau(obj, newVal) % newVal is in us
             checkTimeVector(obj, newVal)
+            % checkTimeScalar(obj, newVal)
             % If we got here, then newVal is OK.
             obj.tau = newVal;
             obj.changeFlag = true;
@@ -106,12 +110,14 @@ classdef ExpRabi < Experiment
 
         function changeSequence(obj, idx)
             % Devices
+            sg = getObjByName(SignalGenerator.NAME);
             pg = getObjByName(PulseGenerator.NAME);
             % Some magic numbers
             maxLastDelay = Experiment.DEFAULT_LAST_DELAY + max(obj.tau);
 
             % change sequence in the pulse generator
             if ~isempty(obj.sequencesList)
+                sg.setSequence(idx, obj.MWChannel);
                 pg.setSequence(obj.sequencesList{idx});
             else
                 pg.changeSequence('MW', 'duration', obj.tau(idx));
@@ -119,10 +125,33 @@ classdef ExpRabi < Experiment
                     pg.changeSequence('lastDelay', 'duration', maxLastDelay - obj.tau(idx));
                 end
             end
+        end
 
-            % change sequence in the signal generator
-            % might need to add another pulse for the trigger channel
-
+        function setAWG(obj) % workaround to run Rabi with the SGT as an AWG
+            obj.laserInitializationDuration = 25;
+            sg = getObjByName(SignalGenerator.NAME);
+            if ~iscell(obj.MWChannel)
+                obj.MWChannel = {obj.MWChannel};
+            end
+            idx = sg.findOrderedFGindex(sg.FGchannelMap(obj.MWChannel));
+            fg = sg.FGchannels{idx};
+            S1 = Sequence;
+            S1.name = 'Rabi_1';
+            S1.addEvent(max(max(obj.tau), 10), obj.MWChannel, 'trigger');
+            if ~iscell(obj.frequency)
+                % obj.frequency = cell(obj.frequency);
+                obj.frequency = {obj.frequency};
+            end
+            for i = 1:length(fg.linkedAWG) % multiple AWGs connected to a single FG isn't supported yet
+                awg = sg.AWGchannels{sg.AWGchannelMap({fg.linkedAWG{i}})}.device;
+                waveform{i} = {Waveform(obj, S1, obj.MWChannel{1}, awg, 1, obj.frequency{1})};
+                awg.loadAWGInternal(awg, waveform{i});
+                % awg.sendCommand(':BB:ARBitrary:TRIGger:SMOD NSE')
+                % awg.sendCommand(':BB:ARB:TRIG:SEQ AUTO')
+            end
+            obj.waveform = waveform;
+            obj.useAWG = 0;
+            clear S1;
         end
     end
     
@@ -143,6 +172,9 @@ classdef ExpRabi < Experiment
             %tau=obj.tau(end);
             %%% Creating the sequence
             S = Sequence;
+            % if obj.useAWG
+            %     S.addEvent(0.05, 'AWG', '')
+            % end
             S.addEvent(obj.smallDelay,        '')
             S.addEvent(max(obj.tau),        MW,                         'MW')               % MW
             S.addEvent(obj.smallDelay,        '')
@@ -157,6 +189,11 @@ classdef ExpRabi < Experiment
                                             {'greenLaser', 'detector'});                    % Reference detection
             S.addEvent(1,                   'greenLaser');                                  % 1usec delay to ensure full overlap of ref detection and laser, and to init first repaet (less important), Yachel 27.02.22
 
+            if obj.useAWG && ~obj.isRunning
+                % obj.setAWG();
+                obj.appendBlank = 2; % an arbitrary number so the AWG output will be correct
+            end
+            
             obj.prepareInternal(S)
 
 
@@ -217,12 +254,12 @@ classdef ExpRabi < Experiment
 %                             sig(1) = sig(2)*3;
 %                         end
 
-                        if sig(1)/sig(2) > 2
-                            disp(sig)
-                            ME = MException('SPCMRead:badSignal', ...
-                                'Weird value for the measured signal.');
-                            throw(ME);
-                        end
+                        % if sig(1)/sig(2) > 2
+                        %     disp(sig)
+                        %     ME = MException('SPCMRead:badSignal', ...
+                        %         'Weird value for the measured signal.');
+                        %     throw(ME);
+                        % end
                         
                         obj.signal(:, t, obj.currIter) = sig;
                         obj.sterr(:, t, obj.currIter) = sterr;
@@ -298,6 +335,12 @@ classdef ExpRabi < Experiment
             % counterpart for obj.prepare.
             % In the future, it will also analyze results.
             
+            if ~isempty(obj.waveform)
+                obj.useAWG = 1;
+                obj.laserInitializationDuration = 10;
+                obj.waveform = [];
+            end
+
             obj.wrapUpInternal()
         end
         

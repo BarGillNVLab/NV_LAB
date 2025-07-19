@@ -22,6 +22,7 @@ classdef ExpCalibrateDelays < Experiment
         detectionStartStopOffset    % in us - How long before and after the seqeunce should the detection start and stop.
         AWGchannel
         waveform
+        % frequencyInternal
     end
     
     properties (Hidden, Dependent = true)
@@ -177,18 +178,19 @@ classdef ExpCalibrateDelays < Experiment
         function genWave(obj) % function generateWaveform(obj)
             sg = getObjByName(SignalGenerator.NAME);
             awg = sg.AWGchannels{sg.AWGchannelMap(obj.AWGchannel)}.device;
-            S = Sequence;
-            S.addEvent(obj.channelDelay, obj.MWChannel);
-            S.name = 'DelayCalibration_1';
+            S1 = Sequence;
+            S1.addEvent(obj.channelDelay, obj.MWChannel);
+            % S1.addEvent(0.02, obj.MWChannel);
+            S1.name = 'DelayCalibration_1';
             if iscell(obj.frequency)
                 % obj.frequency = cell(obj.frequency);
                 obj.frequency = obj.frequency{1};
             end
-            frequency = obj.frequency;
-            obj.frequency = {frequency};
-            waveform = {Waveform(obj, S, obj.MWChannel{1}, 1, frequency+50)};
+            obj.frequencyInternal = obj.frequency; % saving the value so we can change it back at the end of the experiment
+            obj.frequency = {obj.frequency};
+            waveform = {Waveform(obj, S1, obj.MWChannel{1}, awg, 1, obj.baseband)};
             awg.loadAWGInternal(awg, waveform);
-            obj.frequency = frequency;
+            obj.frequency = obj.frequencyInternal;
             obj.waveform = waveform;
         end
     end
@@ -345,6 +347,7 @@ classdef ExpCalibrateDelays < Experiment
             % the coherence time.
 
             if ~isempty(obj.AWGchannel)
+                obj.frequency = obj.frequencyInternal;
                 obj.waveform = [];
 
                 sg = getObjByName(SignalGenerator.NAME);

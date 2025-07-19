@@ -311,18 +311,18 @@ classdef Sequence < handle
             [~, ~, pulseTimes] = obj.getPulsesByChannel(fgChannel);
             switch opMode
                 case 'external'
-                    obj.addEventAtGivenTime(pulseTimes(1), triggerDuration, awgChannel, 'trigger'); % should usually be run with keepPGchannelOn = true
+                    obj.addEventAtGivenTime(pulseTimes(1), 0.1, awgChannel, ''); % should usually be run with keepPGchannelOn = true
                     % AWG might need 2 triggers: start trigger, next (sequence) trigger
                     % next trigger needs to happen in changeSequence/setSequence in the experiment
                 case 'internal'
                     obj.keepChannelStatic(fgChannel, 'off') % turn off the channel
                     obj.addEventAtGivenTime(pulseTimes(1), triggerDuration, fgChannel, '') % and keep only a trigger pulse
-                    obj.addEventAtGivenTime(pulseTimes(1), triggerDuration, awgChannel, '') % and keep only a trigger pulse
+                    % obj.addEventAtGivenTime(pulseTimes(1), triggerDuration, awgChannel, '') % and keep only a trigger pulse
                 otherwise
                     EventStation.anonymousWarning('Cannot update sequence. Mode ''%s'' is not supported on channel ''%s''', type, fgChannel) % escape character for a single quote is a single quote (i.e. '')
             end
             if keepPGchannelOn
-                obj.keepChannelStatic(fgChannel, 'on')
+                % obj.keepChannelStatic(fgChannel, 'on')
             end
             obj.repairSequence(); % make sure the sequence doesn't have adjacent pulses in the same channel
         end
@@ -347,6 +347,8 @@ classdef Sequence < handle
 
             % Find pulses based on the (inverse) state
             pulses = find(cellfun(@(c) isfield(c, channel) ~= isOnState, {obj.pulses.onChannels}));
+            % pulses = find(cellfun(@(c) isfield(c, channel) == isOnState, {obj.pulses.onChannels}));
+            pulses = pulses(2:end);
 
             % Update channels for the found pulses
             for i = pulses

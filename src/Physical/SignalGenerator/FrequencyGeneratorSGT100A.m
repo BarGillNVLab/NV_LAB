@@ -158,7 +158,7 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator & AWG
             amplitudeLimits = [struct.minAmplitude, struct.maxAmplitude];
             keepOn = struct.keepOn;
             bandwidth = 10;
-            sampleRate = 300e6;
+            sampleRate = 300;
             channelName = 'channel';
             directAmplitudeControl = false;
             wavformPath = '';
@@ -209,9 +209,8 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator & AWG
            
 
             % set defaults for non mandatory fields (and clockrate)
-            default = {'clock', 300e6, 'duration', 0.1e-6, 'StartPlayback', 0, 'KeepLocalFile', 0, 'path', '/hdd/', 'filename','untitled.wv', 'comment', '', 'copyright', '', 'no_scaling', 0};
-            IQinfo.clock = obj.sampleRate;
-            IQinfo.duration = length(waveforms{1}.emptyWaveform); %length(waveforms)/sampleRate; % needs to be in us
+            % default = {'clock', 300e6, 'duration', 0.1e-6, 'StartPlayback', 0, 'KeepLocalFile', 0, 'path', '/hdd/', 'filename','untitled.wv', 'comment', '', 'copyright', '', 'no_scaling', 0};
+            IQinfo.clock = obj.sampleRate*1e6; % convert to Hz
             IQinfo.StartPlayback = 0;
             IQinfo.KeepLocalFile = 0;
             IQinfo.path = obj.waveformPath;
@@ -222,11 +221,14 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator & AWG
 
             % waveform down conversion
             for i = 1:length(waveforms)
-                [time, I, Q] = obj.generateIQFromWaveform(waveforms{i}.reconstructWaveform, waveforms{i}.baseband, 1/waveforms{i}.dt);
-                [tUnder, signalUnder] = obj.underSampling(time, [I, Q], obj.sampleRate);
-                IQinfo.I_data = signalUnder(:,1);
-                IQinfo.Q_data = signalUnder(:,2);
+                % [time, I, Q] = obj.generateIQFromWaveform(waveforms{i}.reconstructWaveform, waveforms{i}.baseband, 1/waveforms{i}.dt);
+                % [tUnder, signalUnder] = obj.underSampling(time, [I, Q], obj.sampleRate);
+                % IQinfo.I_data = signalUnder(:,1);
+                % IQinfo.Q_data = signalUnder(:,2);
+                IQinfo.I_data = waveforms{i}.IUnder;
+                IQinfo.Q_data = waveforms{i}.QUnder;
                 IQinfo.filename = [waveforms{i}.name, '.wv'];
+                IQinfo.duration = waveforms{i}.tUnder(end);
 
                 if obj.USE_VISA
                     [Status] = rs_generate_wave( obj.visa, IQinfo, IQinfo.StartPlayback, IQinfo.KeepLocalFile );
@@ -312,7 +314,7 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator & AWG
                     obj.readOutput('*OPC?');
                     break
                 catch
-                    obj.visa.Timeout = Timeout + 5;
+                    obj.visa.Timeout = obj.visa.Timeout + 5;
                 end
             end
             obj.visa.Timeout = obj.visa.Timeout - 5*(i-1);
@@ -324,16 +326,18 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator & AWG
             % end
             % pause(DELAY_TIME);
             
+            % We're working in mode "Next Segment" with trigger set to
+            % "Single" so we don't need to create playlists.
             % create sequencing play lists - for now each playlist has a
             % single waveform. In the future this might need to be changed
             % to a function to create more elaborate sequencing play lists.
-            for i = 1:length(waveforms)
-                % create new sequencing play list
-                sendCommand(obj, ['BB:ARB:WSEG:SEQ:SEL ', char(39), waveforms{i}.name, char(39)]);
-                pause(DELAY_TIME)
-                sendCommand(obj, [':BB:ARB:WSEG:SEQuence:APP ', 'ON,', num2str(i-1),',', '1,', 'NEXT']);
-                pause(DELAY_TIME)
-            end
+            % for i = 1:length(waveforms)
+            %     % create new sequencing play list
+            %     sendCommand(obj, ['BB:ARB:WSEG:SEQ:SEL ', char(39), waveforms{i}.name, char(39)]);
+            %     pause(DELAY_TIME)
+            %     sendCommand(obj, [':BB:ARB:WSEG:SEQuence:APP ', 'ON,', num2str(i-1),',', '1,', 'NEXT']);
+            %     pause(DELAY_TIME)
+            % end
 
             % make sure the correct trigger channel is used
             sendCommand(obj, ':CONNector:USER1:OMODe TRIG')
@@ -402,7 +406,17 @@ classdef FrequencyGeneratorSGT100A < FrequencyGenerator & AWG
         end
 
         function setPlayList(obj, idx)
-            sendCommand(obj, [':BB:ARB:WSEG:SEQ:SEL ', char(39), obj.waveformPath, obj.waveforms{idx}.name, char(39)]);
+            % sendCommand(obj, [':BB:ARB:WSEG:SEQ:SEL ', char(39), obj.waveformPath, obj.waveforms{idx}.name, char(39)]);
+            sendCommand(obj, [':BB:ARB:WSEG:NEXT ' num2str(idx-1)]);
+            for i = 1:5
+                try
+                    obj.readOutput('*OPC?');
+                    break
+                catch
+                    obj.visa.Timeout = obj.visa.Timeout + 5;
+                end
+            end
+            obj.visa.Timeout = obj.visa.Timeout - 5*(i-1);
         end
 
         function playlist = createPlaylist(waveformNames, exp_name, avg_number)

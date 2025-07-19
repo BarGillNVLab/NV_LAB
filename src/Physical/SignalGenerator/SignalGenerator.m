@@ -74,6 +74,9 @@ classdef SignalGenerator < BaseObject
                 % end
                 if currSGstruct.isFreqGen
                     obj.FGs{end+1} = FrequencyGenerator.getFG(currSGstruct);
+                    if isempty(obj.FGs{end})
+                        continue;
+                    end
                     for j = 1:length(currSGstruct.fgChannels)
                         obj.createSwitch(currSGstruct.fgChannels(j));
 
@@ -89,12 +92,17 @@ classdef SignalGenerator < BaseObject
                             currSGstruct.fgChannels(j).keepPGchannelOn = false;
                         end
 
+                        if ~isfield(currSGstruct.fgChannels(j), 'opMode')
+                            currSGstruct.fgChannels(j).opMode = [];
+                        end
+
                         obj.FGchannels{end+1} = struct('pgChannelName', currSGstruct.fgChannels(j).switchChannelName, ...
                                                        'pgChannelNumber', currSGstruct.fgChannels(j).switchChannel, ...
                                                        'device', obj.FGs{end}, ...
                                                        'deviceChannel', currSGstruct.fgChannels(j).deviceChannel, ...
                                                        'linkedAWG', {currSGstruct.fgChannels(j).linkedAWG}, ...
-                                                       'keepPGchannelOn', currSGstruct.fgChannels(j).keepPGchannelOn);
+                                                       'keepPGchannelOn', currSGstruct.fgChannels(j).keepPGchannelOn, ...
+                                                       'opMode', currSGstruct.fgChannels(j).opMode);
                         FGchannelNames{end+1} = currSGstruct.fgChannels(j).switchChannelName;
                         FGchannelNumbers(end+1) = currSGstruct.fgChannels(j).switchChannel;
                         if isfield(currSGstruct.fgChannels(j), 'default'); isDefault(i) = currSGstruct.fgChannels(j).default; end

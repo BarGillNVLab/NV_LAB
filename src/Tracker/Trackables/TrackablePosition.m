@@ -118,8 +118,10 @@ classdef TrackablePosition < Trackable % & StageScanner
                 if isempty(stage); throwBaseObjException(stageName); end
             
             spcm = getObjByName(Spcm.NAME);
-                if isempty(spcm); throwBaseObjException(Spcm.NAME); end
+            if isempty(spcm); throwBaseObjException(Spcm.NAME); end
+            try % fails if there's no experiment that ran, e.g. if running tracker right after opening main
             spcm.stopExperimentCount % !!!!NEEDS TO BE CHECKED WITH TIMETAGGER AND PHOTODIODE (shouldn't be an issue because for them we already stop the task in getRawData() )!!!! for the tracking we're going to call spcm.prepareReadByTime so we should stop the DAQ task beforehand.
+            end
             spcm.setSPCMEnable(true);
             
             laser = getObjByName(obj.mLaserName);
