@@ -30,12 +30,17 @@ classdef Sequence < handle
         end
         
         % Get methods
-        function time = duration(obj)
-            % Returns the seqeunce total duration
+        function time = duration(obj, idx)
+            % Returns the seqeunce duration up to idx. If idx isn't
+            % supplied, returns the full sequens duration.
+            if ~exist('idx', 'var')
+                idx = length(obj.pulses);
+            end
+
             if isempty(obj.pulses)
                 time = 0;
             else
-                time = sum([obj.pulses.duration]);
+                time = sum([obj.pulses(1:idx).duration]);
             end
         end
         
@@ -304,6 +309,18 @@ classdef Sequence < handle
             end
         end
 
+        function addSequenceAtGivenTime(obj, S1, startTime)
+            if ~exist('startTime', 'var')
+                startTime = obj.duration; % if startTime isn't provided, add the sequence at the end.
+            end
+            
+            for i = 1:length(S1.pulses)
+                % obj.addPulseAtGivenTime(startTime, S1.pulses(i));
+                obj.squeezeInPulseAtGivenTime(startTime, S1.pulses(i));
+                startTime = startTime + S1.pulses(i).duration;
+            end
+        end
+
         function updateInternal(obj, fgChannel, awgChannel, triggerDuration, keepPGchannelOn, opMode) % update the sequence to use awg or triggering.
             % defaults = {'channel', 'SGT', 'channel_2', 'TRIGGER', 'trigger_duration', 50e-3, 'add_trigger', true, 'mode', 'sequnecer'}; % needs to be updated. % default MW channel is SGT, default trigger duration is 5 ns.
             % params = varargin2param(defaults, varargin{:});
@@ -455,6 +472,25 @@ classdef Sequence < handle
             end
             % pulseTimes = sort(pulseTimes);
         end
+
+        function ind = indexFromNickname(obj, name)
+            % Returns index (or indices) of pulses that have the name
+            % 'name'
+            if isnumeric(name)
+                ind = name;
+                if ind > length(obj.pulses)
+                    ind = double.empty;
+                end
+            elseif ischar(name)
+                nicknames = {obj.pulses.nickname};
+                ind = find(strcmp(name, nicknames));
+            else
+                error('Unknown indexing system')
+            end
+            if isempty(ind)
+                error('Index not found')
+            end
+        end
     end
     
     methods (Access = private)    
@@ -523,26 +559,7 @@ classdef Sequence < handle
             prePulses = preS.pulses;
             timedPulses = S.pulses;
             postPulses = postS.pulses;
-        end
-    
-        function ind = indexFromNickname(obj, name)
-            % Returns index (or indices) of pulses that have the name
-            % 'name'
-            if isnumeric(name)
-                ind = name;
-                if ind > length(obj.pulses)
-                    ind = double.empty;
-                end
-            elseif ischar(name)
-                nicknames = {obj.pulses.nickname};
-                ind = find(strcmp(name, nicknames));
-            else
-                error('Unknown indexing system')
-            end
-            if isempty(ind)
-                error('Index not found')
-            end
-        end
+        end 
     end
 
 

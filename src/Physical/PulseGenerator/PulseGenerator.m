@@ -207,7 +207,8 @@ classdef (Abstract) PulseGenerator < EventSender
             % obj.sequence.change(nickname, what, newValue)
             % obj.userSequence = obj.sequence.copySequence(); % added by rotem 15.12.24
             obj.userSequence.change(nickname, what, newValue)
-            obj.sequence = obj.userSequence.copySequence();
+            obj.sequence.change(nickname, what, newValue)
+            % obj.sequence = obj.userSequence.copySequence();
             % obj.sequence.changePulseToTrigger(varargin); % added by rotem - 15.12.24
             obj.sequenceInMemory = false;
             obj.delayFixed = false;

@@ -228,16 +228,45 @@ classdef Waveform < handle
                 iq_pulse = iq_pulse + amplitude(i) * exp(1j * (2*pi*f_bb*t + phase(i)));
             end
 
-            % normalize iq_pulse amplitude
-            if sum(phase) == 0
-                iq_pulse = iq_pulse / length(freqs);
-            end
 
-            if all(phase == 0) || all(phase == phase(1))  % No phase differences
+            % normalize iq_pulse amplitude
+            % if sum(phase) == 0
+            %     iq_pulse = iq_pulse / length(freqs);
+            % end
+
+            % if all(phase == 0) || all(phase == phase(1))  % No phase differences
                 % Safe to scale - all components add constructively
                 scaling_factor = max(amplitude) / sum(abs(amplitude));
                 iq_pulse = iq_pulse * scaling_factor;
-            end
+            % end
+
+            % % validate signal
+            % recon_signal = cos(2*pi*obj.baseband*t).*real(iq_pulse) - sin(2*pi*obj.baseband*t).*imag(iq_pulse);
+            % expected_signal = cos(2*pi*(freqs(1)+freqs(2))*t/2+(phase(1)+phase(2))/2).*cos(2*pi*(freqs(1)-freqs(2))*t/2+(phase(1)-phase(2))/2);
+            % base_signal = cos(2*pi*(freqs(1)+freqs(2))*t/2).*cos(2*pi*(freqs(1)-freqs(2))*t/2);
+            % if sum(recon_signal - expected_signal) < 1e-9
+            %     % signal_fit = fittype(['cos(2*pi*(', num2str(freqs(1)+freqs(2)), ')*x/2+(p1+p2)/2).*cos(2*pi*(', num2str(freqs(1)-freqs(2)), ')*x/2+(p1-p2)/2)']);
+            %     signal_fit = fittype(['cos(2*pi*(', num2str(freqs(1)+freqs(2)), ')*x/2+p1).*cos(2*pi*(', num2str(freqs(1)-freqs(2)), ')*x/2+p2)']);
+            %     ft_options = fitoptions(signal_fit);
+            %     ft_options.Lower = [-pi, -pi];
+            %     ft_options.Upper = [pi, pi];
+            %     ft_options.StartPoint = [(phase(1)+phase(2))/2, (phase(1)-phase(2))/2];
+            %     curr_fit = fit(t, recon_signal, signal_fit, ft_options);
+            %     curr_fit.p1 / pi
+            %     curr_fit.p2 / pi
+            % end
+
+            % phase relations
+            % [pi/4, -pi/4] -> carrier: 0, envelope: pi/4
+            % [-pi/4, pi/4] -> carrier: 0, envelope: -pi/4
+            % [3pi/4, pi/4] -> carrier: pi/2, envelope: pi/4
+            % [pi/4, 3pi/4] -> carrier: pi/2, envelope: -pi/4
+            % [pi/2, 0] -> carrier: pi/4, envelope: pi/4
+            % [0, pi/2] -> carrier: pi/4, envelope: -pi/4
+            % [pi, 0] -> carrier: pi/2, envelope: pi/2
+            % [0, pi] -> carrier: pi/2, envelope: -pi/2
+            % [pi/2, -pi/2] -> carrier: 0, envelope: pi/2
+            % [-pi/2, pi/2] -> carrier: 0, envelope: -pi/2
 
             % Calculate the scaling factor
             % try

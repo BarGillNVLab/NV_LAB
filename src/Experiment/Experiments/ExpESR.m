@@ -15,7 +15,7 @@ classdef ExpESR < Experiment
         frequency           % double. in MHz
         mirrorSweepAround   % double. in MHz
         amplitude           % double. in dBm
-        frequencyInternal   % double. in MHz, this is the vector to store all frequencies during the experiment run.
+        % frequencyInternal   % double. in MHz, this is the vector to store all frequencies during the experiment run.
         
         mode                % string. Either 'CW' or 'pulsed'
                             % ('pulsed is to be implemented in the future, if needed)

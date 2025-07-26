@@ -1411,6 +1411,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                     for j = 1:length(fg.linkedAWG)
                         awg = sg.AWGchannels{sg.AWGchannelMap({fg.linkedAWG{j}})}.device;
                         awg.disconnectIQ(awg);
+                        awg.waveforms = [];
                     end
                 end
             end
@@ -1691,6 +1692,9 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                                 currFreq = (max(currFreq) + min(currFreq)) / 2;
                             end
                             newVal(1) = currFreq;
+                            if ~isempty(obj.baseband)
+                                newVal(1) = obj.baseband;
+                            end
                         case 'amplitude'
                             currAmplitude = obj.amplitude{i};
                             if iscell(currAmplitude)
@@ -1852,7 +1856,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 if ~exist('phase', 'var')
                     phase = {0};
                 end
-                if size(phase{i}) ~= size(freq)
+                if any(size(phase{i}) ~= size(freq))
                     pha = phase{i}*ones(size(freq));
                 else
                     pha = phase{i};
@@ -1897,7 +1901,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             % Iterate over pulses and build waveform
             for i = 1:length(pulses)
                 freq = frequency{i};
-                if size(phase{i}) ~= size(freq)
+                if any(size(phase{i}) ~= size(freq))
                     pha = phase{i}*ones(size(freq)); % Phase for each frequency
                 else
                     pha = phase{i};
@@ -1945,6 +1949,12 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             % changed permutable_parameter to tau for now
             totalParamNum = getTotalNumberOfParams(obj);
             sequences = cell(totalParamNum,1);
+            if isprop(obj, 'privateSequences')
+                sequences = obj.privateSequences';
+                if isempty(obj.sequencesList)
+                    obj.sequencesList = sequences;
+                end
+            end
             for i = 1:totalParamNum
                 obj.changeSequence(i);
                 S = pg.sequence;
@@ -1971,9 +1981,14 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                         pgChannelName = fg.pgChannelName;
                      
                         for k = 1:totalParamNum
+                            if isprop(obj, 'privateSequencesFreq') % all the sequences were created in the specific experiment, so we need to load the parameters
+                                obj.frequency = obj.privateSequencesFreq{k};
+                                obj.amplitude = obj.privateSequencesAmp{k};
+                                obj.phase = obj.privateSequencesPhase{k};
+                            end
                             if isempty(waveforms{i,k})
                                 % waveforms{i,k} = obj.generateWaveform(sequences{k}, fg);
-                                waveforms{i,k} = obj.generateWaveform(sequences{k}, pgChannelName, i);
+                                % waveforms{i,k} = obj.generateWaveform(sequences{k}, pgChannelName, i);
                                 waveforms1{i,k} = Waveform(obj, sequences{k}, pgChannelName, awg.device, i, obj.baseband);
                             end
 
@@ -1988,12 +2003,12 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                         end
                         % We have all the waveforms, now we can load them into the AWG.
                         awg.device.loadAWGInternal(awg.device, {waveforms1{i,:}})
-                        if ~isempty(obj.baseband)
-                            if isempty(obj.frequencyInternal)
-                                obj.frequencyInternal = obj.frequency;
-                            end
-                            obj.frequency{i} = obj.baseband;
-                        end
+                        % if ~isempty(obj.baseband)
+                        %     if isempty(obj.frequencyInternal)
+                        %         obj.frequencyInternal = obj.frequency;
+                        %     end
+                        %     obj.frequency{i} = obj.baseband;
+                        % end
                     end
                 end
             end
