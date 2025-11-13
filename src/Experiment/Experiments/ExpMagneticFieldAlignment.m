@@ -24,6 +24,8 @@ classdef ExpMagneticFieldAlignment < ExpESR
         stage_FL_public = []
         
         esr_sig_measurments = []
+        
+        widthPlot   % bollean. If to plot the resonance width in the left figure instead of the contrast. Usefull alignment tool by looking on the off-resonance deep.
     end
     
     properties (Access = private)
@@ -41,7 +43,7 @@ classdef ExpMagneticFieldAlignment < ExpESR
     
     methods
         function obj = ExpMagneticFieldAlignment
-            obj@ExpESR([],[],ExpMagneticFieldAlignment.MY_NAME);
+            obj@ExpESR([],ExpMagneticFieldAlignment.MY_NAME);
             obj.stage = ClassExternalFieldControl.GetInstance();
             obj.axesAvaliable = obj.stage.stage_names_;
             obj.axesTypes = obj.stage.stage_types_;
@@ -129,7 +131,7 @@ classdef ExpMagneticFieldAlignment < ExpESR
                     
                     for m = 1:obj.measurDim
                         if m == 1
-                            f = obj.frequency;
+                            f = obj.frequencyInternal;
                         else
                             f = obj.mirrorFrequency;
                         end
@@ -223,26 +225,41 @@ classdef ExpMagneticFieldAlignment < ExpESR
             if obj.currESR == 0; return; end
             set(gcf, 'CurrentAxes', obj.figHandle.sp1)
             if obj.signal 
+            if obj.widthPlot
+                lorenzParam = obj.fit_params.C;
+                lorenzParamName = 'Fitted width';
+            else
+                lorenzParam = obj.fit_params.A;
+                lorenzParamName = 'Fitted Contrast';
+            end
             if obj.measurDim == 1
                 yyaxis left
-                plot(obj.scanValues, squeeze(obj.stage_ESR_centers(:,1,:)),'-b')
-                ylabel('Fitted frequency')
+                plot(obj.scanValues, squeeze(obj.stage_ESR_centers(:,1,:)),'-b', 'Color', [0 0.4470 0.7410]);
+                ylabel('resonance');
                 yyaxis right
-                plot(obj.scanValues, obj.fit_params.A(:,:),'--b');
-                ylabel('Fitted Contrast')
+                plot(obj.scanValues, lorenzParam(:,:),'-b', 'Color', [0.8500 0.3250 0.0980]);
+                ylabel(lorenzParamName);
             else
                 yyaxis left
-                 plot(obj.scanValues,squeeze(obj.stage_ESR_centers(:,1,1)),'-b',...
-                    obj.scanValues,2*obj.mirrorSweepAround - squeeze(obj.stage_ESR_centers(:,1,2)),'-r');
-                ylabel('Fitted frequency')
+                hold on;
+                %plot(obj.scanValues, squeeze(obj.helm_ESR_centers(:,1,1)), '-b',  'Color', [0 0.4470 0.7410]);
+                %plot(obj.scanValues, squeeze(obj.helm_ESR_centers(:,1,2)), '--b', 'Color', [0 0.4470 0.7410]);
+                plot(obj.scanValues, squeeze(obj.stage_ESR_centers(:,1,1)), '-b',  'Color', [0 0.4470 0.7410]);
+                plot(obj.scanValues, (2*obj.mirrorSweepAround-squeeze(obj.stage_ESR_centers(:,1,2))), '--b', 'Color', [0 0.4470 0.7410]);
+                ylabel('resonance')
+%                 axis tight
+
+
                 yyaxis right
-                plot(obj.scanValues, obj.fit_params.A(:,1),'--b', ...
-                    obj.scanValues, obj.fit_params.A(:,2),'--r');
-                ylabel('Fitted Contrast')
+                plot(obj.scanValues, lorenzParam(:,1), '-b',  'Color', [0.8500 0.3250 0.0980]);
+                plot(obj.scanValues, lorenzParam(:,2), '--b', 'Color', [0.8500 0.3250 0.0980]);
+                ylabel(lorenzParamName)
+                hold off;
             end
             axis tight
             xlabel('scan values')
-            title('Solid - Frequncy, Dashed - Contrast');
+            title('Solid - normal, Dashed - Mirrored');
+            grid on
             
             %plot ESR            
             set(gcf,'CurrentAxes',obj.figHandle.sp2)
@@ -251,7 +268,7 @@ classdef ExpMagneticFieldAlignment < ExpESR
             else
                 S = obj.stage_ESR(:,:,1);
             end                
-            imagesc(obj.frequency,obj.scanValues,S)
+            imagesc(obj.frequencyInternal,obj.scanValues,S)
             xlabel('frequency')
             ylabel('scan values')
             colorbar            
@@ -264,14 +281,14 @@ classdef ExpMagneticFieldAlignment < ExpESR
             axis tight
             
             %plot the last ESR and its fit
-            Sfit = zeros(length(obj.frequency), obj.measurDim);
+            Sfit = zeros(length(obj.frequencyInternal), obj.measurDim);
             for k = 1:obj.measurDim %first point - MW on, second point MW off                
                 a = obj.fit_params.A(index,k);
                 c = obj.fit_params.C(index,k);
                 x0 = squeeze(obj.stage_ESR_centers(index,1,k));
                 if ~isnan(a) && ~isnan(c) && ~isnan(x0)
                     if k ==1
-                        Sfit(:,k) = Sfit(:,k) + a*c./((obj.frequency'-x0).^2+c);
+                        Sfit(:,k) = Sfit(:,k) + a*c./((obj.frequencyInternal'-x0).^2+c);
                     else
                         Sfit(:,k) = Sfit(:,k) + a*c./((obj.freqMirrored'-x0).^2+c);
                     end
@@ -279,7 +296,7 @@ classdef ExpMagneticFieldAlignment < ExpESR
             end
             Sfit = 1 - Sfit;
             set(gcf,'CurrentAxes',obj.figHandle.sp4)
-            plot(obj.frequency,squeeze(obj.stage_ESR(index,:,:)),obj.frequency,Sfit,'--')
+            plot(obj.frequencyInternal,squeeze(obj.stage_ESR(index,:,:)),obj.frequencyInternal,Sfit,'--')
             xlabel('Frequency (MHz)')
             ylabel('FL (norm)')
             axis tight

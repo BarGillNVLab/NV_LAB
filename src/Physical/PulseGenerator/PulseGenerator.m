@@ -18,7 +18,7 @@ classdef (Abstract) PulseGenerator < EventSender
         sequenceInMemory            % logical. Flag for whether obj.sequence is the same as the one in the hardware.
         delayFixed                  % logical. Flag for whether the delay fixed version of the current seqeunce, stored in 'delayFixedSequence', is valid.
         sequence                    % Sequence object, configured in experiment.
-        userSequence            % Sequence object, to be loaded to the hardware (usually the same as sequence).
+        userSequence                % Sequence object, to be loaded to the hardware (usually the same as sequence).
         delayFixedSequence          % A version of sequence which fixed the delays. The flag 'delayFixed' indicates whether it is updated.
         delayFixedSequenceMap       % A map object that saves previously calculated delayed sequences for better performance.
         onChannelsBinary = 0;       % Stores in binary the state of each of
@@ -115,6 +115,10 @@ classdef (Abstract) PulseGenerator < EventSender
             % stores it in obj.delayFixedSequence. Saves previously stored
             % seqeunces in a map, to save calculation time.
             
+            % if the on/off delay is exactly the same length of a pulse, we'll get an error in the calculation.
+            % So we define a tolerance level
+            % tolerance = 1e-10;
+
             % If we upgrade to 2018+, we can switch to https://www.mathworks.com/help/releases/R2020a/rptgen/ug/mlreportgen.utils.hash.html
             sequenceKey = DataHash(obj.sequence); % Calculates a key for the current sequence.
             if obj.delayFixedSequenceMap.isKey(sequenceKey) % key exists, so just load the previously found sequence.
@@ -133,8 +137,8 @@ classdef (Abstract) PulseGenerator < EventSender
                     startTimes = channelsStruct(i).pulsesStartTime;
                     endTimes = channelsStruct(i).pulsesEndTime;
                     % delays fix by json:
-                    startTimes = startTimes - onDelay;
-                    endTimes = endTimes - offDelay;
+                    startTimes = double( single(startTimes) - single(onDelay) ); % workaround. overcoming a precision error (that happens sometimes) if startTimes == onDelay
+                    endTimes = double( single(endTimes) - single(offDelay) ); % workaround. overcoming a precision error (that happens sometimes) if startTimes == onDelay
                     % search for pulse with negative start time and postive
                     % end time, and split.
                     indSplit = find((startTimes < 0) & (endTimes > 0));
@@ -203,8 +207,9 @@ classdef (Abstract) PulseGenerator < EventSender
             % obj.sequence.change(nickname, what, newValue)
             % obj.userSequence = obj.sequence.copySequence(); % added by rotem 15.12.24
             obj.userSequence.change(nickname, what, newValue)
-            obj.sequence = obj.userSequence.copySequence();
-            obj.sequence.changePulseToTrigger(varargin); % added by rotem - 15.12.24
+            obj.sequence.change(nickname, what, newValue)
+            % obj.sequence = obj.userSequence.copySequence();
+            % obj.sequence.changePulseToTrigger(varargin); % added by rotem - 15.12.24
             obj.sequenceInMemory = false;
             obj.delayFixed = false;
         end

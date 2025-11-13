@@ -11,10 +11,14 @@ classdef PH < handle
     % analog channel 0: 0 V
     % analog channel 1: 1 V
     properties
-        ticks@uint64
-        digital@uint8
-        analog0@int16
-        analog1@int16
+        % ticks@uint64
+        % digital@uint8
+        % analog0@int16
+        % analog1@int16
+        ticks uint64
+        digital uint8
+        analog0 int16
+        analog1 int16
         json
         locked
         initialize

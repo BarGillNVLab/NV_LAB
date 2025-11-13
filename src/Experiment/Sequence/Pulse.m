@@ -10,7 +10,7 @@ classdef Pulse < matlab.mixin.Copyable
         nickname = '';	% char array. Optional name for the pulse.
     end
     
-    properties % (SetAccess = private)
+    properties (SetAccess = private)
         onChannels = struct;    % struct of char arrays. We assume, for now, 
                                 % only digital cahnnels, so we only need to
                                 % know which ones are on.
@@ -73,7 +73,7 @@ classdef Pulse < matlab.mixin.Copyable
         end
     end
        
-    methods %(Access = {?Pulse, ?Sequence, ?PulseGenerator})
+    methods (Access = {?Pulse, ?Sequence, ?PulseGenerator})
         function changeChannels(obj, channels, levels)
             % Sets the levels for each channel.
             % This only changes from current levels. Otherwise, create new

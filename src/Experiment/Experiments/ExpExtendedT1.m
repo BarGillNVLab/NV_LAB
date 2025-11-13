@@ -32,15 +32,24 @@ classdef ExpExtendedT1 < Experiment
             obj.parameterName = 'taus';
             
             % First, get a frequency generator
-            if ~exist('FGs', 'var')
-                fgCell = FrequencyGenerator.getFG();
-                if fgCell{1}.numChannels == 2 || length(fgCell) == 1
-                    obj.freqGenName = fgCell{1}.name;
-                else
-                    obj.freqGenName = cellfun(@(fg)fg.name, fgCell(1:end), 'UniformOutput' ,0);
+            if exist('MWChannel', 'var')
+                sg = getObjByName(SignalGenerator.NAME);
+                if ~iscell(MWChannel)
+                    MWChannel = {MWChannel};
                 end
-            else
-                obj.freqGenName = obj.getFgName(FGs);
+                                % validate the MWChannel exists
+
+                for i = 1:length(MWChannel)
+                    if ischar(MWChannel{i})
+                        tf = cellfun(@(s) strcmp(s.pgChannelName, MWChannel{i}), sg.FGchannels);
+                    else
+                        tf = cellfun(@(s) s.pgChannelNumber == MWChannel{i}, sg.FGchannels);
+                    end
+                    if tf == 0
+                        error('No frequency generator found');
+                    end
+                end
+                obj.MWChannel = MWChannel;
             end
             
             % Set properties inherited from Experiment
@@ -87,7 +96,7 @@ classdef ExpExtendedT1 < Experiment
         end
         
         function set.amplitude(obj, newVal) % newVal is in dBm
-            checkAmplitude(obj, newVal)
+            checkFrequencyVector(obj, newVal)
             % If we got here, then newVal is OK.
             obj.amplitude = newVal;
             obj.changeFlag = true;
@@ -138,6 +147,25 @@ classdef ExpExtendedT1 < Experiment
     methods
         function totalParamNum = getTotalNumberOfParams(obj)
             totalParamNum = length(obj.tau);
+        end
+
+        function changeSequence(obj, idx)
+            % Devices
+            sg = getObjByName(SignalGenerator.NAME);
+            pg = getObjByName(PulseGenerator.NAME);
+            % Some magic numbers
+            maxLastDelay = Experiment.DEFAULT_LAST_DELAY + max(obj.tau);
+
+            % change sequence in the pulse generator
+            if ~isempty(obj.sequencesList)
+                sg.setSequence(idx, obj.MWChannel);
+                pg.setSequence(obj.sequencesList{idx});
+            else
+                pg.changeSequence('tau', 'duration', obj.tau(idx));
+                if obj.constantTime
+                    pg.changeSequence('lastDelay', 'duration', maxLastDelay - obj.tau(idx));
+                end
+            end
         end
     end
     
@@ -236,10 +264,8 @@ classdef ExpExtendedT1 < Experiment
                         return;
                     end
                     try
-                        pg.changeSequence('tau', 'duration', obj.tau(t));
-                        if obj.constantTime
-                            pg.changeSequence('lastDelay', 'duration', maxLastDelay - obj.tau(t));
-                        end
+                        obj.changeSequence(t)
+
                         data = obj.getRawData(pg, spcm);
                         
                         % added by rotem 12.10.21 %

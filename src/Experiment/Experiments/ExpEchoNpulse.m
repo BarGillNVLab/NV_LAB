@@ -65,7 +65,7 @@ classdef ExpEchoNpulse < Experiment
             obj.useIQ = true;               % logical
             obj.xyMeas = 1;
             obj.lastPhase = 'X';             % 'X' or 'Y'
-            obj.pulsesMode='CPMG-n';          % CPMG-n ot XY-n
+            obj.pulsesMode='CPMG-n';          % CPMG-n or XY-n
             obj.detectionDuration = 0.25;           % detection window, in us
             obj.referenceDetectionDuration = 5;     % in us. Detection duration of the reference read
             obj.laserInitializationDuration = 10;   % laser initialization in pulsed experiments in us
