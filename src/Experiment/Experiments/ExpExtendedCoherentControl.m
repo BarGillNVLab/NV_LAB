@@ -38,6 +38,7 @@ classdef ExpExtendedCoherentControl < Experiment
         experimentType 
         ddType
         ddPhase
+        addHalfPi
     end
 
     properties (Hidden)
@@ -96,6 +97,7 @@ classdef ExpExtendedCoherentControl < Experiment
 
             obj.useThreeHalvePi = 0;                    % use 3*pi/2 instead of phases for readout
             obj.experimentType = 'echo';                        % the experiment we want to run
+            obj.addHalfPi = true;
 
             obj.detectionDuration = 0.25;           % detection window, in us
             obj.referenceDetectionDuration = 5;     % in us. Detection duration of the reference read
@@ -246,7 +248,8 @@ classdef ExpExtendedCoherentControl < Experiment
                             if strcmpi(obj.experimentType, 'echo')
                                 pg.changeSequence('lastDelay', 'duration', obj.maxLastDelay - 2*obj.tau(idx));
                             elseif strcmpi(obj.experimentType, 'dd-tau')
-                                pg.changeSequence('lastDelay', 'duration', obj.maxLastDelay - obj.cycles(end)*obj.tau(idx));
+                                % pg.changeSequence('lastDelay', 'duration', obj.maxLastDelay - obj.cycles(end)*obj.tau(idx));
+                                pg.changeSequence('lastDelay', 'duration', obj.maxLastDelay - obj.cycles(end)*obj.tau(idx)/2); % adding a piZ pulse during the lastDelay
                             else
                                 pg.changeSequence('lastDelay', 'duration', obj.maxLastDelay - obj.tau(idx));
                             end
@@ -412,8 +415,10 @@ classdef ExpExtendedCoherentControl < Experiment
                 startFrom = startReadPair(1);
                 readFrom = startReadPair(2);
 
-                % S.addEvent(Experiment.DEFAULT_LAST_DELAY*obj.detectionPeriodsPerRepeat/2,   '',             'lastDelay');       % Last delay
-                % S.addEvent(initDuration, 'greenLaser');                      % Initialization
+                if any(strcmpi(obj.experimentType, {'t1', 't1-piz'}))
+                    S.addEvent(Experiment.DEFAULT_LAST_DELAY*obj.detectionPeriodsPerRepeat/2,   '',             'lastDelay');       % Last delay
+                    S.addEvent(obj.laserInitializationDuration, 'greenLaser');                      % Initialization
+                end
 
                 for k = 1:1+obj.doubleMeasurement
                                        
@@ -435,12 +440,14 @@ classdef ExpExtendedCoherentControl < Experiment
                             % Nothing, but can be used to create an equal pre-pulse to match the timing when applying an mw field
                     end
 
-                    % S.addEvent(0.05,                       '',                  '');
-                    % 
-                    % S.addEvent(obj.halfPiTime,                  obj.MWChannel_detuned);
-                    % sequenceFrequencies = [sequenceFrequencies, obj.frequency{1}(2)];
-                    % sequenceAmplitudes = [sequenceAmplitudes, obj.amplitude{1}(2)];
-                    % sequencePhases = [sequencePhases, obj.phase{1}(2)];
+                    if obj.addHalfPi
+                        S.addEvent(0.05,                       '',                  '');
+
+                        S.addEvent(obj.halfPiTime,                  obj.MWChannel_detuned);
+                        sequenceFrequencies = [sequenceFrequencies, obj.frequency{1}(2)];
+                        sequenceAmplitudes = [sequenceAmplitudes, obj.amplitude{1}(2)];
+                        sequencePhases = [sequencePhases, obj.phase{1}(2)];
+                    end
 
                     switch lower(obj.experimentType)
                         case 'ramsey'
@@ -467,9 +474,9 @@ classdef ExpExtendedCoherentControl < Experiment
 
                             S.addEvent(obj.tau(end)/2, '', 'tau');
 
-                            S.addEvent(obj.piTime_detuned/2, obj.MWChannel_detuned, 'X');
+                            S.addEvent(obj.halfPiTime, obj.MWChannel_detuned, 'X');
                             S.addEvent(obj.piTime_detuned, obj.MWChannel_detuned, 'Y');
-                            S.addEvent(obj.piTime_detuned/2, obj.MWChannel_detuned, '-X');
+                            S.addEvent(obj.halfPiTime, obj.MWChannel_detuned, '-X');
 
                             sequenceFrequencies = [sequenceFrequencies, obj.frequency{1}(2), obj.frequency{1}(2), obj.frequency{1}(2)];
                             sequenceAmplitudes = [sequenceAmplitudes, obj.amplitude{1}(2), obj.amplitude{1}(2), obj.amplitude{1}(2)];
@@ -507,29 +514,31 @@ classdef ExpExtendedCoherentControl < Experiment
                             S.addEvent(obj.tau(end)/2, '', 'half-tau');
                     end
 
-                    % if k == 1 % first measurement in the double measurement
-                    %     S.addEvent(obj.halfPiTime,                  obj.MWChannel_detuned);
-                    %     sequenceFrequencies = [sequenceFrequencies, obj.frequency{1}(2)];
-                    %     sequenceAmplitudes = [sequenceAmplitudes, obj.amplitude{1}(2)];
-                    %     pulsePhase = obj.xy2phase(obj.lastPhase);
-                    %     sequencePhases = [sequencePhases, pulsePhase];
-                    % else % second measurement in the double measurement
-                    %     if ~obj.useThreeHalvePi
-                    %         S.addEvent(obj.halfPiTime,                  obj.MWChannel_detuned);
-                    %         sequenceFrequencies = [sequenceFrequencies, obj.frequency{1}(2)];
-                    %         sequenceAmplitudes = [sequenceAmplitudes, obj.amplitude{1}(2)];
-                    %         pulsePhase = obj.xy2phase(['-', obj.lastPhase]);
-                    %         sequencePhases = [sequencePhases, pulsePhase];
-                    %     else
-                    %         S.addEvent(obj.threeHalvesPiTime,   obj.MWChannel_detuned);                         % MW in -x
-                    %         sequenceFrequencies = [sequenceFrequencies, obj.frequency{1}(2)];
-                    %         sequenceAmplitudes = [sequenceAmplitudes, obj.amplitude{1}(2)];
-                    %         pulsePhase = obj.xy2phase(obj.lastPhase);
-                    %         sequencePhases = [sequencePhases, pulsePhase];
-                    %     end
-                    % end
-                    % 
-                    % S.addEvent(0.05,                       '',                  '');
+                    if obj.addHalfPi
+                        if k == 1 % first measurement in the double measurement
+                            S.addEvent(obj.halfPiTime,                  obj.MWChannel_detuned);
+                            sequenceFrequencies = [sequenceFrequencies, obj.frequency{1}(2)];
+                            sequenceAmplitudes = [sequenceAmplitudes, obj.amplitude{1}(2)];
+                            pulsePhase = obj.xy2phase(obj.lastPhase);
+                            sequencePhases = [sequencePhases, pulsePhase];
+                        else % second measurement in the double measurement
+                            if ~obj.useThreeHalvePi
+                                S.addEvent(obj.halfPiTime,                  obj.MWChannel_detuned);
+                                sequenceFrequencies = [sequenceFrequencies, obj.frequency{1}(2)];
+                                sequenceAmplitudes = [sequenceAmplitudes, obj.amplitude{1}(2)];
+                                pulsePhase = obj.xy2phase(['-', obj.lastPhase]);
+                                sequencePhases = [sequencePhases, pulsePhase];
+                            else
+                                S.addEvent(obj.threeHalvesPiTime,   obj.MWChannel_detuned);                         % MW in -x
+                                sequenceFrequencies = [sequenceFrequencies, obj.frequency{1}(2)];
+                                sequenceAmplitudes = [sequenceAmplitudes, obj.amplitude{1}(2)];
+                                pulsePhase = obj.xy2phase(obj.lastPhase);
+                                sequencePhases = [sequencePhases, pulsePhase];
+                            end
+                        end
+
+                        S.addEvent(0.05,                       '',                  '');
+                    end
 
                     switch readFrom
                         case 0
@@ -548,7 +557,22 @@ classdef ExpExtendedCoherentControl < Experiment
                             % Nothing, but can be used to create an equal pre-pulse to match the timing when applying a mw field
                     end
 
-                    S.addEvent(Experiment.DEFAULT_LAST_DELAY*obj.detectionPeriodsPerRepeat/2,   '',             'lastDelay');       % Last delay
+                    if ~any(strcmpi(obj.experimentType, {'t1', 't1-piz', 'dd-tau'}))
+                        S.addEvent(Experiment.DEFAULT_LAST_DELAY*obj.detectionPeriodsPerRepeat/2,   '',             'lastDelay');       % Last delay
+                    end
+                    if strcmpi(obj.experimentType, 'dd-tau')
+                        S.addEvent(Experiment.DEFAULT_LAST_DELAY*obj.detectionPeriodsPerRepeat/4,   '',             'lastDelay');       % Last delay
+
+                        S.addEvent(obj.halfPiTime, obj.MWChannel_detuned, 'X');
+                        S.addEvent(obj.piTime_detuned, obj.MWChannel_detuned, 'Y');
+                        S.addEvent(obj.halfPiTime, obj.MWChannel_detuned, '-X');
+
+                        sequenceFrequencies = [sequenceFrequencies, obj.frequency{1}(2), obj.frequency{1}(2), obj.frequency{1}(2)];
+                        sequenceAmplitudes = [sequenceAmplitudes, obj.amplitude{1}(2), obj.amplitude{1}(2), obj.amplitude{1}(2)];
+                        sequencePhases = [sequencePhases, {[0,0]}, {[pi/4, -pi/4]}, {[pi/2, -pi/2]}];
+
+                        S.addEvent(Experiment.DEFAULT_LAST_DELAY*obj.detectionPeriodsPerRepeat/4,   '',             'lastDelay');       % Last delay
+                    end
                     S.addEvent(obj.detectionDuration,...
                         {'greenLaser', 'detector'});        % Detection
                     S.addEvent(initDuration,                    'greenLaser');                      % Initialization
@@ -578,14 +602,15 @@ classdef ExpExtendedCoherentControl < Experiment
                     obj.mCurrentXAxisParam.value = obj.tau;
                     obj.maxLastDelay = Experiment.DEFAULT_LAST_DELAY*obj.detectionPeriodsPerRepeat/2 + max(obj.tau); % we multiply by obj.detectionPeriodsPerRepeat/2 to correct for the number of concatenated sequences
                 case 't1-piz'
-                    obj.mCurrentXAxisParam.value = obj.tau;
+                    obj.mCurrentXAxisParam.value = 2*obj.tau; % we have 2 taus in this sequences
                     obj.maxLastDelay = Experiment.DEFAULT_LAST_DELAY*obj.detectionPeriodsPerRepeat/2 + max(obj.tau); % we multiply by obj.detectionPeriodsPerRepeat/2 to correct for the number of concatenated sequences
                 case 'dd'
                     obj.mCurrentXAxisParam.value = obj.cycles*obj.tau; % obj.cycles is a vector, obj.tau is a scalar
                     obj.maxLastDelay = Experiment.DEFAULT_LAST_DELAY*obj.detectionPeriodsPerRepeat/2 + obj.ddSeq.sequence.duration*max(obj.cycles) + obj.tau(end); % tau should be a scalar, we multiply by obj.detectionPeriodsPerRepeat/2 to correct for the number of concatenated sequences
                 case 'dd-tau'
                     obj.mCurrentXAxisParam.value = obj.cycles*obj.tau; % obj.cycles is a scalar, obj.tau is a vector
-                    obj.maxLastDelay = Experiment.DEFAULT_LAST_DELAY*obj.detectionPeriodsPerRepeat/2 + obj.ddSeq.sequence.duration*obj.cycles(end) + max(obj.tau); % cycles should be a scalar, we multiply by obj.detectionPeriodsPerRepeat/2 to correct for the number of concatenated sequences
+                    % obj.maxLastDelay = Experiment.DEFAULT_LAST_DELAY*obj.detectionPeriodsPerRepeat/2 + obj.ddSeq.sequence.duration*obj.cycles(end) + obj.cycles(end)*max(obj.tau); % cycles should be a scalar, we multiply by obj.detectionPeriodsPerRepeat/2 to correct for the number of concatenated sequences
+                    obj.maxLastDelay = ( Experiment.DEFAULT_LAST_DELAY*obj.detectionPeriodsPerRepeat/2 + obj.ddSeq.sequence.duration*obj.cycles(end) + obj.cycles(end)*max(obj.tau) ) / 2; % adding a piZ pulse in the lastDelay
             end
 
             obj.prepareInternal(S)
