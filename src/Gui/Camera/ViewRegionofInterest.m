@@ -176,7 +176,7 @@ classdef ViewRegionofInterest < GuiComponent & EventSender & EventListener
 
         function setRoiDefault(obj)
             binning = obj.camera.imgparams.binning;
-            obj.defaultRoi = obj.camera.ROI_DEFULT/binning;
+            obj.defaultRoi = ceil(obj.camera.ROI_DEFULT/binning);
             obj.edtmax(1).String = num2str(obj.defaultRoi(1)+obj.defaultRoi(3));
             obj.edtmax(2).String = num2str(obj.defaultRoi(2)+obj.defaultRoi(4));
             obj.edtmin(1).String = num2str(obj.defaultRoi(1));

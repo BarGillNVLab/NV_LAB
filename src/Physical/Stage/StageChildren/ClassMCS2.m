@@ -14,7 +14,8 @@ classdef ClassMCS2 < ClassStage
         
         % LIB_DLL_FOLDER = 'C:/Users/Owner/Google Drive/NV Lab/Control code/Drivers/SmarAct/MCS2/SDK/lib64/';
         % LIB_DLL_FOLDER = 'C:/SmarAct/MCS2/SDK/C/lib64/'; %C:\SmarAct\MCS2\SDK\C\lib64
-        LIB_DLL_FOLDER = 'C:/SmarAct/MCS2/SDK/Redistributable/DLL/x64/'
+        %LIB_DLL_FOLDER = 'C:/SmarAct/MCS2/SDK/Redistributable/DLL/x64/'
+        LIB_DLL_FOLDER = 'C:\SmarAct\MCS2\SDK\Redistributable\DLL\x64\'
         LIB_DLL_FILENAME = 'SmarActCTL.dll';
         LIB_ALIAS = 'MCS2';
 

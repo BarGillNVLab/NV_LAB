@@ -36,6 +36,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         signalParam                 % ExpParameter in charge of Experiment (raw) result (which has name and value)
         signalParam2                % ditto, for second optional raw result
         averagesTimeStamp           % matrix of size ('averages'*6), time stamp for each end of an average, format(row): [year,month,day,hour,minute,second] 
+        magneticImage               % for imaging experiments
     end
     
     properties
@@ -61,6 +62,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         WindFreakChannels = [1, 0]  % logical. Channel on/off, by default only channel 1 is on.
         countWithLifeTime = false;  % If the setup has lifetime measurement, sum the lifetime counts as the way to count.
         smallDelay = 0;
+        saveEachaverage = 0;        % temporary flag
         
         balancedMeas = 0;           % logical. true when there is balbnced measurement in the setup - acquisition of the input laser in parallel to the signal
         inputConfig = 'auto';       % When using photodiode and not SPCM, to define the input configuration. options: 'norm', 'diff', or 'auto'. 'auto' mean 'diff' if avaliable and 'norm' otherwise.
@@ -75,6 +77,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         recordVoltageSpan = false;  % boolean. When true the experiment saves the measured voltage histogram
         voltageHistogram            % struct with the measured voltage histogram
         voltageOffset = [];         % voltage offset point to generate from the DAQ to differential port.   
+        imagingFlag = 0;            % available only for widefield setups, a flag to indicate an imaging request
 
         % camera properties
 
@@ -117,6 +120,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
     % For plotting
     properties (Hidden, Access = {?Experiment, ?ViewExperimentPlot}) % Inclusion of ?Experiment gives access to its subclasses
         gAxes
+        magneticImagehandle
         isPlotAlternate = false;
         isPlotAlternateAvailable = false;
         parameterName = 'parameters';
@@ -141,6 +145,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         % Exception handling
         EXCEPTION_ID_NO_EXPERIMENT = 'getExp:noExp';
         EXCEPTION_ID_NOT_CURRENT = 'getExp:notCurrExp';
+        TEMP_PATH = 'G:\My Drive\NV Lab\Control code\Saves\Setup 2\_ESRAverages';
     end
     
     %% General
@@ -593,7 +598,15 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                     percentage = i/obj.averages*100;
                     percision = log10(obj.averages);    % Enough percision, according to division result
                     fprintf('%.*f%%\n', percision, percentage)
-                    
+                    if obj.saveEachaverage
+                        value = obj.signalParam.value;
+                        path = obj.TEMP_PATH;
+                        s = num2str(clock);
+                        s = s(~isspace(s));
+                        fileName = [s, 'average', num2str(i), '.mat'];
+                        outputfile = fullfile(path, fileName);
+                        save(outputfile, 'value')
+                    end
                     if obj.stopFlag
                         break
                     end
@@ -612,6 +625,16 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
 
             obj.isRunning = false;
             obj.stopFlag = true;
+            if obj.imagingFlag
+                switch obj.NAME
+                    case 'ESR'
+                        msignal = squeeze(obj.signalParam.value);
+                        freqVector = obj.frequency;
+                        obj.magneticImage = ODMRimaging(msignal, freqVector);
+                        obj.magneticImagehandle = obj.plotMagneticImage();
+                    case RAMSEY
+                end
+            end
             obj.wrapUp;
             sendEventExpPaused(obj);
             
@@ -839,12 +862,96 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             %%% close the figure
             close(figureInvis);
         end
+
+        function saveHandlePlot(obj, folder, filename)
+            % saveHandlePlot  Save a provided plot handle (figure/axes/struct h) as PNG and FIG.
+            %
+            %   obj.saveHandlePlot(h, folder, filename)
+            %
+            % Accepts:
+            %   h can be:
+            %     - a figure handle
+            %     - an axes handle
+            %     - a struct with fields .axes or .figure (e.g., from plotMagneticImage)
+            
+            %--- Match original guards ---
+            h = obj.magneticImagehandle;
+            if ~strcmp(obj.NAME, obj.current)
+                return
+            end
+            if obj.currIter == 0
+                return
+            end
+        
+            % Ensure target folder exists
+            if ~exist(folder, 'dir')
+                mkdir(folder);
+            end
+        
+            %--- Resolve a source axes to copy (preferred), or a figure ---
+            srcAx = [];
+            srcFig = [];
+        
+            if isstruct(h)
+                if isfield(h, 'axes') && isgraphics(h.axes, 'axes')
+                    srcAx = h.axes;
+                elseif isfield(h, 'figure') && isgraphics(h.figure, 'figure')
+                    srcFig = h.figure;
+                else
+                    error('Struct h must have a valid .axes or .figure field.');
+                end
+            elseif isgraphics(h, 'axes')
+                srcAx = h;
+            elseif isgraphics(h, 'figure')
+                srcFig = h;
+            else
+                error('h must be a figure handle, axes handle, or a struct containing one.');
+            end
+        
+            %--- Create an invisible figure and copy content into it (non-destructive save) ---
+            figureInvis = figure('Visible','off','Color','w');
+        
+            if ~isempty(srcAx)
+                % Copy the axes (and its children) into the invisible figure
+                axNew = copyobj(srcAx, figureInvis);
+                set(axNew, 'Units','normalized','Position',[0.13 0.11 0.775 0.815]); % nice default
+                % Preserve colormap/CLim from the source figure if available
+                try
+                    colormap(figureInvis, colormap(ancestor(srcAx,'figure')));
+                    set(axNew,'CLim', get(srcAx,'CLim'));
+                catch
+                end
+            else
+                % Copy all children from the source figure (keeps layout)
+                copyobj(allchild(srcFig), figureInvis);
+                try
+                    colormap(figureInvis, colormap(srcFig));
+                catch
+                end
+            end
+        
+            %--- Build paths (reuse your helpers) ---
+            filename = PathHelper.removeDotSuffix(filename);
+            fullpath = PathHelper.joinToFullPath(folder, filename);
+        
+            %--- Save PNG ---
+            fullPathImage = [fullpath '.' ImageScanResult.IMAGE_FILE_SUFFIX];
+            saveas(figureInvis, fullPathImage);
+        
+            %--- Save FIG (make it visible on open, like your original) ---
+            set(figureInvis, 'CreateFcn', 'set(gcbo, ''Visible'', ''on'')');
+            savefig(figureInvis, fullpath);
+        
+            %--- Cleanup ---
+            close(figureInvis);
+        end
         
         function n = nDim(obj)
             % Helper function, to tell whether the experiment is 1D or 2D
             yAxisExists = ~isempty(obj.mCurrentYAxisParam) && ~isempty(obj.mCurrentYAxisParam.value);
             n = BooleanHelper.ifTrueElse(yAxisExists, 2, 1);
         end
+
     end
     
     methods (Access = {?Experiment, ?ViewExperimentPlot}) % Inclusion of ?Experiment gives access to its subclasses
@@ -1008,6 +1115,88 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             obj.summaryData.err = err';
             
         end
+
+        function h = plotMagneticImage(obj, ax)
+            % plotMagneticImage  Plot obj.magneticImage with a colorbar.
+            % Usage:
+            %   obj.plotMagneticImage();           % opens a new figure
+            %   obj.plotMagneticImage(gca);        % plot into existing axes
+            %
+            % Output:
+            %   h.figure, h.axes, h.image, h.colorbar
+        
+            %----- Get image from object -----
+            img = [];
+            if isprop(obj, 'magneticImage') && ~isempty(obj.magneticImage)
+                img = obj.magneticImage;
+            elseif isprop(obj, 'magneticimage') && ~isempty(obj.magneticimage)
+                img = obj.magneticimage;
+            end
+            if isempty(img)
+                error('magneticImage property not found or is empty.');
+            end
+        
+            % If ODMRimaging returned a struct, try common fields
+            if isstruct(img)
+                if isfield(img, 'Bz')
+                    img = img.Bz;
+                elseif isfield(img, 'map')
+                    img = img.map;
+                else
+                    error('magneticImage is a struct without a recognized image field (e.g., .Bz or .map).');
+                end
+            end
+        
+            % Ensure 2D (collapse singleton dims if needed)
+            img = squeeze(img);
+            if ndims(img) ~= 2
+                error('magneticImage must be a 2D matrix after squeezing.');
+            end
+        
+            %----- Prepare axes -----
+            createdFig = false;
+            if nargin < 2 || isempty(ax) || ~isvalid(ax) || ~strcmp(get(ax,'type'),'axes')
+                h.figure = figure('Color','w');
+                h.axes   = axes('Parent', h.figure);
+                createdFig = true;
+            else
+                h.axes = ax;
+                h.figure = ancestor(ax, 'figure');
+            end
+        
+            %----- Plot -----
+            h.image = imagesc(h.axes, img);
+            axis(h.axes, 'image');          % equal aspect ratio
+            set(h.axes, 'YDir', 'normal');  % conventional orientation
+            colormap(h.axes, 'parula');
+        
+            % Robust color limits ignoring NaNs
+            vals = img(isfinite(img));
+            if ~isempty(vals)
+                clim = [min(vals(:)) max(vals(:))];
+                if clim(1) ~= clim(2)
+                    set(h.axes, 'CLim', clim);
+                end
+            end
+        
+            %----- Labels & colorbar -----
+            h.colorbar = colorbar(h.axes);
+            xlabel(h.axes, 'X (pixels)');
+            ylabel(h.axes, 'Y (pixels)');
+            title(h.axes, 'Magnetic Image');
+        
+            % Try to label the colorbar meaningfully
+            try
+                % If your ODMRimaging returns Tesla or similar, edit this:
+                ylabel(h.colorbar, 'Signal (a.u.)');
+            catch
+                % no-op
+            end
+        
+            % Bring figure forward if we created it
+            if createdFig, figure(h.figure); end
+        end
+
     end
     
     %% Overridden from EventListener
@@ -1021,6 +1210,9 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 folder = event.extraInfo.(SaveLoad.EVENT_FOLDER);
                 filename = event.extraInfo.(SaveLoad.EVENT_FILENAME);
                 obj.savePlot(folder, filename);
+                if obj.imagingFlag
+                    obj.saveHandlePlot;
+                end
                 return
             end
             
@@ -1440,11 +1632,11 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             spcm = getObjByName(Spcm.NAME);
             if isempty(spcm); throwBaseObjException(Spcm.Name); end
             if spcm.hasCamera
+                obj.imagingFlag = input('Enter 1 if you want an image, 0 otherwise: ');
+                %obj.imagingFlag=1;
                 delay = spcm.camera.DELAY_BETWEEN_TRIGGERS;
                 S.addDelayAfterDetection(delay, 'greenLaser');
-            end
-
-           
+            end  
             try
                 pg.setSequence(S);
             catch err

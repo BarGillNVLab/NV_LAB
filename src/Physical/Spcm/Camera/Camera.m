@@ -18,6 +18,8 @@ classdef Camera < BaseObject & EventSender
         imgparams           % CameraImageParams object (roi, exposuretime, Avarage_exposures, nframes, timedelay, isMWcontrastImg, MWAmplitude, MWFrequency)
         isAcquiring         % Boolean. true during continious aquiring
         exposureAutoState
+        zoomFlag = 0        % a flag to indicate a zoom command
+        triggerRepeats
         
 
 %         imageSize
@@ -92,10 +94,13 @@ classdef Camera < BaseObject & EventSender
         imageUpload(obj, what, handels)
         % this function uploads an image
 
+        clearTimeRead(obj)
+
         imageCPP(obj, what, handles)
         % this function calls for the CPP functions for the camera
         readExperimentData(obj)
         % read data from an experiment
+        prepareReadbyStage(nPixels, timeout, pixelTime)
 
     end
 

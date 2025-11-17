@@ -230,8 +230,8 @@ classdef ExpRamsey < Experiment
                             [sig, sterr] = obj.processData(data);
                         end
                         
-                        obj.signal(:, t, obj.currIter) = sig;
-                        obj.sterr(:, t, obj.currIter) = sterr;
+                        obj.signal(:, t, obj.currIter,:,:) = sig;
+                        obj.sterr(:, t, obj.currIter,:,:) = sterr;
                         
                         success = true;
                         obj.currParamIter = obj.currParamIter + 1;
@@ -271,26 +271,26 @@ classdef ExpRamsey < Experiment
             % added by rotem 21.11.21 %
             if length(data) == obj.detectionPeriodsPerRepeat*obj.repeats*obj.getTotalNumberOfParams %if true we're proccessing data at the end of the average
                 for k = 1:length(obj.tau)
-                    [obj.signal(:, f1(k), obj.currIter), obj.sterr(:, f1(k), obj.currIter)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(k-1)+1:obj.detectionPeriodsPerRepeat*obj.repeats*k));
+                    [obj.signal(:, f1(k), obj.currIter,:,:), obj.sterr(:, f1(k), obj.currIter)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(k-1)+1:obj.detectionPeriodsPerRepeat*obj.repeats*k));
                 end
             end
             
             
             % Saving results in the Experiment parameters
-            S1 = squeeze(obj.signal(1, :, 1:obj.currIter));
-            S1sterr = squeeze(obj.sterr(1, :, 1:obj.currIter));
-            S2 = squeeze(obj.signal(2, :, 1:obj.currIter));
-            S2sterr = squeeze(obj.sterr(2, :, 1:obj.currIter));
+            S1 = squeeze(obj.signal(1, :, 1:obj.currIter,:,:));
+            S1sterr = squeeze(obj.sterr(1, :, 1:obj.currIter,:,:));
+            S2 = squeeze(obj.signal(2, :, 1:obj.currIter,:,:));
+            S2sterr = squeeze(obj.sterr(2, :, 1:obj.currIter,:,:));
             
             [value, sterr] = getRatioDistributionValues(obj, S1, S2, S1sterr, S2sterr);
             obj.signalParam.value = value;
             obj.signalParam.sterr = sterr;
             
             if obj.doubleMeasurement
-                S3 = squeeze(obj.signal(3, :, 1:obj.currIter));
-                S3sterr = squeeze(obj.sterr(3, :, 1:obj.currIter));
-                S4 = squeeze(obj.signal(4, :, 1:obj.currIter));
-                S4sterr = squeeze(obj.sterr(4, :, 1:obj.currIter));
+                S3 = squeeze(obj.signal(3, :, 1:obj.currIter,:,:));
+                S3sterr = squeeze(obj.sterr(3, :, 1:obj.currIter,:,:));
+                S4 = squeeze(obj.signal(4, :, 1:obj.currIter,:,:));
+                S4sterr = squeeze(obj.sterr(4, :, 1:obj.currIter,:,:));
                 
                 [value, sterr] = getRatioDistributionValues(obj, S3, S4, S3sterr, S4sterr);
                 obj.signalParam2.value = value;

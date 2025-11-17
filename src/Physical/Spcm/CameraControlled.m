@@ -51,35 +51,38 @@ classdef CameraControlled < Spcm & NiDaqControlled
         end
         
     %%% Read by time %%%
-        function prepareReadByTime(obj)
+    function prepareReadByTime(obj)
             % Prepare the Integrator to a scan by timer, with integration time of
             % integrationTime in seconds.
 %             obj.camera.prepareAcquisition(exposureTime);
+            obj.camera.prepareRead;
             obj.camera.setTriggerType('manual');
-            obj.camera.StartRead;
 
         end
         
         function image = readFromTime(obj, averageExposures, nframes, timeDelay)
+            if exist("nframes", "var")
+                obj.camera.triggerRepeats = nframes;
+            else
+                obj.camera.triggerRepeats = 1;
+            end
+            obj.camera.StartRead;
             if ~exist("averageExposures", "var")
                 image = obj.camera.ImageAcquire();
-                return
-            end
-            if averageExposures
-                image = obj.camera.read(nframes, timeDelay);
             else
-                image = obj.camera.ImageAcquire();
+                if averageExposures
+                    image = obj.camera.read(nframes, timeDelay);
+                else
+                    image = obj.camera.ImageAcquire();
+                end
             end
+            obj.camera.stopRead;
         end
 
         function clearTimeRead(obj)
             % Clears the task for reading voltage by time.
-            obj.camera.stopRead;
-            cameraprop = obj.camera.imgparams;
-            if cameraprop.exposuretime ~= obj.camera.src.ExposureTime
-                cameraprop.exposuretime = obj.camera.src.ExposureTime;
-                obj.camera.sendEventScanParamsChanged;
-            end
+            obj.camera.clearTimeRead;
+            
         end
     %%% End (by time) %%%
     
@@ -96,16 +99,9 @@ classdef CameraControlled < Spcm & NiDaqControlled
             pg.Off('detector');
             obj.nScanIntegration = nPixels;
             obj.scanningStageName = stageName;
-            obj.camera.timeout = timeout;
-            obj.pixelTime = pixelTime*1e03;  % pixel time in millisec
+            
             obj.exposureInitState = obj.camera.getExposureAuto;
-            exposureTime = obj.camera.imgparams.exposuretime*1e-3;
-            if exposureTime > obj.pixelTime
-                obj.camera.setExposureTime(obj.pixelTime-0.25*obj.pixelTime);
-            end
-            obj.camera.setTriggerType('hardware');
-            obj.camera.framesPerTrigger(1);
-            obj.camera.setTriggerRepeats(nPixels);
+            obj.camera.prepareCountbyStage(nPixels, timeout, pixelTime)
             
         end
         
@@ -151,19 +147,21 @@ classdef CameraControlled < Spcm & NiDaqControlled
         end
     
         function startExperimentCount(obj)
-            obj.camera.stopRead;
             obj.camera.StartRead;
         end
     
         function images = readFromExperiment(obj)
-            if obj.camera.IsLoggin
-                obj.camera.stopRead;
-            end
             iamgesFull = obj.camera.readExperimentData(obj.nExpIntegration);
-            images = double(permute(iamgesFull, [4, 1, 2, 3]));
+            dim = ndims(iamgesFull);
+            if dim == 3
+                images = double(permute(iamgesFull, [3, 1, 2]));
+            elseif dim == 4
+                images = double(permute(iamgesFull, [4, 1, 2, 3]));
+            end
         end
     
         function stopExperimentCount(obj)
+            obj.camera.stopRead;
         end
 
         function returnToDefault(obj)
@@ -172,6 +170,7 @@ classdef CameraControlled < Spcm & NiDaqControlled
 
     
         function clearExperimentRead(obj)
+            obj.camera.clearMemory;
         end
     %%% End (by PulseGenerator) %%%
     end

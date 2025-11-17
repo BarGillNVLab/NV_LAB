@@ -88,7 +88,7 @@ classdef CameraCapture < EventSender & EventListener & Savable
                 fg.output = 1;
             end
             timerVal = tic;
-            camera.prepareReadByTime;
+            camera.prepareReadByTime();
             disp('Initiating Aquisition...');
             try
                 kcpsImageMatrix = obj.run(camera);
@@ -189,7 +189,7 @@ classdef CameraCapture < EventSender & EventListener & Savable
                                         pg.on('MW');
                                     end
                                     currentMatrix = camera.readFromTime(1, nframes, timedelay);
-                                    kcpsMatrix(:,:,j) = mean(currentMatrix,3); 
+                                    kcpsMatrix(:,:,j) = mean(currentMatrix,3);
                                     if j==2
                                         pg.off('MW');
                                     end    

@@ -11,7 +11,7 @@ classdef PathHelper
             
             % until all setups upgrade to google file stream: Yachel 29.09.21
             setupNumber = str2double(JsonInfoReader.getJson.setupNumber);
-            if setupNumber==3 || setupNumber==4 || setupNumber==7 || setupNumber==1 || setupNumber==5 || setupNumber == 8 || setupNumber == 6
+            if setupNumber==3 || setupNumber==4 || setupNumber==7 || setupNumber==1 || setupNumber==5 || setupNumber == 8 || setupNumber == 6|| setupNumber == 2
                 googleDriveFolder = 'G:\My Drive\';
             end
             

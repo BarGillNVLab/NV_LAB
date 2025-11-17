@@ -23,12 +23,17 @@ classdef ViewCameraOptions < ViewVBox
             roi = ViewRegionofInterest(main, controller, camera);
             exposur = Viewexposure(main, controller, camera);  
             mw = ViewMWContrast(main, controller);
-            
-            
-            main.height = [roi.height+40, exposur.height+30, mw.height];
-            main.setHeights([-roi.height -exposur.height mw.height]);
-            main.width = max([roi.width exposur.width mw.width]);
-            
+            if isa(camera, 'CameraAndor')
+                temperature = ViewAndorSensorTemperature(main, controller);
+                main.height = [roi.height+40, exposur.height+30, mw.height, temperature.height];
+                main.setHeights([-roi.height -exposur.height mw.height temperature.height]);
+                main.width = max([roi.width exposur.width mw.width temperature.width]);
+            else
+                main.height = [roi.height+40, exposur.height+30, mw.height];
+                main.setHeights([-roi.height -exposur.height mw.height]);
+                main.width = max([roi.width exposur.width mw.width]);
+            end
+                
             
             % Adjust the size of the entire layout
             

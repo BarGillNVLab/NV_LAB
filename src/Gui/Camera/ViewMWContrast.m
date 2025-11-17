@@ -56,23 +56,27 @@ classdef ViewMWContrast < GuiComponent
     
         function edtFrequencyCallback(obj)
             camera = getObjByName(Camera.NAME);
+            srs = getObjByName(FrequencyGenerator.getDefaultFgName());
             imageParams = camera.imgparams;
             if ~ValidationHelper.isValuePositive(obj.edtFrequency.String)
                 obj.edtFrequency.String = StringHelper.formatNumber(imageParams.MWFrequency);
                 EventStation.anonymousError('Frequency has to be a positive number! Reverting.');
             end
             imageParams.MWFrequency = str2double(obj.edtFrequency.String);
+            srs.frequency = str2double(obj.edtFrequency.String);
             camera.sendEventScanParamsChanged();
         end
     
         function edtAmplitudeCallback(obj)
             camera = getObjByName(Camera.NAME);
+            srs = getObjByName(FrequencyGenerator.getDefaultFgName());
             imageParams = camera.imgparams;
             if ~ValidationHelper.isStringValueANumber(obj.edtAmplitude.String)
                 obj.edtAmplitude.String = StringHelper.formatNumber(imageParams.MWAmplitude);
                 EventStation.anonymousError('Amplitude has to be a number! Reverting.');
             end
             imageParams.MWAmplitude = str2double(obj.edtAmplitude.String);
+            srs.amplitude = str2double(obj.edtAmplitude.String);
             camera.sendEventScanParamsChanged();
         end
     end

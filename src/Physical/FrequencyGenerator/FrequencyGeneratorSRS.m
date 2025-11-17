@@ -10,7 +10,7 @@ classdef FrequencyGeneratorSRS < FrequencyGenerator
     end
        
     properties (Access = private)
-        t       % tcpip object
+        t       % tcpip object/ serial object
     end
     
     methods (Access = private)
@@ -18,7 +18,15 @@ classdef FrequencyGeneratorSRS < FrequencyGenerator
             % All models are the same in regards to controlling them, but
             % the limitations on the amplitude and on the allowed frequencies may vary.
             obj@FrequencyGenerator(name, frequencyLimits, amplitudeLimits, keepOn);
+            if startsWith(string(address), "COM", 'IgnoreCase', true) && ~isempty(regexp(address, "^COM\d+$", "once"))
+                baud = 115200;                    % set as needed
+                obj.t = serialport(char(address), baud); % creates the connection
+                % configureTerminator(s,"LF");    % optional
+                % writeline(s,"*IDN?");           % example
+            else
+                % address does not start with COM -> handle other transport types here
             obj.t = tcpip(address, port);
+            end
             
             obj.initialize;
         end

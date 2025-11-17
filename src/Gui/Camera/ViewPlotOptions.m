@@ -99,6 +99,8 @@ classdef ViewPlotOptions < GuiComponent & EventListener
             if isempty(cameradisplay); throwBaseObjException(CameraDisplay.NAME); end
 
             cameradisplay.updateDataCursor('Zoom');
+            camera = getObjByName(Camera.NAME);
+            camera.zoomFlag = 1;
             obj.roi = cameradisplay.roi;
 
             obj.backToMarker;
@@ -109,6 +111,8 @@ classdef ViewPlotOptions < GuiComponent & EventListener
             if isempty(cameradisplay); throwBaseObjException(CameraDisplay.NAME); end
 
             cameradisplay.ZoomOut();
+            camera = getObjByName(Camera.NAME);
+            camera.zoomFlag = 0;
             obj.roi = [];
             obj.backToMarker;
         end
@@ -118,6 +122,7 @@ classdef ViewPlotOptions < GuiComponent & EventListener
                 camera = getObjByName(Camera.NAME);
                 obj.roi = round(obj.roi/4)*4;
                 camera.setROI(obj.roi);
+                camera.zoomFlag = 0;
             else
                 error('UpdateROI:InvalidROI', 'ROI is empty or invalid. Please set a valid ROI before updating.');
             end

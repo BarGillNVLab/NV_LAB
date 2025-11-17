@@ -23,8 +23,6 @@ classdef CameraBasler < Camera & EventSender
     properties
         vid             % video input object
         src             % video source object
-        currentdata     % current image data
-        allData         % all collected image data
     end
 
     %% Constructor and setup methods
@@ -49,7 +47,6 @@ classdef CameraBasler < Camera & EventSender
             obj.src.BinningVerticalMode = 'Sum';
             obj.src.BinningHorizontalMode = 'Sum';
             triggerconfig(obj.vid, 'manual');
-            obj.allData = {};
             obj.initScanParams;
             obj.vid.UserData = struct('TriggerCount', 0);
             obj.vid.TriggerFcn = @(src, event) obj.triggerCounter(src, event);
@@ -113,6 +110,7 @@ classdef CameraBasler < Camera & EventSender
         end
 
         function setTriggerRepeats(obj, repeats)
+            obj.triggerRepeats = repeats;
             obj.vid.TriggerRepeat = repeats;
         end
 
@@ -151,6 +149,7 @@ classdef CameraBasler < Camera & EventSender
         end
 
         function setExposureTime(obj, t)
+            % exposure time set to the camera must be in microseconds
             obj.setExposureAuto(0);
             obj.src.ExposureTime = t * obj.UNIT_CONV;
             obj.imgparams.exposuretime = t * obj.UNIT_CONV;
@@ -249,6 +248,7 @@ classdef CameraBasler < Camera & EventSender
         end
 
         function images = readfromcamera(obj, nframes)
+            % for the case an external trigger triggers the camera
             try
                 images = getdata(obj.vid, nframes);
             catch ME
@@ -257,6 +257,9 @@ classdef CameraBasler < Camera & EventSender
         end
 
         function images = readExperimentData(obj, nframes)
+            if obj.IsLoggin
+                obj.stopRead;
+            end
             try
                 images = getdata(obj.vid, nframes);
             catch ME
@@ -287,10 +290,31 @@ classdef CameraBasler < Camera & EventSender
                % Prepare for reading images (placeholder for future use)
 
         end
+        function clearTimeRead(obj)
+            obj.stopRead;
+            cameraprop = obj.imgparams;
+            if cameraprop.exposuretime ~= obj.src.ExposureTime
+                cameraprop.exposuretime = obj.src.ExposureTime;
+                obj.camera.sendEventScanParamsChanged;
+            end
+        end
     end
 
     %% Experiment preparation
     methods
+        function prepareReadbyStage(obj, nPixels, timeout, pixelTime)
+            obj.timeout = timeout;
+            pixelTime = pixelTime*1e03;  % pixel time in millisec
+            exposureTime = obj.imgparams.exposuretime*1e-3;
+            if exposureTime > pixelTime
+                obj.setExposureTime(obj.pixelTime-0.25*obj.pixelTime);
+            end
+            obj.setTriggerType('hardware');
+            obj.framesPerTrigger(1);
+            obj.setTriggerRepeats(nPixels);
+            
+        end
+        
         function prepareExperiment(obj, nreads, timeout)
             if isrunning(obj.vid)
                 stop(obj.vid);

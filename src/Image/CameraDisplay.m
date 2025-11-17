@@ -325,13 +325,13 @@ classdef CameraDisplay < Savable & EventSender & EventListener
             % rect(3)==width;	rect(4)==height
             rect = round(rect);
             obj.cpproi = rect;
-            xstart = rect(1) - obj.roi(1);
-            ystart = rect(2) - obj.roi(2);
+            xstart = rect(1) - obj.roi(1)+1;
+            ystart = rect(2) - obj.roi(2)+1;
 %             obj.roi = [rect(1) rect(2) rect(3) rect(4)];
             data = getimage(obj.gAxes);
-            zoomdata = data(ystart:ystart+rect(4), xstart:xstart+rect(3));
-            axis1 = rect(1):(rect(1)+rect(3));
-            axis2 = rect(2):(rect(2)+rect(4));
+            zoomdata = data(ystart:ystart+rect(4)+1, xstart:xstart+rect(3)+1);
+            axis1 = rect(1):(rect(1)+rect(3)+1);
+            axis2 = rect(2):(rect(2)+rect(4)+1);
             botLabel = obj.mLabelBot;
             leftLabel = obj.mLabelLeft;
             phAxes = {axis1, axis2};

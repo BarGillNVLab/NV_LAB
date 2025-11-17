@@ -188,7 +188,7 @@ classdef ExpRabi < Experiment
                         if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled')
                             [sig(1:2), sterr(1:2)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(k-1)+1:end));%obj.detectionPeriodsPerRepeat*obj.repeats*k));
                         else
-                            [sig(1:2), sterr(1:2)] = obj.processData(data);
+                            [sig(1:2,:,:), sterr(1:2,:,:)] = obj.processData(data);
                         end
                         
 %                         if obj.currIter > 2 && t == tau_perm(15)
@@ -202,8 +202,8 @@ classdef ExpRabi < Experiment
                             throw(ME);
                         end
                         
-                        obj.signal(:, t, obj.currIter) = sig;
-                        obj.sterr(:, t, obj.currIter) = sterr;
+                        obj.signal(:, t, obj.currIter,:,:) = sig;
+                        obj.sterr(:, t, obj.currIter,:,:) = sterr;
                         
                         success = true;
                         obj.currParamIter = obj.currParamIter + 1;
@@ -256,15 +256,15 @@ classdef ExpRabi < Experiment
             % added by rotem 18.4.21 %
             if length(data) == obj.detectionPeriodsPerRepeat*obj.repeats*obj.getTotalNumberOfParams %if true we're proccessing data at the end of the average
                 for k = 1:length(obj.tau)
-                    [obj.signal(:, f1(k), obj.currIter), obj.sterr(:, f1(k), obj.currIter)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(k-1)+1:obj.detectionPeriodsPerRepeat*obj.repeats*k));
+                    [obj.signal(:, f1(k), obj.currIter,:,:), obj.sterr(:, f1(k), obj.currIter,:,:)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(k-1)+1:obj.detectionPeriodsPerRepeat*obj.repeats*k));
                 end
             end
             
             % Saving results in the Experiment parameters
-            S1 = squeeze(obj.signal(1, :, 1:obj.currIter));
-            S1sterr = squeeze(obj.sterr(1, :, 1:obj.currIter));
-            S2 = squeeze(obj.signal(2, :, 1:obj.currIter));
-            S2sterr = squeeze(obj.sterr(2, :, 1:obj.currIter));
+            S1 = squeeze(obj.signal(1, :, 1:obj.currIter,:,:));
+            S1sterr = squeeze(obj.sterr(1, :, 1:obj.currIter,:,:));
+            S2 = squeeze(obj.signal(2, :, 1:obj.currIter,:,:));
+            S2sterr = squeeze(obj.sterr(2, :, 1:obj.currIter,:,:));
             
             [value, sterr] = getRatioDistributionValues(obj, S1, S2, S1sterr, S2sterr);
             obj.signalParam.value = value;

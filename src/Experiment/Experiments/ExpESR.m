@@ -259,6 +259,7 @@ end
             end
             obj.prepareInternal(S)
             
+            
             % Set parameter, for saving
             obj.mCurrentXAxisParam.value = obj.frequency;
         end
@@ -271,6 +272,7 @@ end
             %%% Devices (+ Tracker)
             pg = getObjByName(PulseGenerator.NAME);
             spcm = getObjByName(Spcm.NAME);
+            
             tracker = getObjByName(Tracker.NAME);
             if isempty(tracker); throwBaseObjException(Tracker.Name); end
             if obj.nChannels == 1
