@@ -31,7 +31,6 @@ classdef (Abstract) Daq < EventSender
         analogInputMaxVoltage     % numeric scalar
         analogInputMinVoltage     % numeric scalar
     end
-    
 
     %% --------- Abstract API to be implemented by subclasses ---------
     methods (Abstract)
