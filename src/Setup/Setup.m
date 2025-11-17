@@ -40,10 +40,24 @@ classdef Setup < handle
             end
             
             obj.displaySetupMode();	% Show the user what Setup is being run
-                        
-            %%%% init important objects %%%%
             PulseGenerator.create(jsonStruct.pulseGenerator);
-            Daq.create(jsonStruct.Daq);
+
+            %%%% init important objects %%%%
+            %%%% NEW: instantiate correct DAQ class %%%%
+            if isfield(jsonStruct, 'Daq')
+                switch lower(jsonStruct.Daq.type)
+                    case 'nidaq'
+                        daq.create(jsonStruct.Daq);
+                    case 'arduinodaq'
+                        daq.create(jsonStruct.Daq);
+                    otherwise
+                        error('Unknown Daq type: %s', jsonStruct.Daq.type);
+                end
+            else
+                error('No Daq field found in JSON.');
+            end
+
+            
             Spcm.create(jsonStruct.spcm);
             ImageScanResult.init;
             StageScanner.init;

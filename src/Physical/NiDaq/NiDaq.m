@@ -1,4 +1,4 @@
-classdef NiDaq < EventSender
+classdef NiDaq < Daq
     %NiDaq Summary of this class goes here
     %   Detailed explanation goes here
     
@@ -34,8 +34,7 @@ classdef NiDaq < EventSender
     end
     properties (Constant)
         NAME = 'NiDaq';
-        UNITS = ' V'; % The space is for the GUI.
-        
+        UNITS = ' V';
         EVENT_NIDAQ_RESET = 'Ni_Daq_reset';
     end
     
@@ -43,11 +42,11 @@ classdef NiDaq < EventSender
     
     methods %(Access = protected)
         function obj = NiDaq(deviceName, dummyMode)
-            obj@EventSender(NiDaq.NAME);
+            obj@Daq(NiDaq.NAME);
             obj.init(deviceName, dummyMode)
         end
     end
-    methods (Access = protected)
+    methods %(Access = protected)
         function init(obj, deviceName, dummyModeBoolean)
             % Internal channels that are being used by someone
             obj.registerChannel('100MHzTimebase', obj.CHANNEL_100MHZ)
@@ -179,7 +178,7 @@ classdef NiDaq < EventSender
         end % func registerChannel
     end
     
-    methods (Access = protected)
+    methods (Access = public)
         function index = getIndexFromChannelOrName(obj, channelOrChannelName)
             if channelOrChannelName(1) == '_'
                 % This is a virtual channel. We need to get the index of
@@ -236,7 +235,7 @@ classdef NiDaq < EventSender
     %%% end (Initializtion block)   
     
     %% Read & write
-    methods
+    methods (Access = public)
         function task = prepareVoltageInputTask(obj, channel, terminalConfig)
             % We might want to read continuously, so we need a seperate
             % function for creating the channel
@@ -847,7 +846,7 @@ classdef NiDaq < EventSender
         
     end
     
-    methods (Access = protected)
+    methods% (Access = protected)
         function checkError(obj, status)
             % Checks for DAQ errors according to the status and sends an error event.
             if status ~= 0

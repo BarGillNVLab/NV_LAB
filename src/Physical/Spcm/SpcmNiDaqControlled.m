@@ -30,6 +30,15 @@ classdef SpcmNiDaqControlled < Spcm & NiDaqControlled
         niDaqGateChannelName % GATE
         niDaqCountChannelName % SPCM
         niDaqPgChannelName % PG
+
+%         added by LION
+        % Scalar counting path (software-gated)
+        useScalarCounting = true;    % turn on robust scalar mode
+        spcmCtrNumber = 0;           % which counter we bind for scalar reads (Ctr0 by default)
+
+        % Physical PFI string for SPCM input (e.g., 'PFI5') for scalar path
+        spcmCountsPFI = '';          % set in constructor from niDaqCountsChannel
+
     end
     
     properties (Constant, Hidden)
@@ -243,6 +252,7 @@ classdef SpcmNiDaqControlled < Spcm & NiDaqControlled
             daq = getObjByName(NiDaq.NAME);
             daq.endTask(obj.counterExpTask);
         end
+
     %%% End (by PulseGenerator) %%%
     end
     
@@ -296,6 +306,7 @@ classdef SpcmNiDaqControlled < Spcm & NiDaqControlled
             % edge counting with a pause trigger. This means that we need to
             % add a 0 in the beginning of the read vector, and then caculate
             % the difference between pairs of readings.
+            % OLD code:
             if ~exist('countsLast', 'var')
                 countsLast = 0;
             end
@@ -305,7 +316,6 @@ classdef SpcmNiDaqControlled < Spcm & NiDaqControlled
             countsLast = countsAccum(end);
         end
     end
-    
     %%%
     methods % DAQ function
         function onNiDaqReset(obj, niDaq)
