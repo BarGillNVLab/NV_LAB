@@ -1,384 +1,622 @@
 classdef MyRioDaq < Daq
-    %MyRioDaq Class for interfacing with NI myRIO 1900.
-    %   This class provides a common interface for the myRIO, similar to NiDaq.
-    %   It requires the "MATLAB Support Package for NI myRIO".
-    %   You will need to fill in the myRIO-specific commands in the methods.
+    %MyRioDaq Class for interfacing with NI myRIO 1900 using MATLAB DAQ interface.
+    %   Inherits from the base Daq class and implements myRIO-specific interactions.
+    %   Requires the "MATLAB Support Package for NI myRIO".
 
-    properties
-        % myRIO-specific properties can be defined here if needed.
-        % For example, default voltage ranges if they differ or are configurable.
-        % myRioObject % Handle to the myRIO object created by the support package
+    properties (Access = protected)
+        % Handle to the MATLAB DataAcquisition object for the myRIO
+        daqSession = []; 
+        % Store registered output channels to add them to the session just before writing
+        registeredOutputs = {}; % Cell array to store {channelId, minV, maxV}
+        % Store registered input channels to add them to the session just before reading
+        registeredInputs = {}; % Cell array to store {channelId, type} e.g. {'ai0', 'Voltage'} or {'dio1', 'Digital'}
     end
 
     properties (Constant)
         NAME = 'MyRioDaq'; % Unique name for this DAQ type
-        UNITS = ' V';      % Default units, can be adjusted
+        UNITS = ' V';      % Default units for display
+        EVENT_MYRIO_RESET = 'MyRio_Daq_reset'; % Event name for reset
         
-        % Define any myRIO-specific events if needed
-        EVENT_MYRIO_RESET = 'MyRio_Daq_reset'; 
+        % Define known voltage ranges based on datasheet (can be overridden by registration)
+        MXP_AI_MIN = 0;
+        MXP_AI_MAX = 5;
+        MXP_AO_MIN = 0;
+        MXP_AO_MAX = 5;
+        MSP_AI_MIN = -10;
+        MSP_AI_MAX = 10;
+        MSP_AO_MIN = -10;
+        MSP_AO_MAX = 10;
+        AUDIO_AI_MIN = -2.5;
+        AUDIO_AI_MAX = 2.5;
+        AUDIO_AO_MIN = -2.5; % Note: AC coupled, range is nominal
+        AUDIO_AO_MAX = 2.5;
     end
 
     %% Initialization %%
-    methods % Public access for the constructor
+    methods % Public constructor
         function obj = MyRioDaq(deviceName, dummyMode)
             %MyRioDaq Constructor
-            %   deviceName: String identifying the myRIO device (e.g., IP address or alias).
+            %   deviceName: String identifying the myRIO device (e.g., 'myRIO-1900-SERIAL' or alias).
             %   dummyMode: Logical to enable dummy mode.
             
-            % Call the Daq superclass constructor.
-            % The subclassName (MyRioDaq.NAME) is used by EventSender.
-            % dummyMode is passed to the Daq constructor.
+            % Call the Daq superclass constructor
             obj@Daq(deviceName, MyRioDaq.NAME, dummyMode);
             
-            % Call the myRIO-specific initialization.
-            % deviceName and dummyMode are already stored in obj by the Daq constructor.
+            % Initialize myRIO specific things
             obj.initMyRio(); 
         end
     end
     
     methods (Access = protected)
         function initMyRio(obj)
-            % initMyRio Initializes the myRIO device.
-            % This method is called by the MyRioDaq constructor.
+            % initMyRio Initializes the myRIO device connection using daq interface.
             
-            % Properties obj.deviceName and obj.dummyMode are inherited from Daq
-            % and set by the Daq constructor.
-
-            % Register common channels if any are inherently available or named
-            % by the myRIO support package by default.
-            % Example: Daq.m's initDaq registers '100MHzTimebase' and '100kHzTimebase'.
-            % If myRIO has similar fixed named resources accessible through your
-            % channel registration system, add them here.
-            % Otherwise, users will register all channels they need.
-            % obj.registerChannel('myRIO_Default_AI0', 'DefaultAnalogInput0');
-
+            % Clear any previously stored channels for this instance
+            obj.registeredOutputs = {};
+            obj.registeredInputs = {};
+            
             if ~obj.dummyMode
-                % TODO: Implement myRIO initialization logic here.
-                % This might involve:
-                % 1. Ensuring the MATLAB Support Package for NI myRIO is installed.
-                % 2. Creating a myRIO object using functions from the support package.
-                %    Example (hypothetical - check support package documentation):
-                %    try
-                %        obj.myRioObject = myrio(obj.deviceName); % or myrio() if only one connected
-                %        fprintf('myRIO device "%s" connected successfully.\n', obj.deviceName);
-                %    catch ME
-                %        obj.sendError(['MyRioDaq Error: Could not connect to myRIO device "' obj.deviceName '". ' ME.message]);
-                %        % Consider setting to dummyMode or rethrowing if critical
-                %        obj.dummyMode = true; 
-                %        fprintf('MyRioDaq: Falling back to dummy mode for device "%s".\n', obj.deviceName);
-                %    end
-                fprintf('MyRioDaq: Initializing device "%s". Implement actual hardware init.\n', obj.deviceName);
+                try
+                    % Release any previous session gracefully
+                    if ~isempty(obj.daqSession) && isvalid(obj.daqSession)
+                        release(obj.daqSession); % Use release for DAQ sessions
+                        delete(obj.daqSession);
+                        obj.daqSession = [];
+                        fprintf('MyRioDaq: Released previous session for "%s".\n', obj.deviceName);
+                    end
+                    
+                    % Create a new DataAcquisition session for NI devices.
+                    % If deviceName is specific and needed, use daq("ni", obj.deviceName)
+                    % For simplicity, assume deviceName matches what daq("ni") finds or is default.
+                    % Use daqlist("ni") to see available devices and IDs.
+                    fprintf('MyRioDaq: Attempting to create DAQ session for NI device: "%s"...\n', obj.deviceName);
+                    obj.daqSession = daq("ni", obj.deviceName); % Connect using the name from JSON/constructor
+                    
+                    if isempty(obj.daqSession)
+                       error('MyRioDaq:FailedToConnect', 'Could not create DAQ session. Check device connection and name.');
+                    end
+                    
+                    % Set a default rate, can be overridden later if needed for continuous ops
+                    obj.daqSession.Rate = 1000; % Default scans/sec, adjust as necessary
+                    
+                    fprintf('MyRioDaq: Successfully created DAQ session for device "%s".\n', obj.deviceName);
+                    
+                catch ME
+                    obj.sendError(sprintf('MyRioDaq Error: Failed to initialize session for device "%s". Error: %s', obj.deviceName, ME.message));
+                    % Fallback to dummy mode if connection fails
+                    warning('MyRioDaq: Connection failed, falling back to dummy mode for device "%s".', obj.deviceName);
+                    obj.dummyMode = true; 
+                    obj.daqSession = []; % Ensure session handle is empty
+                end
             else
                 fprintf('MyRioDaq: Initialized in dummy mode for device "%s".\n', obj.deviceName);
+                obj.daqSession = []; % Ensure session handle is empty in dummy mode
             end
         end
     end
 
     methods (Static)
+        % Static create method (aligns with framework if needed, but Daq.create handles the call)
         function create(myRioStruct)
-            %create Factory method for MyRioDaq objects.
-            %   myRioStruct: Struct with fields:
-            %                deviceName (required)
-            %                dummy (optional, logical)
-            
-            missingField = FactoryHelper.usualChecks(myRioStruct, {'deviceName'});
-            if ~isnan(missingField)
-                EventStation.anonymousError(...
-                    'MyRioDaq: Can''t find the reserved word "%s" in the myRioDaq struct', ...
-                    missingField);
-                return; % Or error out
-            end
-
-            if isfield(myRioStruct, 'dummy')
-                dummy = myRioStruct.dummy;
-            else
-                dummy = false;
-            end
-            
-            % This logic for getting/creating objects is part of your framework
-            obj = getObjByName(MyRioDaq.NAME); 
-            if ~isempty(obj) && isvalid(obj)
-                % If an object exists, re-initialize it (if your design supports this)
-                % This assumes MyRioDaq has an init method accessible for this,
-                % or that re-setting deviceName and dummyMode is sufficient.
-                % The current MyRioDaq constructor calls initMyRio, so creating
-                % a new one might be cleaner unless re-init is specifically designed.
-                % For simplicity, we'll follow the pattern that might involve
-                % creating a new one if Daq.create's feval path is taken.
-                % If getObjByName finds one, it might just be returned by Daq.create.
-                % If Daq.create calls obj.init(), that init needs to be public or accessible.
-                % Let's assume Daq.create handles this via feval for new objects.
-                fprintf('MyRioDaq: Re-using existing object for %s (further init if any is TBD by framework).\n', myRioStruct.deviceName);
-
-            else
-                 % Create it otherwise - this path is taken by Daq.create via feval
-                 % which calls the public MyRioDaq constructor.
-                 % The constructor then calls initMyRio.
-                 % This line is effectively a placeholder if Daq.create handles creation.
-                 % obj = MyRioDaq(myRioStruct.deviceName, dummy);
-                 % addBaseObject(obj); % This would be done by Daq.create
-                 fprintf('MyRioDaq: Static create called, new object creation handled by Daq.create via feval.\n');
-            end
+             missingField = FactoryHelper.usualChecks(myRioStruct, {'deviceName'});
+             if ~isnan(missingField)
+                 EventStation.anonymousError('MyRioDaq: Missing field: %s', missingField); return;
+             end
+             % Creation is typically handled by Daq.create -> feval(MyRioDaq, ...)
+             % This static method is mostly a placeholder for pattern consistency.
+             fprintf('MyRioDaq.create: Object creation is handled by Daq.create via feval.\n');
         end
     end
 
-    %% Channel Management (Mostly Inherited from Daq)
-    % registerChannel, getIndexFromChannelOrName, etc., are in Daq.m
-    % Ensure that the channel IDs and names used with registerChannel
-    % correspond to how the myRIO MATLAB API identifies its channels.
-    % Example: 'ai0', 'dio1', 'ConnectorA/dio1' etc.
+    %% Channel Management Override %%
+    % Override registerChannel to store channel info locally for session setup
+    methods
+        function registerChannel(obj, newChannelId, newChannelName, minValue, maxValue)
+            %registerChannel Registers a channel AND stores info for later session configuration.
+            %   newChannelId: Hardware ID (e.g., 'ao0', 'ai1', 'dio3')
+            %   newChannelName: User-friendly name (e.g., 'ControlSignal')
+            %   minValue: Minimum expected/allowed value (used for validation)
+            %   maxValue: Maximum expected/allowed value (used for validation)
 
-    %% Task Handling (Placeholders - myRIO API might be different)
-    % The concept of "Tasks" as in NI-DAQmx might not directly map to myRIO.
-    % myRIO operations might be more direct function calls for read/write.
-    % These methods are overridden from Daq.m which has DAQmx implementations.
+            % Call the parent's registerChannel first to handle checks and storage in channelArray
+            % Provide default min/max if not specified
+            if nargin < 5
+                maxValue = obj.DEFAULT_MAX_VOLTAGE; % Use Daq default
+            end
+            if nargin < 4
+                minValue = obj.DEFAULT_MIN_VOLTAGE; % Use Daq default
+            end
+            registerChannel@Daq(obj, newChannelId, newChannelName, minValue, maxValue);
+
+            % Now, store info locally based on channel type for session setup
+            if contains(newChannelId, 'ao', 'IgnoreCase', true) % Analog Output
+                obj.registeredOutputs{end+1, 1} = newChannelId;
+                obj.registeredOutputs{end, 2} = minValue;
+                obj.registeredOutputs{end, 3} = maxValue;
+                fprintf('MyRioDaq: Stored AO %s for later session config.\n', newChannelId);
+                
+            elseif contains(newChannelId, 'ai', 'IgnoreCase', true) % Analog Input
+                obj.registeredInputs{end+1, 1} = newChannelId;
+                obj.registeredInputs{end, 2} = 'Voltage'; % Assuming voltage measurement type
+                fprintf('MyRioDaq: Stored AI %s for later session config.\n', newChannelId);
+
+            elseif contains(newChannelId, 'dio', 'IgnoreCase', true) % Digital I/O
+                 obj.registeredInputs{end+1, 1} = newChannelId; % Store for input by default
+                 obj.registeredInputs{end, 2} = 'Digital'; 
+                 % Note: For output, we might add the channel just-in-time in writeDigital
+                 fprintf('MyRioDaq: Stored DIO %s for later session config (as input initially).\n', newChannelId);
+            else
+                 % Handle other types like counters ('ctr') if needed
+                 warning('MyRioDaq:registerChannel: Unknown channel type for ID "%s". Not stored for session.', newChannelId);
+            end
+        end
+    end
+    
+    %% Task Handling (Manages the daqSession object) %%
+    % These methods might be less relevant for simple foreground R/W using daq object
+    % but are kept for consistency with the Daq base class structure.
     methods (Access = protected)
         function task = createTask(obj)
-            %createTask Creates a DAQ "task" or prepares for an operation.
-            %   For myRIO, this might involve opening a session to a specific I/O type
-            %   or simply be a no-op if operations are stateless.
-            task = []; % Placeholder
-            if obj.dummyMode
-                % fprintf('MyRioDaq (dummy): Create Task\n');
-                return;
+            %createTask Returns the existing daqSession or initializes if needed.
+            if isempty(obj.daqSession) && ~obj.dummyMode
+                obj.initMyRio(); % Attempt to re-initialize if session is gone
             end
-            
-            % TODO: Implement myRIO-specific "task" creation or preparation.
-            % If myRIO uses simple read/write functions without a task concept,
-            % this might return a struct with configuration or just an empty handle.
-            fprintf('MyRioDaq: Create Task - Implement myRIO logic.\n');
-            % Example: task = struct('type', 'analogInput', 'channel', 'ai0');
-            % No status check shown here, add if myRIO API has one.
+            task = obj.daqSession; % Return the session handle
+            if obj.dummyMode
+                 % fprintf('MyRioDaq (dummy): Create Task (returns empty)\n');
+                 task = []; % Return empty for dummy mode consistency
+                 return;
+            end
+            fprintf('MyRioDaq: Create Task (returns session handle).\n');
         end
 
         function clearTask(obj, task)
-            %clearTask Clears a DAQ "task" or releases resources.
+            %clearTask Releases the DAQ session resources.
             if obj.dummyMode
                 % fprintf('MyRioDaq (dummy): Clear Task\n');
                 return;
             end
-
-            % TODO: Implement myRIO-specific "task" clearing or resource release.
-            fprintf('MyRioDaq: Clear Task for task type: %s - Implement myRIO logic.\n', class(task));
-            % No status check shown here, add if myRIO API has one.
+            
+            % Check if the passed task is the current session object
+            if ~isempty(obj.daqSession) && isvalid(obj.daqSession) && isequal(task, obj.daqSession)
+                 try
+                    fprintf('MyRioDaq: Releasing DAQ session for "%s".\n', obj.deviceName);
+                    release(obj.daqSession); % Use release for DAQ sessions
+                    delete(obj.daqSession);
+                 catch ME
+                    warning('MyRioDaq: Error releasing DAQ session: %s', ME.message);
+                 end
+                 obj.daqSession = []; % Clear the handle
+            elseif ~isempty(task) && isvalid(task) && isa(task, 'daq.ni.Session') % Handle case where a different valid session was passed
+                 warning('MyRioDaq:clearTask: Clearing a session handle different from the stored one.');
+                 try
+                    release(task);
+                    delete(task);
+                 catch ME
+                    warning('MyRioDaq: Error releasing passed DAQ session: %s', ME.message);
+                 end
+            else
+                 fprintf('MyRioDaq: Clear Task - No valid session to clear.\n');
+            end
         end
 
         function startTask(obj, task)
-            %startTask Starts a DAQ "task" or enables an operation.
+            %startTask Starts a background acquisition/generation if configured.
+            % For simple foreground read/write, this might be a no-op.
             if obj.dummyMode 
                 % fprintf('MyRioDaq (dummy): Start Task\n');
                 return; 
             end
             
-            % TODO: Implement myRIO-specific "task" starting.
-            % This might be relevant for continuous acquisitions.
-            fprintf('MyRioDaq: Start Task - Implement myRIO logic.\n');
-            % No status check shown here, add if myRIO API has one.
+            if ~isempty(task) && isvalid(task) && isa(task, 'daq.ni.Session')
+                if task.IsRunning
+                    fprintf('MyRioDaq: Task/Session is already running.\n');
+                    return;
+                end
+                % Check if channels are added, might be needed before start for background
+                if isempty(task.Channels)
+                   warning('MyRioDaq:startTask: No channels added to the session. Starting might have no effect.');
+                end
+                 try
+                    fprintf('MyRioDaq: Starting DAQ session (relevant for background ops).\n');
+                    start(task, "Duration", seconds(inf)); % Example for continuous background
+                    % Or startForeground(task) if that's the intended use here
+                 catch ME
+                     obj.sendError(sprintf('MyRioDaq Error: Failed to start session. Error: %s', ME.message));
+                 end
+            else
+                 warning('MyRioDaq:startTask: Invalid or empty session handle provided.');
+            end
         end
         
          function stopTask(obj, task)
-            %stopTask Stops a DAQ "task".
+            %stopTask Stops a background acquisition/generation.
             if obj.dummyMode
                 % fprintf('MyRioDaq (dummy): Stop Task\n');
                 return; 
             end
             
-            % TODO: Implement myRIO-specific "task" stopping.
-            fprintf('MyRioDaq: Stop Task - Implement myRIO logic.\n');
-            % No status check shown here, add if myRIO API has one.
-        end
+            if ~isempty(task) && isvalid(task) && isa(task, 'daq.ni.Session')
+                if task.IsRunning
+                    try
+                        fprintf('MyRioDaq: Stopping DAQ session.\n');
+                        stop(task);
+                    catch ME
+                        obj.sendError(sprintf('MyRioDaq Error: Failed to stop session. Error: %s', ME.message));
+                    end
+                else
+                     fprintf('MyRioDaq: Stop Task - Session was not running.\n');
+                end
+            else
+                 warning('MyRioDaq:stopTask: Invalid or empty session handle provided.');
+            end
+         end
 
         % endTask is inherited from Daq.m and calls stopTask then clearTask.
-        % So, implementing stopTask and clearTask correctly is key.
     end
 
-    %% Read & Write Operations (Placeholders)
+    %% Read & Write Operations %%
     methods
-        function voltage = readVoltage(obj, channelOrChannelName, numSampsPerChan, timeout)
-            %readVoltage Reads voltage from an analog input channel.
-            %   channelOrChannelName: Registered channel name or ID.
-            %   numSampsPerChan: (Optional) Number of samples. Default 1.
-            %   timeout: (Optional) Timeout in seconds. Default 1.
+        function writeVoltage(obj, channelOrChannelName, newVoltage)
+            %writeVoltage Writes a voltage to a registered analog output channel.
             
-            voltage = 0; % Default dummy value
-            if nargin < 3, numSampsPerChan = 1; end
-            % timeout is not used in dummy mode here, but could be.
+            % --- Get Registered Channel Info ---
+            try
+                idx = obj.getIndexFromChannelOrName(channelOrChannelName);
+                physicalChannelID = obj.getChannelFromIndex(idx); % Hardware ID, e.g., 'ao0'
+                minVal = obj.getChannelMinimumFromIndex(idx);     % Registered min voltage
+                maxVal = obj.getChannelMaximumFromIndex(idx);     % Registered max voltage
+            catch ME
+                obj.sendError(sprintf('MyRioDaq: Cannot write voltage. Channel "%s" not found or invalid. Error: %s', ...
+                                channelOrChannelName, ME.message));
+                return;
+            end
 
+            % --- Dummy Mode ---
             if obj.dummyMode
-                idx = obj.getIndexFromChannelOrName(channelOrChannelName); % To check if channel is registered
-                % Return a predictable dummy value, e.g., based on channel index or a fixed value
+                if newVoltage < minVal || newVoltage > maxVal
+                   fprintf('MyRioDaq (dummy): Warning - Voltage %.3f is outside registered range [%.2f, %.2f] for %s\n', ...
+                           newVoltage, minVal, maxVal, channelOrChannelName);
+                end
+                obj.dummyChannel(idx) = newVoltage; % Store dummy value
+                return;
+            end
+            
+            % --- Ensure DAQ Session ---
+             if isempty(obj.daqSession) || ~isvalid(obj.daqSession)
+                 obj.sendError(sprintf('MyRioDaq: No valid DAQ session for device %s. Cannot write voltage.', obj.deviceName));
+                 obj.initMyRio(); % Try to re-initialize
+                 if isempty(obj.daqSession) || ~isvalid(obj.daqSession)
+                     return; % Still no session, abort
+                 end
+             end
+
+            % --- Hardware Interaction ---
+            if newVoltage < minVal || newVoltage > maxVal
+                errMsg = sprintf('MyRioDaq: Voltage %.3f is outside registered range [%.2f, %.2f] for %s (ID: %s). Aborting write.', ...
+                                newVoltage, minVal, maxVal, channelOrChannelName, physicalChannelID);
+                obj.sendError(errMsg);
+                return; 
+            end
+
+            try
+                % --- Add Channel to Session (if not already added) ---
+                % Check if this specific channel ID is already in the session
+                chanExists = false;
+                for i = 1:length(obj.daqSession.Channels)
+                    % Channel IDs in session might include device name, need robust check
+                    if contains(obj.daqSession.Channels(i).ID, physicalChannelID) && ...
+                       strcmpi(obj.daqSession.Channels(i).MeasurementType, 'Voltage')
+                        chanExists = true;
+                        break;
+                    end
+                end
+                
+                if ~chanExists
+                    fprintf('MyRioDaq: Adding output channel %s to session.\n', physicalChannelID);
+                    % Use addoutput(session, channelID, measurementType)
+                    % Note: Range limits might be set here if API supports it, or rely on validation above.
+                    addoutput(obj.daqSession, physicalChannelID, 'Voltage'); 
+                end
+                % --- End Add Channel ---
+
+                % --- Perform Write ---
+                % Use write(session, data). Data should be a matrix [scans x channels].
+                % For single scan, single channel:
+                fprintf('MyRioDaq: Writing %.3f V to %s (ID: %s).\n', newVoltage, channelOrChannelName, physicalChannelID);
+                write(obj.daqSession, newVoltage); 
+                % --- End Perform Write ---
+                
+            catch ME
+                obj.sendError(sprintf('MyRioDaq Error: Failed to write voltage to %s (ID: %s). Error: %s', ...
+                                channelOrChannelName, physicalChannelID, ME.message));
+                obj.checkError(ME); % Pass the exception to checkError
+            end
+            % --- End Hardware Interaction ---
+        end 
+
+        function voltage = readVoltage(obj, channelOrChannelName, numSampsPerChan, timeout)
+            %readVoltage Reads voltage from a registered analog input channel.
+            %   numSampsPerChan (optional): Default 1.
+            %   timeout (optional): Default based on session Rate.
+            
+            voltage = 0; % Default return value
+            if nargin < 3, numSampsPerChan = 1; end
+            % Timeout argument might not be directly used in foreground read
+
+            % --- Get Registered Channel Info ---
+             try
+                idx = obj.getIndexFromChannelOrName(channelOrChannelName);
+                physicalChannelID = obj.getChannelFromIndex(idx); % Hardware ID, e.g., 'ai0'
+             catch ME
+                obj.sendError(sprintf('MyRioDaq: Cannot read voltage. Channel "%s" not found or invalid. Error: %s', ...
+                                channelOrChannelName, ME.message));
+                return;
+             end
+
+            % --- Dummy Mode ---
+            if obj.dummyMode
                 voltage = 0.5 + (idx/100); 
                 if numSampsPerChan > 1
                     voltage = repmat(voltage, 1, numSampsPerChan);
                 end
-                % fprintf('MyRioDaq (dummy): Read Voltage from %s -> %sV\n', channelOrChannelName, num2str(voltage(1)));
                 return;
             end
 
-            idx = obj.getIndexFromChannelOrName(channelOrChannelName);
-            physicalChannelID = obj.getChannelFromIndex(idx); % e.g., 'ai0', 'ConnectorA/ai1'
-            % minVal = obj.getChannelMinimumFromIndex(idx); % May be useful for scaling
-            % maxVal = obj.getChannelMaximumFromIndex(idx); % or error checking
+            % --- Ensure DAQ Session ---
+             if isempty(obj.daqSession) || ~isvalid(obj.daqSession)
+                 obj.sendError(sprintf('MyRioDaq: No valid DAQ session for device %s. Cannot read voltage.', obj.deviceName));
+                 obj.initMyRio(); % Try to re-initialize
+                 if isempty(obj.daqSession) || ~isvalid(obj.daqSession)
+                     return; % Still no session, abort
+                 end
+             end
+             
+            % --- Hardware Interaction ---
+            try
+                 % --- Add Channel to Session (if not already added) ---
+                 chanExists = false;
+                 for i = 1:length(obj.daqSession.Channels)
+                     if contains(obj.daqSession.Channels(i).ID, physicalChannelID) && ...
+                        strcmpi(obj.daqSession.Channels(i).MeasurementType, 'Voltage')
+                         chanExists = true;
+                         break;
+                     end
+                 end
+                 
+                 if ~chanExists
+                     fprintf('MyRioDaq: Adding input channel %s to session.\n', physicalChannelID);
+                     % Use addinput(session, channelID, measurementType)
+                     addinput(obj.daqSession, physicalChannelID, 'Voltage'); 
+                 end
+                 % --- End Add Channel ---
 
-            % TODO: Implement voltage reading using myRIO MATLAB API.
-            % Example (hypothetical - check support package for exact functions):
-            % Ensure obj.myRioObject is valid if you stored it.
-            % voltage = readAnalogVoltage(obj.myRioObject, physicalChannelID, numSampsPerChan);
-            % Or if it's single sample:
-            % if numSampsPerChan == 1
-            %    voltage = readAnalogInput(obj.myRioObject, physicalChannelID);
-            % else
-            %    % Handle multi-sample acquisition if API supports it directly
-            %    % or loop (less ideal for timed acquisitions)
-            %    voltage = zeros(1, numSampsPerChan);
-            %    for i = 1:numSampsPerChan
-            %        voltage(i) = readAnalogInput(obj.myRioObject, physicalChannelID);
-            %        % pause if needed
-            %    end
-            % end
-            fprintf('MyRioDaq: Read Voltage from %s (ID: %s) - Implement myRIO logic.\n', channelOrChannelName, physicalChannelID);
-            obj.checkError(0); % Replace 0 with actual status from myRIO API if available
-        end
+                 % --- Perform Read ---
+                 fprintf('MyRioDaq: Reading %d sample(s) from %s (ID: %s).\n', numSampsPerChan, channelOrChannelName, physicalChannelID);
+                 if numSampsPerChan == 1
+                     % read(session, "OutputFormat", "Matrix") returns [1 x numChannels]
+                     % read(session) returns a timetable by default
+                     data = read(obj.daqSession, "OutputFormat", "Matrix");
+                     % Find the column corresponding to our channel (might be tricky if multiple channels added)
+                     % Assuming only this channel was added for this read or it's the last one:
+                     voltage = data(1, end); % Get the value for the last added channel
+                 else
+                     % read(session, numScans) returns timetable
+                     % read(session, numScans, "OutputFormat", "Matrix") returns [numScans x numChannels]
+                     data = read(obj.daqSession, numSampsPerChan, "OutputFormat", "Matrix");
+                     % Assuming only this channel was added for this read or it's the last one:
+                     voltage = data(:, end)'; % Get the column for the last added channel, transpose to row vector
+                 end
+                 fprintf('MyRioDaq: Read value(s): %.3f ...\n', voltage(1));
+                 % --- End Perform Read ---
 
-        function writeVoltage(obj, channelOrChannelName, newVoltage)
-            %writeVoltage Writes a voltage to an analog output channel.
-            %   channelOrChannelName: Registered channel name or ID.
-            %   newVoltage: The voltage value to write.
-            
-            if obj.dummyMode
-                idx = obj.getIndexFromChannelOrName(channelOrChannelName); % To check registration
-                obj.dummyChannel(idx) = newVoltage; % Store dummy value if needed by framework
-                % fprintf('MyRioDaq (dummy): Write Voltage to %s -> %sV\n', channelOrChannelName, num2str(newVoltage));
-                return;
+            catch ME
+                 obj.sendError(sprintf('MyRioDaq Error: Failed to read voltage from %s (ID: %s). Error: %s', ...
+                                 channelOrChannelName, physicalChannelID, ME.message));
+                 obj.checkError(ME); % Pass the exception
+                 voltage = NaN; % Indicate error
             end
-            
-            idx = obj.getIndexFromChannelOrName(channelOrChannelName);
-            physicalChannelID = obj.getChannelFromIndex(idx);
-            % minVal = obj.getChannelMinimumFromIndex(idx); % For validation
-            % maxVal = obj.getChannelMaximumFromIndex(idx); % For validation
-            % if newVoltage < minVal || newVoltage > maxVal
-            %     obj.sendError(sprintf('Voltage %f out of range [%f, %f] for %s', newVoltage, minVal, maxVal, channelOrChannelName));
-            %     return;
-            % end
-
-            % TODO: Implement voltage writing using myRIO MATLAB API.
-            % Example (hypothetical):
-            % writeAnalogVoltage(obj.myRioObject, physicalChannelID, newVoltage);
-            % writeAnalogOutput(obj.myRioObject, physicalChannelID, newVoltage);
-            fprintf('MyRioDaq: Write Voltage to %s (ID: %s) value %f - Implement myRIO logic.\n', channelOrChannelName, physicalChannelID, newVoltage);
-            obj.checkError(0); % Replace with actual status
+            % --- End Hardware Interaction ---
         end
-
+        
         function digitalValue = readDigital(obj, channelOrChannelName)
-            %readDigital Reads the state of a digital input line/port.
-            digitalValue = false; % Default dummy value
+            %readDigital Reads the state of a registered digital input line.
+            digitalValue = false; % Default return value
 
-            if obj.dummyMode
+             % --- Get Registered Channel Info ---
+             try
                 idx = obj.getIndexFromChannelOrName(channelOrChannelName);
+                physicalChannelID = obj.getChannelFromIndex(idx); % Hardware ID, e.g., 'dio3'
+             catch ME
+                obj.sendError(sprintf('MyRioDaq: Cannot read digital. Channel "%s" not found or invalid. Error: %s', ...
+                                channelOrChannelName, ME.message));
+                return;
+             end
+
+            % --- Dummy Mode ---
+            if obj.dummyMode
                 % digitalValue = mod(idx,2) == 0; % Alternate dummy true/false
-                % fprintf('MyRioDaq (dummy): Read Digital from %s -> %d\n', channelOrChannelName, digitalValue);
                 return;
             end
 
-            idx = obj.getIndexFromChannelOrName(channelOrChannelName);
-            physicalChannelID = obj.getChannelFromIndex(idx);
+            % --- Ensure DAQ Session ---
+             if isempty(obj.daqSession) || ~isvalid(obj.daqSession)
+                 obj.sendError(sprintf('MyRioDaq: No valid DAQ session for device %s. Cannot read digital.', obj.deviceName));
+                 obj.initMyRio(); % Try to re-initialize
+                 if isempty(obj.daqSession) || ~isvalid(obj.daqSession)
+                     return; % Still no session, abort
+                 end
+             end
+             
+            % --- Hardware Interaction ---
+            try
+                 % --- Add Channel to Session (if not already added) ---
+                 chanExists = false;
+                 for i = 1:length(obj.daqSession.Channels)
+                     if contains(obj.daqSession.Channels(i).ID, physicalChannelID) && ...
+                        strcmpi(obj.daqSession.Channels(i).MeasurementType, 'Digital')
+                         chanExists = true;
+                         break;
+                     end
+                 end
+                 
+                 if ~chanExists
+                     fprintf('MyRioDaq: Adding digital input channel %s to session.\n', physicalChannelID);
+                     % Use addinput(session, channelID, measurementType)
+                     % For digital, measurement type is often 'Digital' or 'Port'
+                     addinput(obj.daqSession, physicalChannelID, 'Digital'); 
+                 end
+                 % --- End Add Channel ---
 
-            % TODO: Implement digital reading using myRIO MATLAB API.
-            % Example (hypothetical):
-            % digitalValue = readDigitalInput(obj.myRioObject, physicalChannelID); 
-            % Ensure this returns logical true/false or 0/1.
-            fprintf('MyRioDaq: Read Digital from %s (ID: %s) - Implement myRIO logic.\n', channelOrChannelName, physicalChannelID);
-            obj.checkError(0); % Replace with actual status
-            % digitalValue = logical(digitalValue); % Ensure logical
+                 % --- Perform Read ---
+                 fprintf('MyRioDaq: Reading digital from %s (ID: %s).\n', channelOrChannelName, physicalChannelID);
+                 % read(session) returns timetable; read(..., "Matrix") returns numeric
+                 data = read(obj.daqSession, "OutputFormat", "Matrix");
+                 % Assuming only this channel was added or it's the last one:
+                 digitalValue = logical(data(1, end)); % Convert numeric 0/1 to logical
+                 fprintf('MyRioDaq: Read value: %d\n', digitalValue);
+                 % --- End Perform Read ---
+
+            catch ME
+                 obj.sendError(sprintf('MyRioDaq Error: Failed to read digital from %s (ID: %s). Error: %s', ...
+                                 channelOrChannelName, physicalChannelID, ME.message));
+                 obj.checkError(ME); % Pass the exception
+            end
+            % --- End Hardware Interaction ---
         end
 
         function writeDigital(obj, channelOrChannelName, newLogicalValue)
-            %writeDigital Writes a state to a digital output line/port.
-            %   newLogicalValue: true or false (or 1 or 0).
+            %writeDigital Writes a state to a registered digital output line.
             
-            if obj.dummyMode
+             % --- Get Registered Channel Info ---
+             try
                 idx = obj.getIndexFromChannelOrName(channelOrChannelName);
-                obj.dummyChannel(idx) = newLogicalValue;
-                % fprintf('MyRioDaq (dummy): Write Digital to %s -> %d\n', channelOrChannelName, newLogicalValue);
+                physicalChannelID = obj.getChannelFromIndex(idx); % Hardware ID, e.g., 'dio3'
+             catch ME
+                obj.sendError(sprintf('MyRioDaq: Cannot write digital. Channel "%s" not found or invalid. Error: %s', ...
+                                channelOrChannelName, ME.message));
+                return;
+             end
+
+            % --- Dummy Mode ---
+            if obj.dummyMode
+                obj.dummyChannel(idx) = newLogicalValue; % Store dummy value
                 return;
             end
 
-            idx = obj.getIndexFromChannelOrName(channelOrChannelName);
-            physicalChannelID = obj.getChannelFromIndex(idx);
-            
-            % Ensure value is appropriate (e.g. 0 or 1 if API expects that)
-            % if islogical(newLogicalValue)
-            %     valueToWrite = uint8(newLogicalValue);
-            % else
-            %     valueToWrite = uint8(newLogicalValue ~= 0); % Treat non-zero as 1
-            % end
+            % --- Ensure DAQ Session ---
+             if isempty(obj.daqSession) || ~isvalid(obj.daqSession)
+                 obj.sendError(sprintf('MyRioDaq: No valid DAQ session for device %s. Cannot write digital.', obj.deviceName));
+                 obj.initMyRio(); % Try to re-initialize
+                 if isempty(obj.daqSession) || ~isvalid(obj.daqSession)
+                     return; % Still no session, abort
+                 end
+             end
+             
+            % --- Hardware Interaction ---
+            try
+                 % --- Add Channel to Session (if not already added) ---
+                 chanExists = false;
+                 for i = 1:length(obj.daqSession.Channels)
+                     if contains(obj.daqSession.Channels(i).ID, physicalChannelID) && ...
+                        strcmpi(obj.daqSession.Channels(i).MeasurementType, 'Digital')
+                         chanExists = true;
+                         break;
+                     end
+                 end
+                 
+                 if ~chanExists
+                     fprintf('MyRioDaq: Adding digital output channel %s to session.\n', physicalChannelID);
+                     % Use addoutput(session, channelID, measurementType)
+                     addoutput(obj.daqSession, physicalChannelID, 'Digital'); 
+                 end
+                 % --- End Add Channel ---
 
-            % TODO: Implement digital writing using myRIO MATLAB API.
-            % Example (hypothetical):
-            % writeDigitalOutput(obj.myRioObject, physicalChannelID, valueToWrite);
-            fprintf('MyRioDaq: Write Digital to %s (ID: %s) value %d - Implement myRIO logic.\n', channelOrChannelName, physicalChannelID, newLogicalValue);
-            obj.checkError(0); % Replace with actual status
-        end
-        
-        % TODO: Add methods for Counters, PWM, SPI, I2C etc. if needed,
-        % similar to NiDaq.m but using myRIO API.
-        % Example:
-        % function count = readCounter(obj, counterChannelName, ...)
-        % function setupPWM(obj, pwmChannelName, frequency, dutyCycle)
-        
-    end
+                 % --- Perform Write ---
+                 valueToWrite = double(logical(newLogicalValue)); % Ensure 0.0 or 1.0
+                 fprintf('MyRioDaq: Writing digital %d to %s (ID: %s).\n', valueToWrite, channelOrChannelName, physicalChannelID);
+                 write(obj.daqSession, valueToWrite); 
+                 % --- End Perform Write ---
 
-    %% Error Handling and Reset (Placeholders)
-    methods (Access = protected)
-        function checkError(obj, status)
-            %checkError Checks for errors from myRIO operations.
-            %   This method needs to be adapted to how the myRIO MATLAB API
-            %   reports errors (e.g., status codes, exceptions).
-            
-            % The parent Daq.checkError is DAQmx-specific.
-            % We override it here for myRIO.
-            
-            if obj.dummyMode, return; end % Don't check errors in dummy mode unless status is passed
-
-            % TODO: Implement myRIO-specific error checking.
-            % If myRIO functions throw MATLAB exceptions on error, this might just rethrow or log.
-            % If they return status codes:
-            if status ~= 0 % Assuming 0 means success, adapt as needed
-                % Hypothetical error string retrieval
-                % errorMessage = getMyRioErrorString(status); 
-                errorMessage = sprintf('myRIO specific error code: %d. See myRIO documentation.', status);
-                
-                % obj.reset(); % Consider if reset is appropriate on all errors.
-                obj.sendError(['MyRioDaq Error on device "' obj.deviceName '" ' num2str(status) ': ' errorMessage]);
-                % error('MyRioDaq:HardwareError', ['MyRioDaq Error on device "' obj.deviceName '" ' num2str(status) ': ' errorMessage]);
+            catch ME
+                 obj.sendError(sprintf('MyRioDaq Error: Failed to write digital to %s (ID: %s). Error: %s', ...
+                                 channelOrChannelName, physicalChannelID, ME.message));
+                 obj.checkError(ME); % Pass the exception
             end
+            % --- End Hardware Interaction ---
+        end
+
+    end % End Read/Write methods block
+
+    %% Error Handling and Reset %%
+    methods (Access = protected)
+        function checkError(obj, statusOrException)
+            %checkError Handles errors from DAQ operations.
+            % Can accept a status code (though less common with daq interface) or a MATLAB Exception object.
+            
+            if obj.dummyMode, return; end 
+
+            errorMessage = 'Unknown MyRioDaq Error';
+            if isnumeric(statusOrException) && statusOrException ~= 0
+                 % Handle numeric status codes if the API uses them
+                 errorMessage = sprintf('myRIO specific error code: %d.', statusOrException);
+            elseif isa(statusOrException, 'MException')
+                 % Handle MATLAB exceptions caught in try/catch blocks
+                 errorMessage = sprintf('Exception: %s (ID: %s)', statusOrException.message, statusOrException.identifier);
+                 % Log stack trace if needed: disp(getReport(statusOrException));
+            elseif statusOrException == 0 || (isa(statusOrException, 'MException') && isempty(statusOrException.message))
+                 % No error or empty exception, just return
+                 return;
+            end
+            
+            % Send error event via parent class method
+            obj.sendError(['MyRioDaq Error: ' errorMessage]);
+            
+            % Optional: Attempt reset on certain errors?
+            % if contains(errorMessage, 'Session invalidated', 'IgnoreCase', true)
+            %     warning('MyRioDaq: Session invalidated. Attempting reset.');
+            %     obj.reset();
+            % end
         end
 
         function reset(obj)
-            %reset Resets the myRIO device or specific I/O.
-            % The parent Daq.reset is DAQmxResetDevice.
-            
+            %reset Resets the connection by re-initializing the DAQ session.
             if obj.dummyMode
-                fprintf('MyRioDaq (dummy): Device "%s" reset.\n', obj.deviceName);
+                fprintf('MyRioDaq (dummy): Device "%s" reset called.\n', obj.deviceName);
                 obj.sendEvent(struct(MyRioDaq.EVENT_MYRIO_RESET, true));
                 return;
             end
 
-            % TODO: Implement myRIO-specific reset logic.
-            % This might involve a specific reset command from the support package,
-            % or re-initializing the connection (obj.initMyRio()).
-            % Some DAQ devices might not have a direct software "reset device" command
-            % equivalent to DAQmxResetDevice. It might be closing and reopening connection.
-            % Example (hypothetical):
-            % if ~isempty(obj.myRioObject) && isvalid(obj.myRioObject)
-            %    resetDevice(obj.myRioObject); 
-            %    fprintf('MyRioDaq: Device "%s" reset successfully.\n', obj.deviceName);
-            % else
-            %    fprintf('MyRioDaq: No valid myRIO object to reset for "%s". Re-initializing.\n', obj.deviceName);
-            %    % obj.initMyRio(); % Or simply nothing if connection is stateless
-            % end
-            fprintf('MyRioDaq: Device "%s" reset - Implement myRIO specific logic.\n', obj.deviceName);
-            obj.sendEvent(struct(MyRioDaq.EVENT_MYRIO_RESET, true)); % Send reset event
+            fprintf('MyRioDaq: Resetting connection for device "%s" by re-initializing session.\n', obj.deviceName);
+            % Re-initialization handles releasing old session and creating new one
+            obj.initMyRio(); 
+            
+            % Send reset event only if initialization was successful (or still in dummy mode)
+            if ~isempty(obj.daqSession) || obj.dummyMode
+                obj.sendEvent(struct(MyRioDaq.EVENT_MYRIO_RESET, true)); 
+            else
+                 warning('MyRioDaq: Reset failed to establish a new session.');
+            end
+        end
+    end % End protected methods block
+    
+    %% Cleanup on Deletion %%
+    methods (Access = public)
+        function delete(obj)
+            %delete Custom destructor to ensure DAQ session is released.
+            fprintf('MyRioDaq: Deleting object for device "%s".\n', obj.deviceName);
+            if ~isempty(obj.daqSession) && isvalid(obj.daqSession)
+                try
+                    fprintf('MyRioDaq: Releasing DAQ session during object deletion.\n');
+                    release(obj.daqSession);
+                    delete(obj.daqSession);
+                catch ME
+                    warning('MyRioDaq: Error releasing DAQ session during object deletion: %s', ME.message);
+                end
+            end
+            obj.daqSession = [];
+            % No need to call delete@Daq explicitly unless Daq has its own delete method
         end
     end
-end
+
+end % End classdef
