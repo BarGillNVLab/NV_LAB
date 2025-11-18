@@ -7,7 +7,7 @@ classdef Setup < handle
     end
     
     properties (Hidden, Constant)
-        NEEDED_FIELDS = {'lasers', 'Daq', 'pulseGenerator', 'setupNumber', 'spcm'}; % 'stages' deleted - Yachel
+        NEEDED_FIELDS = {'lasers', 'daq', 'pulseGenerator', 'setupNumber', 'spcm'}; % 'stages' deleted - Yachel
     end
     
     methods (Static)
@@ -45,11 +45,11 @@ classdef Setup < handle
             %%%% init important objects %%%%
             %%%% NEW: instantiate correct DAQ class %%%%
             if isfield(jsonStruct, 'Daq')
-                switch lower(jsonStruct.Daq.type)
+                switch lower(jsonStruct.daq.type)
                     case 'nidaq'
-                        daq.create(jsonStruct.Daq);
-                    case 'arduinodaq'
-                        daq.create(jsonStruct.Daq);
+                        daq.create(jsonStruct.daq);
+                    case 'arduinodac'
+                        daq.create(jsonStruct.daq);
                     otherwise
                         error('Unknown Daq type: %s', jsonStruct.Daq.type);
                 end

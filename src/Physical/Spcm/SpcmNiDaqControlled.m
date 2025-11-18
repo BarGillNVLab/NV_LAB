@@ -1,4 +1,4 @@
-classdef SpcmNiDaqControlled < Spcm & NiDaqControlled
+classdef SpcmNiDaqControlled < Spcm & Daq
     %SPCMNIDAQCONTROLLED spcm that is controlled by the NiDaq
     %   inherit NiDaqControlled, also inherit Spcm
     
