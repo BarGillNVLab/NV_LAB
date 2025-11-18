@@ -13,14 +13,14 @@ classdef (Abstract) Daq < EventSender
     %   • A STRICT factory Daq.create(cfg) – no backend guessing.
     %
     % Expected cfg for Daq.create:
-    %   cfg.type             : 'nidaq' | 'arduinodaq'          (REQUIRED)
+    %   cfg.type             : 'nidaq' | 'arduinodac'          (REQUIRED)
     %   cfg.deviceName       : e.g. 'Dev1' or 'COM6'           (REQUIRED)
     %   cfg.dummy            : logical                         (optional, default false)
-    %   cfg.outputMaxVoltage : 5 or 10                         (REQUIRED for 'arduinodaq')
+    %   cfg.outputMaxVoltage : 5 or 10                         (REQUIRED for 'arduinodac')
     %
     % Example:
     %   d1 = Daq.create(struct('type','nidaq','deviceName','Dev1'));
-    %   d2 = Daq.create(struct('type','arduinodaq','deviceName','COM6','outputMaxVoltage',10));
+    %   d2 = Daq.create(struct('type','arduinodac','deviceName','COM6','outputMaxVoltage',10));
 
     %% --------- Abstract properties to be provided by concrete backends ---------
     properties (Abstract)
@@ -143,21 +143,21 @@ classdef (Abstract) Daq < EventSender
         function obj = create(cfg)
             % Create a concrete DAQ from a config struct.
             % Required fields:
-            %   cfg.type        : 'nidaq' | 'arduinodaq'
+            %   cfg.type        : 'nidaq' | 'arduinodac'
             %   cfg.deviceName  : string/char
             % Optional:
             %   cfg.dummy       : logical (default false)
-            %   cfg.outputMaxVoltage : 5 or 10 (REQUIRED for arduinodaq)
+            %   cfg.outputMaxVoltage : 5 or 10 (REQUIRED for arduinodac)
             %
             % Example:
             %   d = Daq.create(struct('type','nidaq','deviceName','Dev1'));
-            %   a = Daq.create(struct('type','arduinodaq','deviceName','COM6','outputMaxVoltage',10));
+            %   a = Daq.create(struct('type','arduinodac','deviceName','COM6','outputMaxVoltage',10));
 
             if ~isstruct(cfg)
                 error('Daq:create:BadInput','Expected a struct with fields "type" and "deviceName".');
             end
             if ~isfield(cfg,'type') || isempty(cfg.type)
-                error('Daq:create:MissingType','Field "type" is required (e.g., "nidaq" or "arduinodaq").');
+                error('Daq:create:MissingType','Field "type" is required (e.g., "nidaq" or "arduinodac").');
             end
             if ~isfield(cfg,'deviceName') || isempty(cfg.deviceName)
                 error('Daq:create:MissingDevice','Field "deviceName" is required.');
@@ -169,7 +169,7 @@ classdef (Abstract) Daq < EventSender
                     % Constructor signature: NiDaq(deviceName, dummy)
                     obj = NiDaq(cfg.deviceName, dummy);
 
-                case "arduinodaq"
+                case "arduinodac"
                     % Constructor signature: ArduinoGP8413Daq(deviceName, outputMaxVoltage(5|10), dummy)
                     if ~isfield(cfg,'outputMaxVoltage') || isempty(cfg.outputMaxVoltage)
                         error('Daq:create:MissingOutputMaxVoltage', ...
@@ -180,7 +180,7 @@ classdef (Abstract) Daq < EventSender
                         error('Daq:create:BadOutputMaxVoltage', ...
                               '"outputMaxVoltage" must be 5 or 10 (got %s).', mat2str(omv));
                     end
-                    obj = ArduinoGP8413Daq(cfg.deviceName, omv, dummy);
+                    obj = ArduinoGP8413Dac(cfg.deviceName, omv, dummy);
 
                 otherwise
                     error('Daq:create:UnknownType','Unknown Daq type: %s', cfg.type);

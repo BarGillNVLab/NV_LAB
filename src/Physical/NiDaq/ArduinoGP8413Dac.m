@@ -1,4 +1,4 @@
-classdef ArduinoGP8413Daq < Daq
+classdef ArduinoGP8413Dac < Daq
     % --- (Properties are unchanged) ---
     %% --- Abstract Properties from Daq (Implemented) ---
     properties
