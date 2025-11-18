@@ -1,7 +1,10 @@
 classdef SpcmTimeTaggerControlledNiDaqEnabled < Spcm & NiDaqControlled
-    %SpcmTimeTaggerControlledNiDaqEnabled spcm that is controlled by the
-    % Time Tagger and enabled by NiDaq
-    
+    %SPCM + TimeTagger, gated by a DAQ
+    %   Counting is done by the TimeTagger.
+    %   The gate line is driven by a DAQ:
+    %     - NiDaq       (original behavior)
+    %     - ArduinoGP8413Daq (new: gate only)
+
     properties % Public!
         lastTimeG2 % The last G2 from a time
         lastTimeHist % The last hist from a time
@@ -157,99 +160,147 @@ classdef SpcmTimeTaggerControlledNiDaqEnabled < Spcm & NiDaqControlled
     end
     
     methods
-        function obj = SpcmTimeTaggerControlledNiDaqEnabled(name, niDaqGateChannel, countChannel, countChannelDelay, pgChannel, pgChannelDelay, count2Channel, count2ChannelDelay, laserChannel, laserChannelDelay, altCountChannel, altCountChannelDelay, niDaqAltGateChannel, conditionalFilter_triggerChannels, conditionalFilter_filterChannels, binWidth, nBins, startBin, endBin)
-            % Contructor, creates the object and registers the channels in
-            % the DAQ and Time Tagger.
-            obj@Spcm(name);
-            
-            daq = getObjByName(NiDaq.NAME);
-            niDaqGateChannelName = sprintf('%s_gate', name);
-            obj@NiDaqControlled({niDaqGateChannelName}, {niDaqGateChannel}, 0, 0);
-            obj.niDaqGateChannelName = niDaqGateChannelName;
-            
-            tt = getObjByName(TimeTaggerWrapper.NAME);
-            if isempty(tt)
-                tt = TimeTaggerWrapper.create();
-            end
-            
-            countChannelName = sprintf('%s_count', name);
-            obj.timeTaggerCount1ChannelName = countChannelName;
-            tt.registerChannel(countChannel, countChannelName, countChannelDelay)
-            tt.setTriggerLevel(countChannelName, 1) % Exceltias spcm only reaches 2V, so Trigger is 1
-            
-            pgChannelName = sprintf('%s_pg', name);
-            obj.timeTaggerPGChannelName = pgChannelName;
-            tt.registerChannel(pgChannel, pgChannelName, pgChannelDelay)
-            
-            if ~isempty(laserChannel)
-                laserChannelName= sprintf('%s_laser', name);
-                obj.timeTaggerLaserChannelName = laserChannelName;
-                obj.availableProperties.(obj.HAS_LIFETIME) = true;
-                tt.registerChannel(laserChannel, laserChannelName, laserChannelDelay)
-            end
-            if ~isempty(count2Channel)
-                count2ChannelName= sprintf('%s_count2', name);
-                obj.timeTaggerCount2ChannelName = count2ChannelName;
-                obj.availableProperties.(obj.HAS_G2) = true;
-                tt.registerChannel(count2Channel, count2ChannelName, count2ChannelDelay)
-                tt.setTriggerLevel(count2ChannelName, 1) % Exceltias spcm only reaches 2V, so Trigger is 1
-                
-                combinedCountName = sprintf('%s_combinedCount', name);
-                obj.combinedCountVirtualChannel = tt.createVirtualChannel('Combiner', {obj.timeTaggerCount1ChannelName, obj.timeTaggerCount2ChannelName});
-                tt.registerChannel(obj.combinedCountVirtualChannel.getChannel(), combinedCountName)
-                obj.timeTaggerCountCombinedChannelName = combinedCountName;
-                obj.currentCounter = 4;
-            end
-            if ~isempty(altCountChannel)
-                altCountChannelName= sprintf('%s_alt_count', name);
-                obj.timeTaggerAltCountChannelName = altCountChannelName;
-                obj.availableProperties.(obj.HAS_ALTCOUNT) = true;
-                tt.registerChannel(altCountChannel, altCountChannelName, altCountChannelDelay)
-                if ~isempty(niDaqAltGateChannel) % If it's empty, then it's manually switched on and off
-                    niDaqAltGateChannelName = sprintf('%s_alt_gate', name);
-                    obj.niDaqAltGateChannelName = niDaqAltGateChannelName;
-                    if ~isequal(niDaqAltGateChannel, niDaqGateChannel) % They might be the same channel!
-                        daq.registerChannel(niDaqAltGateChannel, niDaqAltGateChannelName);
-                    end
-                end
-            end
-            if ~isempty('conditionalFilter_triggerChannels')
-                tt.setConditionalFilter(conditionalFilter_triggerChannels, conditionalFilter_filterChannels);
-            end
-            
-            if ~isempty(binWidth)
-                obj.binWidth = binWidth;
-            else
-                obj.binWidth = obj.DEFAULT_HIST_BIN_WIDTH;
-            end
-            
-            if ~isempty(nBins)
-                obj.nBins = nBins;
-            else
-                obj.nBins = obj.DEFAULT_HIST_NUMBER_BINS;
-            end
-            
-            if ~isempty(startBin)
-                obj.startRead = startBin;
-                %obj.startRead = 27; % changed by Jonathan to avoid metal luminescence at short time scales. 15.6.2021
-            else
-                obj.startRead = 1;
-            end
-            
-            if ~isempty(endBin)
-                obj.endRead = endBin;
-            else
-                obj.endRead = obj.DEFAULT_HIST_NUMBER_BINS;
-            end
-            
-            obj.nScanPixels = 0;
-            obj.availableProperties.(obj.HAS_BINNING) = true;
-            obj.isEnabled = 0;
-            obj.tt = tt;
-            obj.daq = daq;
-            obj.startListeningTo(SpcmCounter.NAME);
+        function obj = SpcmTimeTaggerControlledNiDaqEnabled( ...
+            name, ...
+            niDaqGateChannel, ...
+            countChannel, countChannelDelay, ...
+            pgChannel, pgChannelDelay, ...
+            count2Channel, count2ChannelDelay, ...
+            laserChannel, laserChannelDelay, ...
+            altCountChannel, altCountChannelDelay, ...
+            niDaqAltGateChannel, ...
+            conditionalFilter_triggerChannels, ...
+            conditionalFilter_filterChannels, ...
+            binWidth, nBins, startBin, endBin)
+        % SpcmTimeTaggerControlledNiDaqEnabled constructor
+        % Wires:
+        %   - gate via NiDaq digital channel
+        %   - counts / PG / laser / alt / etc. via TimeTagger
+        
+        % ---------- Base classes ----------
+        obj@Spcm(name);
+        
+        % Get NiDaq object
+        daq = getObjByName(NiDaq.NAME);
+        if isempty(daq)
+            error('SpcmTimeTaggerControlledNiDaqEnabled:NoNiDaq', ...
+                  'NiDaq object not found. Make sure NiDaq.create(...) was called from JSON before SPCM creation.');
         end
         
+        % Register gate channel in NiDaqControlled
+        niDaqGateChannelName = sprintf('%s_gate', name);
+        obj@NiDaqControlled({niDaqGateChannelName}, {niDaqGateChannel}, 0, 0);
+        obj.niDaqGateChannelName = niDaqGateChannelName;
+        
+        % ---------- TimeTagger ----------
+        tt = getObjByName(TimeTaggerWrapper.NAME);
+        if isempty(tt)
+            tt = TimeTaggerWrapper.create();
+        end
+        obj.tt  = tt;
+        obj.daq = daq;
+        
+        % ---------- Main count channel ----------
+        countChannelName = sprintf('%s_count', name);
+        obj.timeTaggerCount1ChannelName = countChannelName;
+        tt.registerChannel(countChannel, countChannelName, countChannelDelay);
+        % Excelitas SPCM only reaches ~2 V, so trigger at 1 V
+        tt.setTriggerLevel(countChannelName, 1);
+        
+        % ---------- Pulse generator / PG marker channel ----------
+        pgChannelName = sprintf('%s_pg', name);
+        obj.timeTaggerPGChannelName = pgChannelName;
+        tt.registerChannel(pgChannel, pgChannelName, pgChannelDelay);
+        
+        % ---------- Optional laser sync channel (for lifetime) ----------
+        if ~isempty(laserChannel)
+            laserChannelName = sprintf('%s_laser', name);
+            obj.timeTaggerLaserChannelName = laserChannelName;
+            obj.availableProperties.(obj.HAS_LIFETIME) = true;
+            tt.registerChannel(laserChannel, laserChannelName, laserChannelDelay);
+        end
+        
+        % ---------- Optional second counter (SPCM 2 / G2) ----------
+        if ~isempty(count2Channel)
+            count2ChannelName = sprintf('%s_count2', name);
+            obj.timeTaggerCount2ChannelName = count2ChannelName;
+            obj.availableProperties.(obj.HAS_G2) = true;
+            
+            tt.registerChannel(count2Channel, count2ChannelName, count2ChannelDelay);
+            tt.setTriggerLevel(count2ChannelName, 1); % same 1 V trigger
+            
+            % Virtual combined count channel
+            combinedCountName = sprintf('%s_combinedCount', name);
+            obj.combinedCountVirtualChannel = tt.createVirtualChannel( ...
+                'Combiner', ...
+                {obj.timeTaggerCount1ChannelName, obj.timeTaggerCount2ChannelName});
+            tt.registerChannel(obj.combinedCountVirtualChannel.getChannel(), combinedCountName);
+            obj.timeTaggerCountCombinedChannelName = combinedCountName;
+            
+            % Default counter selection when 2 channels exist
+            obj.currentCounter = 4;  % "SPCM Sum" in COUNT_OPTIONS
+        end
+        
+        % ---------- Optional alternative counter ----------
+        if ~isempty(altCountChannel)
+            altCountChannelName = sprintf('%s_alt_count', name);
+            obj.timeTaggerAltCountChannelName = altCountChannelName;
+            obj.availableProperties.(obj.HAS_ALTCOUNT) = true;
+            tt.registerChannel(altCountChannel, altCountChannelName, altCountChannelDelay);
+            
+            % Optional separate NiDaq gate for alt counter
+            if ~isempty(niDaqAltGateChannel)
+                % Avoid double registration if it’s the same physical line as main gate
+                if ~isequal(niDaqAltGateChannel, niDaqGateChannel)
+                    niDaqAltGateChannelName = sprintf('%s_alt_gate', name);
+                    obj.niDaqAltGateChannelName = niDaqAltGateChannelName;
+                    daq.registerChannel(niDaqAltGateChannel, niDaqAltGateChannelName);
+                else
+                    % Same hardware line as main gate
+                    obj.niDaqAltGateChannelName = obj.niDaqGateChannelName;
+                end
+            end
+        end
+        
+        % ---------- Optional conditional filter on TimeTagger ----------
+        if ~isempty(conditionalFilter_triggerChannels)
+            tt.setConditionalFilter(conditionalFilter_triggerChannels, ...
+                                    conditionalFilter_filterChannels);
+        end
+        
+        % ---------- Histogram configuration ----------
+        if ~isempty(binWidth)
+            obj.binWidth = binWidth;
+        else
+            obj.binWidth = obj.DEFAULT_HIST_BIN_WIDTH;
+        end
+        
+        if ~isempty(nBins)
+            obj.nBins = nBins;
+        else
+            obj.nBins = obj.DEFAULT_HIST_NUMBER_BINS;
+        end
+        
+        if ~isempty(startBin)
+            obj.startRead = startBin;
+        else
+            obj.startRead = 1;
+        end
+        
+        if ~isempty(endBin)
+            obj.endRead = endBin;
+        else
+            obj.endRead = obj.DEFAULT_HIST_NUMBER_BINS;
+        end
+        
+        % ---------- Initial state ----------
+        obj.nScanPixels = 0;
+        obj.availableProperties.(obj.HAS_BINNING) = true;
+        obj.isEnabled   = false;
+        
+        % Start listening for SpcmCounter events (for reset, etc.)
+        obj.startListeningTo(SpcmCounter.NAME);
+    end
         function prepareReadByTime(obj, integrationTimeInSec)
             % Prepare the SPCM to a scan by timer, with integration time of
             % integrationTime in seconds.
@@ -810,6 +861,9 @@ classdef SpcmTimeTaggerControlledNiDaqEnabled < Spcm & NiDaqControlled
     
     methods
         function onNiDaqReset(obj, ~)
+            if ~isa(obj.daq,'NiDaq')
+                return;
+            end
             % This function jumps when the NiDaq resets
             if obj.isEnabled
                 % When reset, the NiDaq no longer remembers whether the
@@ -830,38 +884,73 @@ classdef SpcmTimeTaggerControlledNiDaqEnabled < Spcm & NiDaqControlled
   
     methods (Static)
         function spcmObj = create(spcmName, spcmStruct)
-            missingField = FactoryHelper.usualChecks(spcmStruct, SpcmTimeTaggerControlledNiDaqEnabled.NEEDED_FIELDS_SPCM_NIDAQ_TIMETAGGER);
-            if ~isnan(missingField)
-                EventStation.anonymousError(...
-                    'Can''t initialize NiDaq-controlled SPCM - required field "%s" was not found in initialization struct!', ...
-                    missingField);
-            end
-            gate = spcmStruct.nidaq_channel_gate;
-            counts = spcmStruct.timeTagger_channel_counts;
-            countsDelay = spcmStruct.timeTagger_channel_counts_delay;
-            pg = spcmStruct.timeTagger_channel_pg;
-            pgDelay = spcmStruct.timeTagger_channel_pg_delay;
-            
-            % We want to get either values set in json, or empty variables
-            % (which will be handled by the constructor):
-            spcmStruct = FactoryHelper.supplementStruct(spcmStruct, SpcmTimeTaggerControlledNiDaqEnabled.OPTIONAL_FIELDS_SPCM_NIDAQ_TIMETAGGER);
-            
-            counts2 = spcmStruct.timeTagger_channel_counts2;
-            counts2Delay = spcmStruct.timeTagger_channel_counts2_delay;
-            laser = spcmStruct.timeTagger_channel_laser;
-            laserDelay = spcmStruct.timeTagger_channel_laser_delay;
-            altCountChannel = spcmStruct.timeTagger_channel_alt_counts;
-            altCountChannelDelay = spcmStruct.timeTagger_channel_alt_counts_delay;
-            niDaqAltGateChannel = spcmStruct.nidaq_channel_alt_gate;
-            cf_triggerChannel = spcmStruct.timeTagger_conditionalFilter_trigger_channel;
-            cf_filterChannel = spcmStruct.timeTagger_conditionalFilter_filter_channel;
-            binWidth = spcmStruct.timeTagger_bin_width;
-            nBins = spcmStruct.timeTagger_number_bins;
-            startBin = spcmStruct.timeTagger_start_bin;
-            endBin = spcmStruct.timeTagger_end_bin;
-            spcmObj = SpcmTimeTaggerControlledNiDaqEnabled(spcmName, gate, counts, countsDelay, pg, pgDelay, counts2, counts2Delay, laser, laserDelay, altCountChannel, altCountChannelDelay, niDaqAltGateChannel, cf_triggerChannel, cf_filterChannel, binWidth, nBins, startBin, endBin);
+        %CREATE  Factory for TimeTagger-controlled SPCM with DAQ gate.
+        %
+        % Supports two JSON styles for the gate:
+        %   - Legacy NiDaq-specific:
+        %       "nidaq_channel_gate": "PFI4"
+        %   - Generic DAQ (for Arduino or NiDaq):
+        %       "daq_channel_gate": "d2"    % e.g. Arduino digital pin 2
+        %
+        % All other fields follow the original TimeTagger+NiDaq schema.
+
+        % ---------- 1. Normalize gate field (backward compatible) ----------
+        % If new generic key is used, copy it into nidaq_channel_gate so the
+        % existing validation & code path still work.
+        if ~isfield(spcmStruct, 'nidaq_channel_gate') && isfield(spcmStruct, 'daq_channel_gate')
+            spcmStruct.nidaq_channel_gate = spcmStruct.daq_channel_gate;
         end
-        
+
+        % ---------- 2. Check required fields ----------
+        missingField = FactoryHelper.usualChecks( ...
+            spcmStruct, ...
+            SpcmTimeTaggerControlledNiDaqEnabled.NEEDED_FIELDS_SPCM_NIDAQ_TIMETAGGER);
+
+        if ~isnan(missingField)
+            EventStation.anonymousError( ...
+                'Can''t initialize TimeTagger-controlled SPCM - required field "%s" was not found in initialization struct!', ...
+                missingField);
+        end
+
+        % ---------- 3. Extract mandatory parameters ----------
+        gate        = spcmStruct.nidaq_channel_gate;
+        counts      = spcmStruct.timeTagger_channel_counts;
+        countsDelay = spcmStruct.timeTagger_channel_counts_delay;
+        pg          = spcmStruct.timeTagger_channel_pg;
+        pgDelay     = spcmStruct.timeTagger_channel_pg_delay;
+
+        % ---------- 4. Fill optional fields with defaults if missing ----------
+        spcmStruct = FactoryHelper.supplementStruct( ...
+            spcmStruct, ...
+            SpcmTimeTaggerControlledNiDaqEnabled.OPTIONAL_FIELDS_SPCM_NIDAQ_TIMETAGGER);
+
+        counts2              = spcmStruct.timeTagger_channel_counts2;
+        counts2Delay         = spcmStruct.timeTagger_channel_counts2_delay;
+        laser                = spcmStruct.timeTagger_channel_laser;
+        laserDelay           = spcmStruct.timeTagger_channel_laser_delay;
+        altCountChannel      = spcmStruct.timeTagger_channel_alt_counts;
+        altCountChannelDelay = spcmStruct.timeTagger_channel_alt_counts_delay;
+        niDaqAltGateChannel  = spcmStruct.nidaq_channel_alt_gate;
+        cf_triggerChannel    = spcmStruct.timeTagger_conditionalFilter_trigger_channel;
+        cf_filterChannel     = spcmStruct.timeTagger_conditionalFilter_filter_channel;
+        binWidth             = spcmStruct.timeTagger_bin_width;
+        nBins                = spcmStruct.timeTagger_number_bins;
+        startBin             = spcmStruct.timeTagger_start_bin;
+        endBin               = spcmStruct.timeTagger_end_bin;
+
+        % ---------- 5. Construct the object ----------
+        spcmObj = SpcmTimeTaggerControlledNiDaqEnabled( ...
+            spcmName, ...
+            gate, ...
+            counts, countsDelay, ...
+            pg, pgDelay, ...
+            counts2, counts2Delay, ...
+            laser, laserDelay, ...
+            altCountChannel, altCountChannelDelay, ...
+            niDaqAltGateChannel, ...
+            cf_triggerChannel, cf_filterChannel, ...
+            binWidth, nBins, startBin, endBin);
+    end
         function OptimizeTimingSNR(hist, NV_index, BG_indices)
             for i=1:round(SpcmTimeTaggerControlledNiDaqEnabled.DEFAULT_HIST_NUMBER_BINS/10)
                 for j = i+1:SpcmTimeTaggerControlledNiDaqEnabled.DEFAULT_HIST_NUMBER_BINS

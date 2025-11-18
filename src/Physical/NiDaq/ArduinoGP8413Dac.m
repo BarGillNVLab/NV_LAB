@@ -17,6 +17,8 @@ classdef ArduinoGP8413Dac < Daq
         nChannels = 4
         outputMinVoltage = 0;
         outputMaxVoltage
+        digitalChannels   % cell array like {'d0','d1',...}
+        digitalPins       % numeric array holding the underlying Arduino pin index
     end
     
     properties (Constant, Hidden)
@@ -144,49 +146,96 @@ classdef ArduinoGP8413Dac < Daq
     %% --- Abstract Method Implementations (from Daq) ---
     methods
         function registerChannel(obj, newChannel, newChannelName, minValueOptional, maxValueOptional)
-            
-            chNum = sscanf(newChannel, 'ao%d');
-            if isempty(chNum) || chNum < 0 || chNum >= obj.nChannels
-                error('ArduinoGP8413Daq: Invalid channel "%s". Must be "ao0" to "ao%d".', ...
-                      newChannel, obj.nChannels - 1);
+        %REGISTERCHANNEL Register an analog (DAC) or digital channel.
+        %
+        % newChannel:
+        %   - 'ao0', 'ao1', ...  : GP8413 DAC channels
+        %   - 'd2', 'd3', ...    : Arduino digital pins (used e.g. as SPCM gate)
+        %
+        % newChannelName:
+        %   Logical name, e.g. 'greenLaserAOM', 'spcm_gate', etc.
+        %
+        % minValueOptional / maxValueOptional:
+        %   - For analog channels: range in volts (defaults to [outputMinVoltage, outputMaxVoltage])
+        %   - For digital channels: ignored, fixed to [0, 1].
+
+        % ---------- Decide if this is digital or analog ----------
+        isDigital = startsWith(newChannel, 'd', 'IgnoreCase', true);
+
+        if isDigital
+            % Digital channel: must be of the form 'dN'
+            pin = sscanf(newChannel(2:end), '%d');
+            if isempty(pin) || pin < 0
+                error('ArduinoGP8413Daq:BadDigitalChannel', ...
+                      'Digital channel "%s" must be of the form dN (e.g. "d2").', ...
+                      newChannel);
             end
-            
-            if exist('minValueOptional', 'var') && ~isempty(minValueOptional)
+
+            % Digital channels are treated as [0,1] logical.
+            minValue = 0;
+            maxValue = 1;
+
+        else
+            % Analog channel: we expect 'aoN'
+            if ~startsWith(newChannel, 'ao', 'IgnoreCase', true)
+                error('ArduinoGP8413Daq:BadAnalogChannel', ...
+                      'Analog channel "%s" must be of the form aoN (e.g. "ao0").', ...
+                      newChannel);
+            end
+
+            chNum = sscanf(newChannel(3:end), '%d');
+            if isempty(chNum) || chNum < 0 || chNum >= obj.nChannels
+                error('ArduinoGP8413Daq:BadAnalogChannelIndex', ...
+                      'Analog channel "%s" must be ao0..ao%d.', ...
+                      newChannel, obj.nChannels-1);
+            end
+
+            % Determine analog range
+            if exist('minValueOptional','var') && ~isempty(minValueOptional)
                 minValue = minValueOptional;
             else
-                minValue = obj.outputMinVoltage; % Use hardware min
+                minValue = obj.outputMinVoltage; % typically 0 V
             end
-            if exist('maxValueOptional', 'var') && ~isempty(maxValueOptional)
+            if exist('maxValueOptional','var') && ~isempty(maxValueOptional)
                 maxValue = maxValueOptional;
             else
-                maxValue = obj.outputMaxVoltage; % Use hardware max
+                % You MUST have a property outputMaxVoltage in this class
+                % set from the constructor (5 or 10 V).
+                maxValue = obj.outputMaxVoltage;
             end
-            
-            if ~isempty(obj.channelArray)
-                takenIndices = obj.channelArray(:, obj.IDX_CHANNEL);
-                channelAlreadyInIndexes = find(strcmp(takenIndices, newChannel));
-                if ~isempty(channelAlreadyInIndexes)
-                    channelIndex = channelAlreadyInIndexes(1);
-                    channelCapturedName = obj.getChannelNameFromIndex(channelIndex);
-                    if ~strcmp(newChannelName, channelCapturedName)
-                        errorTemplate = 'Can''t assign channel "%s" to "%s", as it has already been taken by "%s"!';
-                        errorMsg = sprintf(errorTemplate, newChannel, newChannelName, channelCapturedName);
-                        obj.sendError(errorMsg);
-                    else
-                        return
-                    end
-                end
-            end
-            
-            newIndex = size(obj.channelArray, 1) + 1;
-            obj.channelArray{newIndex, obj.IDX_CHANNEL} = newChannel;
-            obj.channelArray{newIndex, obj.IDX_CHANNEL_NAME} = newChannelName;
-            obj.channelArray{newIndex, obj.IDX_CHANNEL_MIN} = minValue;
-            obj.channelArray{newIndex, obj.IDX_CHANNEL_MAX} = maxValue;
-            
-            obj.dummyChannel(newIndex) = 0; % Default to 0V
         end
-        
+
+        % ---------- Check for duplicate hardware channel ----------
+        if ~isempty(obj.channelArray)
+            takenChannels = obj.channelArray(:, obj.IDX_CHANNEL);
+            alreadyIdx = find(strcmp(takenChannels, newChannel));
+            if ~isempty(alreadyIdx)
+                channelIndex = alreadyIdx(1);
+                existingName = obj.getChannelNameFromIndex(channelIndex);
+                if ~strcmp(newChannelName, existingName)
+                    % Same physical channel, different logical name -> error
+                    errorTemplate = ['Can''t assign channel "%s" to "%s", ', ...
+                                     'as it has already been taken by "%s"!'];
+                    errorMsg = sprintf(errorTemplate, newChannel, newChannelName, existingName);
+                    obj.sendError(errorMsg);
+                end
+                % If the name is the same, we just return (re-registering is fine)
+                return;
+            end
+        end
+
+        % ---------- Append to channelArray ----------
+        newIndex = size(obj.channelArray, 1) + 1;
+        obj.channelArray{newIndex, obj.IDX_CHANNEL}      = newChannel;
+        obj.channelArray{newIndex, obj.IDX_CHANNEL_NAME} = newChannelName;
+        obj.channelArray{newIndex, obj.IDX_CHANNEL_MIN}  = minValue;
+        obj.channelArray{newIndex, obj.IDX_CHANNEL_MAX}  = maxValue;
+
+        % Ensure dummyChannel is large enough
+        if numel(obj.dummyChannel) < newIndex
+            obj.dummyChannel(newIndex) = 0;
+        end
+    end
         function writeVoltage(obj, channelOrChannelName, newVoltage)
             idx = obj.getIndexFromChannelOrName(channelOrChannelName);
             chStr = obj.getChannelFromIndex(idx); 
@@ -247,21 +296,81 @@ classdef ArduinoGP8413Dac < Daq
                     errorMsg = sprintf('ArduinoGP8413Daq: Failed to reset serial port %s. Error: %s', ...
                                       obj.deviceName, ME.message);
                     obj.sendError(errorMsg);
-end
+                end
             end
             
             obj.sendEvent(struct(obj.EVENT_DAQR_RESET, true));
         end
         
-        function writeDigital(obj, ~, ~)
-            error('ArduinoGP8413Daq:NotSupported', ...
-                  'Digital write is not supported by this hardware (GP8413).');
+    function writeDigital(obj, channelOrChannelName, newLogicalValue)
+        % Simple digital output via Arduino.
+        % channelOrChannelName: e.g. 'd2' or a registered logical name.
+        %
+        % newLogicalValue: logical or 0/1 numeric.
+
+        if obj.dummyMode
+            % Just cache it in dummyChannel if you want; or ignore.
+            return;
         end
-        
-        function digitalValue = readDigital(obj, ~)
+
+        % Resolve logical name to channel string if needed
+        chStr = channelOrChannelName;
+        % If you want, you can re-use Daq.getIndexFromChannelOrName here,
+        % but for gate-only use we can also assume direct 'dN' naming.
+
+        if ~startsWith(chStr,'d','IgnoreCase',true)
+            error('ArduinoGP8413Daq:writeDigital', ...
+                  'Arduino digital lines must be named like "dN" (got "%s").', ...
+                  chStr);
+        end
+
+        pin = sscanf(chStr(2:end),'%d');
+        if isempty(pin)
+            error('ArduinoGP8413Daq:writeDigital', ...
+                  'Could not parse digital pin from "%s".', chStr);
+        end
+
+        v = logical(newLogicalValue);
+        cmd = sprintf('DSET %d %d\n', pin, v);
+        try
+            write(obj.serialObj, cmd, "char");
+        catch ME
+            error('ArduinoGP8413Daq:writeDigitalFailed', ...
+                  'Failed to write digital to Arduino: %s', ME.message);
+        end
+    end
+
+    function digitalValue = readDigital(obj, channelOrChannelName)
+        % Optional digital read; not strictly needed for SPCM gate,
+        % but we provide a simple implementation.
+        if obj.dummyMode
             digitalValue = false;
-            error('ArduinoGP8413Daq:NotSupported', ...
-                  'Digital read is not supported by this hardware (GP8413).');
+            return;
         end
+
+        chStr = channelOrChannelName;
+        if ~startsWith(chStr,'d','IgnoreCase',true)
+            error('ArduinoGP8413Daq:readDigital', ...
+                  'Arduino digital lines must be named like "dN" (got "%s").', ...
+                  chStr);
+        end
+
+        pin = sscanf(chStr(2:end),'%d');
+        if isempty(pin)
+            error('ArduinoGP8413Daq:readDigital', ...
+                  'Could not parse digital pin from "%s".', chStr);
+        end
+
+        cmd = sprintf('DGET %d\n', pin);
+        try
+            write(obj.serialObj, cmd, "char");
+            resp = strtrim(readline(obj.serialObj));
+            digitalValue = (str2double(resp) ~= 0);
+        catch ME
+            error('ArduinoGP8413Daq:readDigitalFailed', ...
+                  'Failed to read digital from Arduino: %s', ME.message);
+        end
+    end
+
     end
 end
