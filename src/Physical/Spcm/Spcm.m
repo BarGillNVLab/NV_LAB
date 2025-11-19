@@ -89,56 +89,107 @@ classdef (Abstract) Spcm < EventSender
 
     methods (Static)
         function create(spcmTypeStruct)
-            % Get all we need from json
+            % Validate minimal required fields
             missingField = FactoryHelper.usualChecks(spcmTypeStruct, Spcm.SPCM_NEEDED_FIELDS);
             if ~isnan(missingField)
-                EventStation.anonymousError('Can''t initialize SPCM - needed field "%s" was not found in initialization struct!', missingField);
+                EventStation.anonymousError( ...
+                    'Can''t initialize SPCM - needed field "%s" was not found in initialization struct!', ...
+                    missingField);
             end
-            
-            % Maybe there is already one
+    
+            % Check if SPCM object already exists
             obj = getObjByName(Spcm.NAME);
             if ~isempty(obj)
-                % Don't create one if another already exists!
-                warning('Another instance of the SPCM already exists')
-                return
+                warning('Another instance of the SPCM already exists');
+                return;
             end
-            
-            % Create new object
-            switch (lower(spcmTypeStruct.classname))
-                case 'nidaq'
+    
+            % ----------------------------
+            %   SELECT BACKEND BY JSON
+            % ----------------------------
+            classname = lower(string(spcmTypeStruct.classname));
+    
+            switch classname
+    
+                % ============================================
+                % 1. NI-DAQ HIGH LEVEL BACKEND (old behavior)
+                % ============================================
+                case "nidaq"
                     spcmObject = SpcmNiDaqControlled.create(Spcm.NAME, spcmTypeStruct);
-                case 'timetagger'
-                    spcmObject = SpcmTimeTaggerControlledNiDaqEnabled.create(Spcm.NAME, spcmTypeStruct);
-                case 'photodiodenidaq'
+    
+                % ============================================
+                % 2. TimeTagger + NI-DAQ (old behavior)
+                % ============================================
+                case "timetagger"
+                    spcmObject = SpcmTimeTaggerControlledNiDaqEnabled.create( ...
+                        Spcm.NAME, spcmTypeStruct);
+    
+                % ============================================
+                % 3. TimeTagger + Arduino Gate (NEW)
+                % ============================================
+                case "timetagger_arduino"
+                    spcmObject = SpcmTimeTaggerControlledArduinoDaqEnabled.create( ...
+                        Spcm.NAME, spcmTypeStruct);
+    
+                % ============================================
+                % 4. Photodiode (NI)
+                % ============================================
+                case "photodiodenidaq"
                     spcmObject = PhotoDiodeNiDaqControlled.create(Spcm.NAME, spcmTypeStruct);
-                case 'photodiodedigitizernidaq'
-                    spcmObject = PhotoDiodeDigitizerNiDaqControlled.create(Spcm.NAME, spcmTypeStruct);
-                case 'camera'
+    
+                % ============================================
+                % 5. Photodiode Digitizer (NI)
+                % ============================================
+                case "photodiodedigitizernidaq"
+                    spcmObject = PhotoDiodeDigitizerNiDaqControlled.create( ...
+                        Spcm.NAME, spcmTypeStruct);
+    
+                % ============================================
+                % 6. Camera Backends
+                % ============================================
+                case "camera"
                     spcmObject = CameraControlled.create(Spcm.NAME, spcmTypeStruct);
-                case 'dummy'
+    
+                % ============================================
+                % 7. Dummy SPCM
+                % ============================================
+                case "dummy"
                     spcmObject = SpcmDummy();
+    
+                % ============================================
+                % UNKNOWN TYPE
+                % ============================================
                 otherwise
-                    EventStation.anonymousError(...
+                    EventStation.anonymousError( ...
                         ['The requested SPCM classname ("%s") was not recognized.\n', ...
-                        'Please fix the .json file and try again.'], ...
+                         'Valid options: nidaq, timetagger, timetagger_arduino, ', ...
+                         'photodiodenidaq, photodiodedigitizernidaq, camera, dummy'], ...
                         spcmTypeStruct.classname);
             end
-            
-            % Create switch channel on the Pulse Generator for 'detector'
+    
+            % -------------------------------------
+            % CREATE THE SWITCH CHANNEL(S)
+            % -------------------------------------
             switchStruct = spcmTypeStruct.Switch;
-            if isfield(switchStruct, 'classname')  % just one channel
+    
+            if isfield(switchStruct, 'classname')
+                % Single switch
                 SwitchPgControlled.create(switchStruct.switchChannelName, switchStruct);
-            else                                   % for several channels
+            else
+                % Multiple switches
                 pgChannels = fieldnames(switchStruct);
                 for i = 1:numel(pgChannels)
                     singleSwitchStruct = switchStruct.(pgChannels{i});
                     SwitchPgControlled.create(singleSwitchStruct.switchChannelName, singleSwitchStruct);
                 end
             end
-            
-            % Add to object map
+    
+            % -------------------------------------
+            % REGISTER THE SPCM IN THE FRAMEWORK
+            % -------------------------------------
             addBaseObject(spcmObject);
         end
+
     end
     
     methods % Available properties    

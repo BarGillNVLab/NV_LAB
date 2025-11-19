@@ -2,202 +2,210 @@ classdef (Abstract) Daq < EventSender
     % Daq - Abstract base class + strict factory for DAQ backends.
     %
     % Subclasses MUST implement:
-    %   - registerChannel(obj, newChannel, newChannelName, minValueOptional, maxValueOptional)
-    %   - writeVoltage(obj, channelOrChannelName, newVoltage)
-    %   - readVoltage(obj, channelOrChannelName, varargin)
+    %   • registerChannel(obj, newChannel, newChannelName, minVal, maxVal)
+    %   • writeVoltage(obj, channelOrChannelName, newVoltage)
+    %   • readVoltage(obj, channelOrChannelName)
     %
-    % This base class provides:
-    %   • Shared channel table utilities (index/name/range accessors)
-    %   • Dummy-mode helpers (cache last written values)
-    %   • Optional digital I/O stubs (override in hardware subclasses)
-    %   • A STRICT factory Daq.create(cfg) – no backend guessing.
+    % This class defines:
+    %   • Shared channel table utilities (index/name/range)
+    %   • Dummy-mode helpers
+    %   • Optional digital I/O (default stubs)
+    %   • Strict factory Daq.create(cfg)
     %
-    % Expected cfg for Daq.create:
-    %   cfg.type             : 'nidaq' | 'arduinodac'          (REQUIRED)
-    %   cfg.deviceName       : e.g. 'Dev1' or 'COM6'           (REQUIRED)
-    %   cfg.dummy            : logical                         (optional, default false)
-    %   cfg.outputMaxVoltage : 5 or 10                         (REQUIRED for 'arduinodac')
-    %
-    % Example:
-    %   d1 = Daq.create(struct('type','nidaq','deviceName','Dev1'));
-    %   d2 = Daq.create(struct('type','arduinodac','deviceName','COM6','outputMaxVoltage',10));
 
-    %% --------- Abstract properties to be provided by concrete backends ---------
+    %% -------- Abstract properties implemented by concrete DAQs --------
     properties (Abstract)
-        dummyMode                 % logical, if true do not talk to hardware
-        dummyChannel              % numeric vector, caches last written values per registered channel
-        channelArray              % cell Nx4: {channel, name, min, max}
-        deviceName                % string/char identifying the hardware (e.g., 'Dev1', 'COM6', '/dev/ttyACM0')
-        analogInputMaxVoltage     % numeric scalar
-        analogInputMinVoltage     % numeric scalar
+        dummyMode                 % logical
+        dummyChannel              % numeric vector of last-written values
+        channelArray              % cell Nx4 {hardwareID, logicalName, min, max}
+        deviceName                % string identifying the hardware (Dev1, COM6, etc.)
+        analogInputMaxVoltage
+        analogInputMinVoltage
     end
 
-    %% --------- Abstract API to be implemented by subclasses ---------
+    %% -------- Constructor --------
+    methods
+        function obj = Daq(name)
+            % The EventSender constructor requires a name.
+            % DAQ subclasses call:  obj = obj@Daq('SomeName')
+            if nargin < 1
+                name = 'daq';
+            end
+            obj@EventSender(name);
+        end
+    end
+
+    %% -------- Abstract Interface --------
     methods (Abstract)
         registerChannel(obj, newChannel, newChannelName, minValueOptional, maxValueOptional)
         writeVoltage(obj, channelOrChannelName, newVoltage)
         voltage = readVoltage(obj, channelOrChannelName, varargin)
     end
 
-    %% --------- Shared channel utilities (work for both NI & Arduino) ---------
+    %% -------- Shared Channel Utilities --------
     methods
         function idx = getIndexFromChannelOrName(obj, channelOrChannelName)
-            % Locate a row in channelArray by its hardware channel or by its given name.
             if isempty(obj.channelArray)
-                error('Daq:ChannelTableEmpty','No channels registered in channelArray.');
+                error('Daq:ChannelTableEmpty', ...
+                    'No channels registered in channelArray.');
             end
-            channelOrChannelName = char(channelOrChannelName);
+            target = char(channelOrChannelName);
 
-            channelNames = obj.channelArray(:, 2);
-            channelIds   = obj.channelArray(:, 1);
+            names  = obj.channelArray(:,2);
+            ids    = obj.channelArray(:,1);
 
-            idx = find(strcmp(channelNames, channelOrChannelName), 1, 'first');
-            if ~isempty(idx); return; end
+            % Try by logical name
+            idx = find(strcmp(names, target), 1);
+            if ~isempty(idx), return; end
 
-            idx = find(strcmp(channelIds, channelOrChannelName), 1, 'first');
-            if ~isempty(idx); return; end
+            % Try by hardware ID
+            idx = find(strcmp(ids, target), 1);
+            if ~isempty(idx), return; end
 
-            error('Daq:ChannelNotFound','Channel or channel name "%s" not found.', channelOrChannelName);
+            error('Daq:ChannelNotFound', ...
+                  'Channel or channelName "%s" not found.', target);
         end
 
-        function name = getChannelNameFromIndex(obj, idx)
-            name = obj.channelArray{idx, 2};
+        function out = getChannelNameFromIndex(obj, idx)
+            out = obj.channelArray{idx,2};
         end
 
-        function chan = getChannelFromIndex(obj, idx)
-            chan = obj.channelArray{idx, 1};
+        function out = getChannelFromIndex(obj, idx)
+            out = obj.channelArray{idx,1};
         end
 
         function minVal = getChannelMinimumFromIndex(obj, idx)
-            minVal = obj.channelArray{idx, 3};
-            if ~isnumeric(minVal), minVal = str2double(minVal); end
-            if isnan(minVal), minVal = 0; end
+            minVal = obj.channelArray{idx,3};
+            if ~isnumeric(minVal)
+                minVal = str2double(minVal);
+            end
+            if isnan(minVal)
+                minVal = 0;
+            end
         end
 
         function maxVal = getChannelMaximumFromIndex(obj, idx)
-            maxVal = obj.channelArray{idx, 4};
-            if ~isnumeric(maxVal), maxVal = str2double(maxVal); end
-            if isnan(maxVal), maxVal = 1; end
+            maxVal = obj.channelArray{idx,4};
+            if ~isnumeric(maxVal)
+                maxVal = str2double(maxVal);
+            end
+            if isnan(maxVal)
+                maxVal = 1;
+            end
         end
 
         function [minVal, maxVal] = getChannelRange(obj, channelOrChannelName)
-            idx = obj.getIndexFromChannelOrName(channelOrChannelName);
-            minVal = obj.getChannelMinimumFromIndex(idx);
-            maxVal = obj.getChannelMaximumFromIndex(idx);
+            idx       = obj.getIndexFromChannelOrName(channelOrChannelName);
+            minVal    = obj.getChannelMinimumFromIndex(idx);
+            maxVal    = obj.getChannelMaximumFromIndex(idx);
         end
 
-        function setChannelDummyValue(obj, channelOrChannelName, value)
+        function setChannelDummyValue(obj, channelOrChannelName, val)
             idx = obj.getIndexFromChannelOrName(channelOrChannelName);
-            obj.dummyChannel(idx) = value;
+            obj.dummyChannel(idx) = val;
         end
 
-        function value = getChannelDummyValue(obj, channelOrChannelName)
+        function val = getChannelDummyValue(obj, channelOrChannelName)
             idx = obj.getIndexFromChannelOrName(channelOrChannelName);
-            value = obj.dummyChannel(idx);
+            val = obj.dummyChannel(idx);
         end
     end
 
-    %% --------- Optional digital I/O (stubs). Override in hardware backends if needed ---------
+    %% -------- Optional Digital I/O (Overridden by •NiDaq •Arduino) --------
     methods
-        function val = readDigital(obj, varargin) %#ok<INUSD>
-            warning('Daq:readDigital:NotImplemented','Digital read not implemented in base Daq.');
+        function val = readDigital(obj, varargin)
+            warning('Daq:readDigital:NotImplemented', ...
+                'Digital read not implemented for this backend.');
             val = false;
         end
 
-        function writeDigital(obj, varargin) %#ok<INUSD>
-            warning('Daq:writeDigital:NotImplemented','Digital write not implemented in base Daq.');
+        function writeDigital(obj, varargin)
+            warning('Daq:writeDigital:NotImplemented', ...
+                'Digital write not implemented for this backend.');
         end
     end
 
-    %% --------- Reset / error utilities (can be overridden by backends) ---------
+    %% -------- Reset / Error Handling --------
     methods
-        function reset(obj) %#ok<MANU>
-            % Default: no hardware-specific reset in base class.
-            fprintf('[Daq] Reset requested (override in subclass if needed).\n');
+        function reset(obj)
+            % Default behavior: no hardware reset (subclasses override)
+            fprintf('[Daq] reset() called — no hardware reset in base class.\n');
         end
 
-        function checkError(obj, status) %#ok<INUSD>
-            % Base helper: treat nonzero numeric status as error.
+        function checkError(obj, status)
             if isnumeric(status) && ~isscalar(status)
-                error('Daq:HardwareError','Non-scalar status returned from hardware.');
+                error('Daq:HardwareError', ...
+                      'Non-scalar hardware status returned.');
             end
             if isnumeric(status) && status ~= 0
-                error('Daq:HardwareError','Hardware returned error status: %d', status);
+                error('Daq:HardwareError', ...
+                      'Hardware returned error status %d', status);
             end
-            % Subclasses (e.g., NiDaq) should override this to query vendor error strings.
         end
     end
 
-    %% --------- Static helpers ---------
+    %% -------- Helper Tools --------
     methods (Static)
         function d = countDiff(counts)
-            % Edge-count overflow-safe diff (uint32 counters)
-            maxCounts = 2^32;
+            maxCnt = 2^32;
             d = diff(counts);
-            d(d < 0) = d(d < 0) + maxCounts;
+            d(d < 0) = d(d < 0) + maxCnt;
         end
     end
 
-    %% --------- STRICT factory (no backend guessing) ---------
+    %% -------- STRICT Factory --------
     methods (Static)
         function obj = create(cfg)
-            % Create a concrete DAQ from a config struct.
-            % Required fields:
-            %   cfg.type        : 'nidaq' | 'arduinodac'
-            %   cfg.deviceName  : string/char
-            % Optional:
-            %   cfg.dummy       : logical (default false)
-            %   cfg.outputMaxVoltage : 5 or 10 (REQUIRED for arduinodac)
-            %
-            % Example:
-            %   d = Daq.create(struct('type','nidaq','deviceName','Dev1'));
-            %   a = Daq.create(struct('type','arduinodac','deviceName','COM6','outputMaxVoltage',10));
-
             if ~isstruct(cfg)
-                error('Daq:create:BadInput','Expected a struct with fields "type" and "deviceName".');
+                error('Daq:create:BadInput', ...
+                      'Input must be a config struct.');
             end
-            if ~isfield(cfg,'type') || isempty(cfg.type)
-                error('Daq:create:MissingType','Field "type" is required (e.g., "nidaq" or "arduinodac").');
+
+            if ~isfield(cfg,'type')
+                error('Daq:create:MissingType', ...
+                      '"Daq.type" is required in JSON.');
             end
-            if ~isfield(cfg,'deviceName') || isempty(cfg.deviceName)
-                error('Daq:create:MissingDevice','Field "deviceName" is required.');
+            if ~isfield(cfg,'deviceName')
+                error('Daq:create:MissingDevice', ...
+                      '"deviceName" field is required in JSON.');
             end
+
             dummy = Daq.i_get(cfg,'dummy',false);
 
             switch lower(string(cfg.type))
+
                 case "nidaq"
-                    % Constructor signature: NiDaq(deviceName, dummy)
                     obj = NiDaq(cfg.deviceName, dummy);
 
                 case "arduinodac"
-                    % Constructor signature: ArduinoGP8413Daq(deviceName, outputMaxVoltage(5|10), dummy)
-                    if ~isfield(cfg,'outputMaxVoltage') || isempty(cfg.outputMaxVoltage)
+                    if ~isfield(cfg,'outputMaxVoltage')
                         error('Daq:create:MissingOutputMaxVoltage', ...
-                              'Arduino DAQ requires "outputMaxVoltage" (5 or 10).');
+                              'For ArduinoDAC specify outputMaxVoltage.');
                     end
-                    omv = cfg.outputMaxVoltage;
-                    if ~ismember(omv,[5 10])
-                        error('Daq:create:BadOutputMaxVoltage', ...
-                              '"outputMaxVoltage" must be 5 or 10 (got %s).', mat2str(omv));
-                    end
-                    obj = ArduinoGP8413Dac(cfg.deviceName, omv, dummy);
+                    maxV = cfg.outputMaxVoltage;
+                    obj  = ArduinoGP8413Dac(cfg.deviceName, maxV, dummy);
 
                 otherwise
-                    error('Daq:create:UnknownType','Unknown Daq type: %s', cfg.type);
+                    error('Daq:create:UnknownType', ...
+                          'Unknown Daq type "%s".', cfg.type);
             end
 
-            % Optional: register in your object system, if present.
+            % Register into global object system (if present)
             try
                 addBaseObject(obj);
             catch
-                % ignore if your framework doesn't use addBaseObject
+                % Ignore if not used
             end
         end
     end
 
     methods (Static, Access = private)
-        function v = i_get(s, f, def)
-            if isfield(s,f) && ~isempty(s.(f)), v = s.(f); else, v = def; end
+        function v = i_get(s, field, default)
+            if isfield(s,field) && ~isempty(s.(field))
+                v = s.(field);
+            else
+                v = default;
+            end
         end
     end
 end

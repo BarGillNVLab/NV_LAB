@@ -36,10 +36,10 @@ classdef ArduinoGP8413Dac < Daq
 
     %% --- Constructor & Factory ---
     methods
-        function obj = ArduinoGP8413Daq(port, outputMaxV, dummyMode)
+        function obj = ArduinoGP8413Dac(port, outputMaxV, dummyMode)
             % CONSTRUCTOR
-            obj@Daq(ArduinoGP8413Daq.NAME); % Call superclass constructor
-            
+            obj@Daq(ArduinoGP8413Dac.NAME);    
+
             if nargin < 3, dummyMode = false; end
             if nargin < 2
                 error('ArduinoGP8413Daq:MissingArg', ...

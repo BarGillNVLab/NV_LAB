@@ -44,12 +44,12 @@ classdef Setup < handle
 
             %%%% init important objects %%%%
             %%%% NEW: instantiate correct DAQ class %%%%
-            if isfield(jsonStruct, 'Daq')
+            if isfield(jsonStruct, 'daq')
                 switch lower(jsonStruct.daq.type)
                     case 'nidaq'
-                        daq.create(jsonStruct.daq);
+                        Daq.create(jsonStruct.daq);
                     case 'arduinodac'
-                        daq.create(jsonStruct.daq);
+                        Daq.create(jsonStruct.daq);
                     otherwise
                         error('Unknown Daq type: %s', jsonStruct.Daq.type);
                 end
