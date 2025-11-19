@@ -52,6 +52,9 @@ classdef SignalGenerator < BaseObject
         end
         
         function initialize(obj, SGstruct)
+            if ~iscell(SGstruct)
+                SGstruct ={SGstruct};
+            end
             obj.FGs = {};
             obj.AWGs = {};
             obj.FGchannels = {};
