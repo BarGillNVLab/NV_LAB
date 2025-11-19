@@ -26,6 +26,8 @@ classdef LaserSourcePhysicalFactory
                 case 'dummy'
                     laserPhysicalPart = LaserSourceDummy.create(partName, struct);
                     return
+                case 'pdl 810'
+                    laserPhysicalPart = LaserSourcePDL810.create(partName, struct);
                 case 'onefive katana 05'
                     laserPhysicalPart = LaserSourceOnefiveKatana05.create(partName, struct);
                     case 'onefive katana 08'
