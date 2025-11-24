@@ -34,9 +34,9 @@ classdef ClassECC < ClassStage
         
         stageName = 'Stage (Coarse) - ECC';
         axes = 'xyz';
-        posRangeLimit = [9000, 12000, 9000];     % Units set to microns.
+        posRangeLimit = [9000, 12000, 12000];     % Units set to microns.
         negRangeLimit = [-9000, -12000, -9000];  % Units set to microns.
-        posSoftRangeLimit = [9000, 12000, 9000]; % Default is same as physical limit.
+        posSoftRangeLimit = [9000, 12000, 12000]; % Default is same as physical limit.
         negSoftRangeLimit = [-9000, -12000, -9000]; % Default is same as physical limit.
         maxAmplitude = 45; % Max amplitude in volt
         maxFrequency = 3000; % Max frequency in Hz

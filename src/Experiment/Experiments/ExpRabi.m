@@ -188,7 +188,7 @@ classdef ExpRabi < Experiment
                         if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled')
                             [sig(1:2), sterr(1:2)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(k-1)+1:end));%obj.detectionPeriodsPerRepeat*obj.repeats*k));
                         else
-                            [sig(1:2), sterr(1:2)] = obj.processData(data);
+                            [sig(1:2, :, :), sterr(1:2, :, :)] = obj.processData(data);
                         end
                         
 %                         if obj.currIter > 2 && t == tau_perm(15)
@@ -202,8 +202,8 @@ classdef ExpRabi < Experiment
                             throw(ME);
                         end
                         
-                        obj.signal(:, t, obj.currIter) = sig;
-                        obj.sterr(:, t, obj.currIter) = sterr;
+                        obj.signal(:, t, obj.currIter, :, :) = sig;
+                        obj.sterr(:, t, obj.currIter, :, :) = sterr;
                         
                         success = true;
                         obj.currParamIter = obj.currParamIter + 1;

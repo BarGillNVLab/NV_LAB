@@ -186,7 +186,7 @@ classdef (Sealed) PulseStreamerNewClass < PulseGenerator
             %               only channels 0, 1 and 3 are on.
             
             % Set in Streamer
-            output = OutputState(channels,0,0);
+            output = OutputState(channels,obj.analogChannel0Value,obj.analogChannel1Value);
             obj.ps.constant(output);
             
             % Save state internally

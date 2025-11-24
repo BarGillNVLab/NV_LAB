@@ -65,7 +65,7 @@ classdef (Abstract) FrequencyGenerator < BaseObject
             if ~exist('keepOn', 'var')
                 keepOn = false;
             end
-            if isempty(keepOn); keepOn = false; end
+            if isempty(keepOn); keepOn = false;end
             obj.keepOn = keepOn;
                 
         end

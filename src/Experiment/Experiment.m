@@ -62,6 +62,8 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         countWithLifeTime = false;  % If the setup has lifetime measurement, sum the lifetime counts as the way to count.
         smallDelay = 0;
         
+        saveEachAverage = 0;        % if equal 1 saves each experiment signal and reference to a given directory
+        selpath = '';               % folder path for saving averages separatly
         balancedMeas = 0;           % logical. true when there is balbnced measurement in the setup - acquisition of the input laser in parallel to the signal
         inputConfig = 'auto';       % When using photodiode and not SPCM, to define the input configuration. options: 'norm', 'diff', or 'auto'. 'auto' mean 'diff' if avaliable and 'norm' otherwise.
         
@@ -603,6 +605,34 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                     err2warning(err)
                     break
                 end
+                if obj.saveEachAverage
+                    % for saving each average separately
+                    if isempty(obj.selpath)
+                        obj.selpath = uigetdir;
+                    end
+                    average_num = obj.currIter;
+                    tempSignal = squeeze(obj.signal(1,:,average_num,:,:));
+                    tempRef = squeeze(obj.signal(2,:,average_num,:,:));
+
+                    sigFileName = "signal_Average_" + num2str(average_num)+".mat";
+                    refFileName = "reference_Average_" + num2str(average_num)+".mat";
+                    fullFilePathSignal = fullfile(obj.selpath, sigFileName);
+                    fullFilePathReference = fullfile(obj.selpath, refFileName);
+                    save(fullFilePathSignal, 'tempSignal');
+                    save(fullFilePathReference, 'tempRef');
+                    fprintf('Current signal and reference have been saved');
+
+                end
+            end
+            if obj.saveEachAverage
+                all_avg = squeeze(mean(obj.signal, 3));
+                sig_avg = squeeze(all_avg(1,:,:,:));
+                ref_avg = squeeze(all_avg(2,:,:,:));
+                fullFilePath = fullfile(obj.selpath,{'average_signal.mat'; 'average_reference.mat'});
+                save(fullFilePath{1}, 'sig_avg');
+                save(fullFilePath{2}, 'ref_avg');
+                fprintf('all variables have been saved');
+                
             end
 
             if obj.restartAverageFlag
