@@ -226,8 +226,8 @@ classdef ArduinoGP8413Dac < Daq
 
         % ---------- Append to channelArray ----------
         newIndex = size(obj.channelArray, 1) + 1;
-        obj.channelArray{newIndex, obj.IDX_CHANNEL}      = newChannel;
-        obj.channelArray{newIndex, obj.IDX_CHANNEL_NAME} = newChannelName;
+        obj.channelArray{newIndex, obj.IDX_CHANNEL}      = newChannelName;
+        obj.channelArray{newIndex, obj.IDX_CHANNEL_NAME} = newChannel;
         obj.channelArray{newIndex, obj.IDX_CHANNEL_MIN}  = minValue;
         obj.channelArray{newIndex, obj.IDX_CHANNEL_MAX}  = maxValue;
 
@@ -236,9 +236,10 @@ classdef ArduinoGP8413Dac < Daq
             obj.dummyChannel(newIndex) = 0;
         end
     end
-        function writeVoltage(obj, channelOrChannelName, newVoltage)
+        
+    function writeVoltage(obj, channelOrChannelName, newVoltage)
             idx = obj.getIndexFromChannelOrName(channelOrChannelName);
-            chStr = obj.getChannelFromIndex(idx); 
+            chStr = obj.channelArray{idx, 2}; 
             achNum = sscanf(chStr, 'ao%d');
             
             if isempty(achNum)
@@ -312,9 +313,14 @@ classdef ArduinoGP8413Dac < Daq
             % Just cache it in dummyChannel if you want; or ignore.
             return;
         end
-
+        idx = obj.getIndexFromChannelOrName(channelOrChannelName);
+        chStr = obj.channelArray{idx, 2}; 
+        achNum = sscanf(chStr, 'd%d');
+        
+        if isempty(achNum)
+            error('ArduinoGP8413Daq: Channel "%s" is not a valid digital output.', chStr);
+        end
         % Resolve logical name to channel string if needed
-        chStr = channelOrChannelName;
         % If you want, you can re-use Daq.getIndexFromChannelOrName here,
         % but for gate-only use we can also assume direct 'dN' naming.
 

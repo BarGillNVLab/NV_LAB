@@ -65,7 +65,7 @@ classdef SpcmTimeTaggerControlledArduinoDaqEnabled < Spcm
         timeSyncMeasTask
 
         % Channels (logical names registered in TimeTagger / DAQ)
-        niDaqGateChannelName              % reused name, but actually Arduino gate logical name
+        DaqGateChannelName              % reused name, but actually Arduino gate logical name
         timeTaggerCount1ChannelName
         timeTaggerPGChannelName
 
@@ -76,7 +76,7 @@ classdef SpcmTimeTaggerControlledArduinoDaqEnabled < Spcm
 
         % Alt counter
         timeTaggerAltCountChannelName
-        niDaqAltGateChannelName           % reused name, but Arduino alt gate logical name
+        DaqAltGateChannelName           % reused name, but Arduino alt gate logical name
 
         % Pulsed lasers
         timeTaggerLaserChannelName
@@ -217,8 +217,8 @@ classdef SpcmTimeTaggerControlledArduinoDaqEnabled < Spcm
 
             % ---------- Register main gate channel ----------
             gatePhysical = arduinoGateChannel;
-            niDaqGateChannelName = sprintf('%s_gate', name); % logical name, reused field
-            obj.niDaqGateChannelName = niDaqGateChannelName;
+            DaqGateChannelName = sprintf('%s_gate', name); % logical name, reused field
+            obj.DaqGateChannelName = DaqGateChannelName;
 
             if ischar(gatePhysical) && strncmpi(gatePhysical, 'ao', 2)
                 obj.isGateAnalog = true;
@@ -229,7 +229,7 @@ classdef SpcmTimeTaggerControlledArduinoDaqEnabled < Spcm
                       'arduino_gate_channel must be "dN" or "aoN", got "%s"', gatePhysical);
             end
 
-            daq.registerChannel(gatePhysical, niDaqGateChannelName, 0, 5);
+            daq.registerChannel(gatePhysical, DaqGateChannelName, 0, 5);
 
             % ---------- TimeTagger ----------
             tt = getObjByName(TimeTaggerWrapper.NAME);
@@ -286,7 +286,7 @@ classdef SpcmTimeTaggerControlledArduinoDaqEnabled < Spcm
                 if ~isempty(arduinoAltGateChannel)
                     altGatePhysical = arduinoAltGateChannel;
                     altGateLogical  = sprintf('%s_alt_gate', name);
-                    obj.niDaqAltGateChannelName = altGateLogical;
+                    obj.DaqAltGateChannelName = altGateLogical;
 
                     if ischar(altGatePhysical) && strncmpi(altGatePhysical, 'ao', 2)
                         obj.isAltGateAnalog = true;
@@ -781,16 +781,16 @@ classdef SpcmTimeTaggerControlledArduinoDaqEnabled < Spcm
             if ~obj.bUseAltCounter
                 % Main gate
                 if obj.isGateAnalog
-                    obj.daq.writeVoltage(obj.niDaqGateChannelName, newBooleanValue * 5.0);
+                    obj.daq.writeVoltage(obj.DaqGateChannelName, 5.0);
                 else
-                    obj.daq.writeDigital(obj.niDaqGateChannelName, newBooleanValue);
+                    obj.daq.writeDigital(obj.DaqGateChannelName, newBooleanValue);
                 end
-            elseif ~isempty(obj.niDaqAltGateChannelName)
+            elseif ~isempty(obj.DaqAltGateChannelName)
                 % Alt gate
                 if obj.isAltGateAnalog
-                    obj.daq.writeVoltage(obj.niDaqAltGateChannelName, newBooleanValue * 5.0);
+                    obj.daq.writeVoltage(obj.DaqAltGateChannelName, newBooleanValue * 5.0);
                 else
-                    obj.daq.writeDigital(obj.niDaqAltGateChannelName, newBooleanValue);
+                    obj.daq.writeDigital(obj.DaqAltGateChannelName, newBooleanValue);
                 end
             end
 
