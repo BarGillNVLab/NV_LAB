@@ -245,8 +245,8 @@ classdef ArduinoGP8413Dac < Daq
                 error('ArduinoGP8413Daq: Channel "%s" is not a valid analog output.', chStr);
             end
             
-            minVal = obj.getChannelMinimumFromIndex(idx);
-            maxVal = obj.getChannelMaximumFromIndex(idx);
+            minVal = obj.outputMinVoltage;
+            maxVal = obj.outputMaxVoltage;
             
             v = min(max(newVoltage, minVal), maxVal);
             
@@ -371,6 +371,16 @@ classdef ArduinoGP8413Dac < Daq
                   'Failed to read digital from Arduino: %s', ME.message);
         end
     end
-
+        
     end
+    methods
+        function isDig = isDigitalChannel(obj, ch)
+            isDig = ischar(ch) && ~isempty(regexp(ch, '^d\d+$','once'));
+        end
+    
+        function isAn = isAnalogChannel(obj, ch)
+            isAn = ischar(ch) && ~isempty(regexp(ch, '^ao\d+$','once'));
+        end
+    end
+
 end

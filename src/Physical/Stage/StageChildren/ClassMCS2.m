@@ -8,7 +8,7 @@ classdef ClassMCS2 < ClassStage
         VALID_AXES = 'xyz';
         UNITS = 'um'
         
-        NEEDED_FIELDS = {'niDaqChannel', 'address'}
+        NEEDED_FIELDS = {'address'}
         
         COMM_DELAY = 0.005; % 5ms delay needed between consecutive commands sent to the controllers.
         
@@ -62,23 +62,31 @@ classdef ClassMCS2 < ClassStage
     
     methods (Static)
         function obj = create(stageStruct)
-            % Get instance constructor
+    
             missingField = FactoryHelper.usualChecks(stageStruct, ClassMCS2.NEEDED_FIELDS);
             if ~isnan(missingField)
                 EventStation.anonymousError(...
                     'Trying to create the MCS2 stage, needed field "%s" was missing. Aborting',...
                     missingField);
             end
-
-            niDaqChannel = stageStruct.niDaqChannel;
-            address = stageStruct.address;
+    
+            address     = stageStruct.address;
+            daqChannel  = stageStruct.daqChannel;
+    
+            % Ensure no duplicate object exists
             removeObjIfExists(ClassMCS2.NAME);
-            obj = ClassMCS2(address, niDaqChannel);
+    
+            % Construct stage
+            obj = ClassMCS2(address, daqChannel);
+    
+%             % *** THE LINE YOU WERE MISSING ***
+%             addBaseObject(obj);
         end
     end
+
     
     methods (Access = protected) % Protected Functions
-        function obj = ClassMCS2(address, niDaqChannel)
+        function obj = ClassMCS2(address, daqChannel)
             % name - string
             % availableAxes - string. example: "xyz"
             name = ClassMCS2.NAME;
@@ -102,22 +110,52 @@ classdef ClassMCS2 < ClassStage
             
 
             %%% workaround! needs to be finalized
-            counterChannel = niDaqChannel;
-
-            spcm = getObjByName(Spcm.NAME);
-            if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled'); tt = getObjByName(TimeTaggerWrapper.NAME); end;
-            if exist('tt', 'var')
-                if ~isempty(tt)
-                    tt.registerChannel(counterChannel, obj.name);
+            % Only register with DAQ if channel provided
+            if ~isempty(daqChannel)
+                spcm = getObjByName(Spcm.NAME);
+            
+                % TimeTagger controlling DAQ
+                if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled')
+                    tt = getObjByName(TimeTaggerWrapper.NAME);
+                    if ~isempty(tt)
+                        tt.registerChannel(daqChannel, obj.name);
+                    end
+            
+                else
+                    % Generic DAQ (NiDaq or Arduino)
+                    d = getObjByName(ArduinoGP8413Dac.NAME);
+                    if ~isempty(d)
+                        d.registerChannel(daqChannel, obj.name);
+                    end
                 end
-            else
-                % DAQ
-                daq = getObjByName(NiDaq.NAME);
-                daq.registerChannel(counterChannel, obj.name);
             end
+
 %             nidaq = getObjByName(NiDaq.NAME);
 %             nidaq.registerChannel(niDaqChannel, obj.name);
+            %%% --- Register counter channel (works with NI-DAQ OR Arduino-DAC) ---
+
+            counterChannel = daqChannel;
+                     
+            % Try Arduino DAC
+            arduino = getObjByName(ArduinoGP8413Dac.NAME);
+            if ~isempty(arduino)
+                arduino.registerChannel(counterChannel, obj.name);
+                Initialization(obj);
+                return;
+            end
             
+            % Try NI-DAQ
+            nidaq = getObjByName(NiDaq.NAME);
+            if ~isempty(nidaq)
+                nidaq.registerChannel(counterChannel, obj.name);
+                Initialization(obj);
+                return;
+            end
+            
+            % If none exist → real error
+            error('ClassMCS2:NoValidDaq', ...
+                  'ClassMCS2 requires either NI-DAQ or Arduino DAC. None found.');
+
             Initialization(obj);
         end
 
@@ -227,17 +265,49 @@ classdef ClassMCS2 < ClassStage
         end
         
         function LoadPiezoLibrary(obj)
-            % Loads the MCS2 dll file.
-
-            if ~libisloaded(obj.LIB_ALIAS)
-                % Only load dll if it wasn't loaded before.
-                shrlib = [obj.LIB_DLL_FOLDER, obj.LIB_DLL_FILENAME];
-                
-                loadlibrary(shrlib, @mcs2proto, 'alias', obj.LIB_ALIAS);
-                fprintf('MCS2 library loaded.\n');
+            % Loads the SmarAct MCS2 DLL, with fallback search
+            
+            if libisloaded(obj.LIB_ALIAS)
+                return;  % Already loaded
+            end
+        
+            % --- PRIMARY PATH (project) ---
+            primaryFolder = obj.LIB_DLL_FOLDER;
+            primaryDLL = fullfile(primaryFolder, obj.LIB_DLL_FILENAME);
+        
+            % --- SECONDARY PATH (Google Drive) ---
+            googleFolder = 'G:\My Drive\NV Lab\Control code\Drivers\SmarAct\MCS2\MCS2\SDK\Redistributable\DLL\x64';
+            googleDLL = fullfile(googleFolder, obj.LIB_DLL_FILENAME);
+        
+            % --- Pick correct existing path ---
+            if exist(primaryDLL, 'file')
+                dllFolder = primaryFolder;
+                dllFile = primaryDLL;
+            elseif exist(googleDLL, 'file')
+                dllFolder = googleFolder;
+                dllFile = googleDLL;
+            else
+                error( ...
+                    ['SmarAct MCS2 DLL could not be found in either location:\n' ...
+                     '1) %s\n2) %s\nFix the path or correct the JSON.'], ...
+                     primaryDLL, googleDLL);
+            end
+        
+            % --- Add folder to PATH (critical for dependent DLLs) ---
+            currentPath = getenv('PATH');
+            if ~contains(lower(currentPath), lower(dllFolder))
+                setenv('PATH', [dllFolder ';' currentPath]);
+            end
+        
+            % --- Load the DLL ---
+            try
+                loadlibrary(dllFile, @mcs2proto, 'alias', obj.LIB_ALIAS);
+                fprintf('MCS2 library loaded successfully from:\n%s\n', dllFile);
+            catch ME
+                error('Failed to load MCS2 DLL at:\n%s\n\nMATLAB error:\n%s', dllFile, ME.message);
             end
         end
-        
+
         function DisconnectController(obj)
             % This function disconnects the controller at the given ID
             SendCommand(obj, 'SA_CTL_Cancel', obj.id);
