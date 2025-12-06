@@ -246,6 +246,8 @@ classdef ExpRabi < Experiment
                         % added by rotem 18.4.21 %
                         if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled')
                             [sig(1:2), sterr(1:2)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(k-1)+1:end));%obj.detectionPeriodsPerRepeat*obj.repeats*k));
+                        elseif isa(spcm, 'SpcmTimeTaggerControlledArduinoDaqEnabled')
+                            [sig(1:2), sterr(1:2)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(k-1)+1:end));%obj.detectionPeriodsPerRepeat*obj.repeats*k));
                         else
                             [sig(1:2), sterr(1:2)] = obj.processData(data);
                         end
@@ -293,6 +295,10 @@ classdef ExpRabi < Experiment
                         try
                             % Maybe we need to manually clear the resources
                              if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled')
+                                 obj.restartAverageFlag = 1;
+                                 spcm.stopExperimentCount(obj.restartAverageFlag);
+                                 break;
+                             elseif isa(spcm, 'SpcmTimeTaggerControlledArduinoDaqEnabled')
                                  obj.restartAverageFlag = 1;
                                  spcm.stopExperimentCount(obj.restartAverageFlag);
                                  break;

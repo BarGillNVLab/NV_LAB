@@ -788,7 +788,7 @@ classdef SpcmTimeTaggerControlledArduinoDaqEnabled < Spcm
             elseif ~isempty(obj.DaqAltGateChannelName)
                 % Alt gate
                 if obj.isAltGateAnalog
-                    obj.daq.writeVoltage(obj.DaqAltGateChannelName, newBooleanValue * 5.0);
+                    obj.daq.writeVoltage(obj.DaqAltGateChannelName, 5.0);
                 else
                     obj.daq.writeDigital(obj.DaqAltGateChannelName, newBooleanValue);
                 end

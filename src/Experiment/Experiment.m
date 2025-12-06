@@ -136,8 +136,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
     end
     
     properties (Constant)
-        PATH_ALL_EXPERIMENTS = sprintf('%sControl code\\%s\\Experiment\\Experiments\\', ...
-            PathHelper.getPathToNvLab(), PathHelper.SetupMode);
+        PATH_ALL_EXPERIMENTS = 'C:\lab\NV_LAB\src\Experiment\Experiments\';
         PATH_CALIBRATIONS = [Experiment.PATH_ALL_EXPERIMENTS, 'Calibrations\']
         
         EVENT_DATA_UPDATED = 'dataUpdated'                  % when something changed regarding the plot (new data, change in x\y axis, change in x\y labels)
@@ -498,6 +497,8 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             obj.countWithLifeTime = newVal;
             spcm = getObjByName(Spcm.NAME);
             if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled') %currently available only with the timetagger
+                spcm.countWithLifeTime = obj.countWithLifeTime;
+            elseif isa(spcm, 'SpcmTimeTaggerControlledArduinoDaqEnabled')
                 spcm.countWithLifeTime = obj.countWithLifeTime;
             end
             obj.changeFlag = true; %use different method to compute counts
@@ -1103,6 +1104,8 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             s = spcm.readFromExperiment;
             if spcm.hasPhotodiode; spcm.stopExperimentCount; end
             if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled'); spcm.stopExperimentCount; end
+            if isa(spcm, 'SpcmTimeTaggerControlledArduinoDaqEnabled'); spcm.stopExperimentCount; end
+
         end
         
         function name = getFgName(FG)
@@ -1349,6 +1352,8 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             spcm = getObjByName(Spcm.NAME);
             if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled')
                spcm.clearExperimentRead();
+            elseif isa(spcm, 'SpcmTimeTaggerControlledArduinoDaqEnabled') %currently available only with the timetagger
+                spcm.clearExperimentRead();
             end
 
             % clear all sequences from the experiment object and AWG instrument
@@ -1614,6 +1619,8 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             
             if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled')   %just checking. added by rotem 29.1.21
                  numScans = obj.detectionPeriodsPerRepeat*obj.repeats*obj.getTotalNumberOfParams*obj.runsPerPerform; %obj.runsPerPerform added by yachel 29.6.21
+            elseif isa(spcm, 'SpcmTimeTaggerControlledArduinoDaqEnabled')
+                numScans = obj.detectionPeriodsPerRepeat*obj.repeats*obj.getTotalNumberOfParams*obj.runsPerPerform; %obj.runsPerPerform added by yachel 29.6.21
             end
             
             seqTime = pg.sequenceDuration() * 1e-6; % Multiplication in 1e-6 is for converting usecs to secs.

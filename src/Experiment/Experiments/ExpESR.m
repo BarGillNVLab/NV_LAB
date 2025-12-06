@@ -364,6 +364,9 @@ end
                         data = obj.getRawData(pg, spcm);
                         if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled')
                             [sig(1:2), sterr(1:2)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(1+~isSingleMeasurement)*(k-1)+1:end));%obj.detectionPeriodsPerRepeat*obj.repeats*k));
+                        elseif isa(spcm, 'SpcmTimeTaggerControlledArduinoDaqEnabled')
+                            [sig(1:2), sterr(1:2)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(1+~isSingleMeasurement)*(k-1)+1:end));%obj.detectionPeriodsPerRepeat*obj.repeats*k));
+                        
                         else
                             [sig(1:2), sterr(1:2)] = obj.processData(data);
                         end
@@ -374,6 +377,8 @@ end
                             obj.setFGparams('frequency');
                             data = obj.getRawData(pg, spcm);
                             if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled')
+                                [sig(3:4), sterr(3:4)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*2*(k-0.5)+1:end));%obj.detectionPeriodsPerRepeat*obj.repeats*k));
+                            elseif isa(spcm, 'SpcmTimeTaggerControlledArduinoDaqEnabled')
                                 [sig(3:4), sterr(3:4)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*2*(k-0.5)+1:end));%obj.detectionPeriodsPerRepeat*obj.repeats*k));
                             else
                                 [sig(3:4), sterr(3:4)] = obj.processData(data);
