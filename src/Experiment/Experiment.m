@@ -1179,7 +1179,8 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             s = (reshape(rawData, m, n))';
             
             timeNormalization = [obj.detectionDuration obj.referenceDetectionDuration]*musec;
-            if isprop(obj, 'weakDetectionDuration'), timeNormalization = [obj.weakDetectionDuration(obj.param_idx) obj.detectionDuration obj.referenceDetectionDuration]*musec; end
+%             if isprop(obj, 'weakDetectionDuration'), timeNormalization = [obj.weakDetectionDuration(obj.param_idx) obj.detectionDuration obj.referenceDetectionDuration]*musec; end
+            if isprop(obj, 'weakDetectionDuration'), timeNormalization = [obj.tauProbe obj.detectionDuration obj.referenceDetectionDuration]*musec; end
 
             if length(timeNormalization) ~= m &&  length(timeNormalization) > 1
                 if length(timeNormalization) == m/2
@@ -1208,8 +1209,14 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             sterr = ste(s(start:end, :));
 
             if ~spcm.hasPhotodiode
-                signal = signal./timeNormalization/kc;      %kcounts per second
-                sterr = sterr./timeNormalization/kc;        % convert to kcps
+                % added by Ittai for weak measurement without normalization
+                if isprop(obj, 'weakDetectionDuration')
+                    signal = signal./timeNormalization/kc;
+                    sterr = sterr./timeNormalization/kc;
+                else
+                    signal = signal./timeNormalization/kc;      %kcounts per second
+                    sterr = sterr./timeNormalization/kc;        % convert to kcps
+                end
             else
                 if spcm.detectionWithGI
                     timeNormalization = timeNormalization / musec;

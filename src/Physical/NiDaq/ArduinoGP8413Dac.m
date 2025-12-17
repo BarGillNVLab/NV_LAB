@@ -217,7 +217,7 @@ classdef ArduinoGP8413Dac < Daq
                     errorTemplate = ['Can''t assign channel "%s" to "%s", ', ...
                                      'as it has already been taken by "%s"!'];
                     errorMsg = sprintf(errorTemplate, newChannel, newChannelName, existingName);
-                    obj.sendError(errorMsg);
+%                     obj.sendError(errorMsg);
                 end
                 % If the name is the same, we just return (re-registering is fine)
                 return;
@@ -258,13 +258,16 @@ classdef ArduinoGP8413Dac < Daq
             end
             
             cmd = sprintf('SET %d %.4f\n', achNum, v);
-            try
-                write(obj.serialObj, cmd, "char");
-            catch ME
-                errorMsg = sprintf('ArduinoGP8413Daq: Failed to write to serial port %s. Error: %s', ...
-                                  obj.deviceName, ME.message);
-                obj.sendError(errorMsg);
-                obj.reset();
+            for run_try = 1:5
+                try
+                    write(obj.serialObj, cmd, "char");
+                    break
+                catch ME
+                    errorMsg = sprintf('ArduinoGP8413Daq: Failed to write to serial port %s. Error: %s', ...
+                                      obj.deviceName, ME.message);
+    %                 obj.sendError(errorMsg);
+                    obj.reset();
+                end
             end
         end
         
@@ -338,11 +341,14 @@ classdef ArduinoGP8413Dac < Daq
 
         v = logical(newLogicalValue);
         cmd = sprintf('DSET %d %d\n', pin, v);
-        try
-            write(obj.serialObj, cmd, "char");
-        catch ME
-            error('ArduinoGP8413Daq:writeDigitalFailed', ...
-                  'Failed to write digital to Arduino: %s', ME.message);
+        for run_try = 1:5
+            try
+                write(obj.serialObj, cmd, "char");
+            catch ME
+                error('ArduinoGP8413Daq:writeDigitalFailed', ...
+                      'Failed to write digital to Arduino: %s', ME.message);
+                obj.reset();
+            end
         end
     end
 

@@ -71,7 +71,7 @@ classdef ClassMCS2 < ClassStage
             end
     
             address     = stageStruct.address;
-            daqChannel  = stageStruct.daqChannel;
+            daqChannel  = stageStruct.Channel;
     
             % Ensure no duplicate object exists
             removeObjIfExists(ClassMCS2.NAME);
@@ -86,7 +86,7 @@ classdef ClassMCS2 < ClassStage
 
     
     methods (Access = protected) % Protected Functions
-        function obj = ClassMCS2(address, daqChannel)
+        function obj = ClassMCS2(address, Channel)
             % name - string
             % availableAxes - string. example: "xyz"
             name = ClassMCS2.NAME;
@@ -111,50 +111,29 @@ classdef ClassMCS2 < ClassStage
 
             %%% workaround! needs to be finalized
             % Only register with DAQ if channel provided
-            if ~isempty(daqChannel)
+            if ~isempty(Channel)
                 spcm = getObjByName(Spcm.NAME);
             
                 % TimeTagger controlling DAQ
                 if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled')
                     tt = getObjByName(TimeTaggerWrapper.NAME);
                     if ~isempty(tt)
-                        tt.registerChannel(daqChannel, obj.name);
+                        tt.registerChannel(Channel, obj.name);
                     end
-            
-                else
-                    % Generic DAQ (NiDaq or Arduino)
-                    d = getObjByName(ArduinoGP8413Dac.NAME);
+                elseif isa(spcm, 'SpcmTimeTaggerControlledArduinoDaqEnabled')
+                    d = getObjByName(TimeTaggerWrapper.NAME);
                     if ~isempty(d)
-                        d.registerChannel(daqChannel, obj.name);
+                        d.registerChannel(Channel, obj.name);
                     end
+                else
+                    error('ClassMCS2:NoValidDaq', ...
+                  'ClassMCS2 requires either NI-DAQ or Arduino DAC. None found.');
                 end
             end
 
 %             nidaq = getObjByName(NiDaq.NAME);
 %             nidaq.registerChannel(niDaqChannel, obj.name);
             %%% --- Register counter channel (works with NI-DAQ OR Arduino-DAC) ---
-
-            counterChannel = daqChannel;
-                     
-            % Try Arduino DAC
-            arduino = getObjByName(ArduinoGP8413Dac.NAME);
-            if ~isempty(arduino)
-                arduino.registerChannel(counterChannel, obj.name);
-                Initialization(obj);
-                return;
-            end
-            
-            % Try NI-DAQ
-            nidaq = getObjByName(NiDaq.NAME);
-            if ~isempty(nidaq)
-                nidaq.registerChannel(counterChannel, obj.name);
-                Initialization(obj);
-                return;
-            end
-            
-            % If none exist → real error
-            error('ClassMCS2:NoValidDaq', ...
-                  'ClassMCS2 requires either NI-DAQ or Arduino DAC. None found.');
 
             Initialization(obj);
         end
