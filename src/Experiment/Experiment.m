@@ -631,7 +631,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                         msignal = squeeze(obj.signalParam.value);
                         freqVector = obj.frequency;
                         obj.magneticImage = ODMRimaging(msignal, freqVector);
-                        obj.magneticImagehandle = obj.plotMagneticImage();
+%                         obj.magneticImagehandle = obj.plotMagneticImage();
                     case RAMSEY
                 end
             end

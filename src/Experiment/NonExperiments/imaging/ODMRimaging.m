@@ -126,25 +126,28 @@ function B_z = ODMRimaging( signal, frequency, I_helm)
     %     caxis([mean(mean(B_z))-range,mean(mean(B_z))+range]);
     
     elseif Npeak == 2
-    % [B_z] = MagneticFieldCalculate_Z(I_helm, theta,theta_x,theta_y,Delta);
-     [B_z] = MagneticFieldCalculate_Z(dips, I_helm, theta,theta_x,theta_y,Delta);
-    %  [m, n, ~] = size(Delta); MHz_TO_uT = 1/2.8 * 1e2;
-    % B_meas_NV = zeros(m, n, 1);
-    % B_meas_NV(:,:,1) = Delta(:,:);
-    % B_meas_NV(:,:,1) = (dips(:,:,2) - dips(:,:,1));
-     % B_meas_NV(:,:,1) = (dips(2) - dips(1));
-    % ZFS_(:,:,1) = ((dips(:,:,2) + dips(:,:,1)))./2;
-    % B_meas_NV = B_meas_NV/2 * MHz_TO_uT;                            % convert MHz to uT on each NV axis
-    
-    % B_z= B_meas_NV/cosd(54.74)   ;
-        pixSize = 0.030; %0.024;% 0.133;% in um
-        camBin = 3;
-        x = linspace(0,pixSize*pixBin*camBin*m,m);
-        y = linspace(0,pixSize*pixBin*camBin*n,n);
-    
+        B_meas_NV = zeros(m, n, 1);
+        % B_meas_NV(:,:,1) = Delta(:,:);
+        B_meas_NV(:,:,1) = (dips(:,:,2) - dips(:,:,1));
+        % [B_z] = MagneticFieldCalculate_Z(I_helm, theta,theta_x,theta_y,Delta);
+         [B_z] = MagneticFieldCalculate_Z(dips, I_helm, theta,theta_x,theta_y,Delta);
+        %  [m, n, ~] = size(Delta); MHz_TO_uT = 1/2.8 * 1e2;
+        % B_meas_NV = zeros(m, n, 1);
+        % B_meas_NV(:,:,1) = Delta(:,:);
+        % B_meas_NV(:,:,1) = (dips(:,:,2) - dips(:,:,1));
+         % B_meas_NV(:,:,1) = (dips(2) - dips(1));
+        % ZFS_(:,:,1) = ((dips(:,:,2) + dips(:,:,1)))./2;
+        % B_meas_NV = B_meas_NV/2 * MHz_TO_uT;                            % convert MHz to uT on each NV axis
+        
+        % B_z= B_meas_NV/cosd(54.74)   ;
+            pixSize = 0.030; %0.024;% 0.133;% in um
+            camBin = 3;
+            x = linspace(0,pixSize*pixBin*camBin*m,m);
+            y = linspace(0,pixSize*pixBin*camBin*n,n);
+        
 %         figure;
 %     %     imagesc(x,y,B_z);
-%         imagesc(B_z);
+        imagesc(B_z);
 %         sss=' ';
 % %         title(['B_z at',sss,Temperature,char(176),'C'],'fontsize',16,'fontname','Ariel');
 %         % xlabel(' \mum','fontsize',16, 'fontname','Ariel');
