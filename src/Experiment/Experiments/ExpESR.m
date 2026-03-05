@@ -53,11 +53,12 @@ classdef ExpESR < Experiment
             
             obj.parameterName = 'frequencies';
                         
-            obj.repeats = 100;
-            obj.averages = 1000;
+            obj.repeats = 25;
+            obj.averages = 1;
             
-            obj.frequency = obj.ZERO_FIELD_SPLITTING + (-100 : 2 : 100);     %in MHz
-            obj.amplitude = -25;        % dBm
+            %obj.frequency = obj.ZERO_FIELD_SPLITTING + (-100 : 2 : 100);     %in MHz
+            obj.frequency = [2785:3:2809,2810:0.5:2835,2838:6:2909,2910:0.5:2935,2938:3:2954]; %4A in Helmholtz z coil
+            obj.amplitude = -1;        % dBm
             obj.phase = 0;
             obj.mode = 'CW';            % Can only be 'CW' for now.
             obj.nChannels = 1;          % two channels can be added....
@@ -286,8 +287,8 @@ end
             M = obj.imageSize(1);
             N = obj.imageSize(2);
 
-            sig = zeros(n, M, N);
-            sterr = zeros(n, M, N);
+            sig = zeros(n, N, M);
+            sterr = zeros(n, N, M);
             
             % Run - Go over all frequencies, in random order
             for k = 1:len
