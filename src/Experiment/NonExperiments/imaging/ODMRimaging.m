@@ -1,6 +1,6 @@
 % Written by Bindu on 5th December 2022
 %% Load the ESR data and frequency saved in diskstation
-function B_z = ODMRimaging( signal, frequency, I_helm)
+function [B_z, params_all, FitDataMatrix] = ODMRimaging( signal, frequency, I_helm)
     % signal is a 3D matrix of size frequency, width, length and is thee
     % averaged ESR signal per pixel
     % frequency is the frequency vector of our experiment
@@ -9,7 +9,7 @@ function B_z = ODMRimaging( signal, frequency, I_helm)
     if ~exist("I_helm", "var")
         I_helm = [0,0,2]; 
     end
-    pixBin = 1;
+    pixBin = 2;
     y= (squeeze(mean(mean(signal(:,:,:),2),3)))';
     x=squeeze(frequency);
     figure(11);
@@ -48,6 +48,8 @@ function B_z = ODMRimaging( signal, frequency, I_helm)
     
     % fitting tha average ESR data 
     [yprime,params_all,resnorm,residual,conf] = lorentzian_fit(x,y,2,Nhyp,Npeak,p0);
+
+   
     
     %For two dips only
     % find the frequency where we get ESR dips to extract average magnetic
@@ -78,6 +80,7 @@ function B_z = ODMRimaging( signal, frequency, I_helm)
             dips(i,j,:) = FitDataMatrix(i,j).PARAMS(1:3:Num_params);
         end
     end
+     
     
     %% calculating the magnetic field:
     
@@ -145,9 +148,9 @@ function B_z = ODMRimaging( signal, frequency, I_helm)
             x = linspace(0,pixSize*pixBin*camBin*m,m);
             y = linspace(0,pixSize*pixBin*camBin*n,n);
         
-%         figure;
-%     %     imagesc(x,y,B_z);
-        imagesc(B_z);
+        figure;
+        imagesc(x,y,B_z);
+ 
 %         sss=' ';
 % %         title(['B_z at',sss,Temperature,char(176),'C'],'fontsize',16,'fontname','Ariel');
 %         % xlabel(' \mum','fontsize',16, 'fontname','Ariel');

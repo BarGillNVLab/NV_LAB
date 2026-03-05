@@ -262,6 +262,7 @@ classdef CameraBasler < Camera & EventSender
             end
             try
                 images = getdata(obj.vid, nframes);
+                images = flipud(images);
             catch ME
                 disp(getReport(ME));
             end

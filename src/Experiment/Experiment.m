@@ -36,7 +36,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         signalParam                 % ExpParameter in charge of Experiment (raw) result (which has name and value)
         signalParam2                % ditto, for second optional raw result
         averagesTimeStamp           % matrix of size ('averages'*6), time stamp for each end of an average, format(row): [year,month,day,hour,minute,second] 
-        magneticImage               % for imaging experiments
+        magneticImage = [];               % for imaging experiments
     end
     
     properties
@@ -78,6 +78,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         voltageHistogram            % struct with the measured voltage histogram
         voltageOffset = [];         % voltage offset point to generate from the DAQ to differential port.   
         imagingFlag = 0;            % available only for widefield setups, a flag to indicate an imaging request
+        twoDimageFlag = 0;
 
         % camera properties
 
@@ -498,12 +499,12 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         function size = get.imageSize(obj)
             spcm = getObjByName(Spcm.NAME);
             if spcm.hasCamera
-                [~, ~, width, hight] = spcm.camera.getROI;
+                [xstart, ystart, width, hight] = spcm.camera.getROI;
             else
                 width = 1;
                 hight = 1;
             end
-            size = [width, hight];
+            size = [hight, width, xstart, ystart];
         end
     end
     
@@ -1023,8 +1024,8 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             end
             data = dataParam.value;
             err = dataParam.sterr;
-            if isImageData; data = mean(mean(data, ndims(data)), ndims(data)-1); end
-            if isImageData; err = sqrt(sum(sum(err.^2, ndims(err)), ndims(err)-1)) / prod(obj.imageSize); end
+            if isImageData&&~obj.twoDimageFlag; data = mean(mean(data, ndims(data)), ndims(9mdata)-1); end
+            if isImageData&&~obj.twoDimageFlag; err = sqrt(sum(sum(err.^2, ndims(err)), ndims(err)-1)) / prod(obj.imageSize); end
             
             if isempty(data) || all(all(isnan(data)))
                 % Default plot
