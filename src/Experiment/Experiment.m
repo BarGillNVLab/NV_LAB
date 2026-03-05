@@ -1362,7 +1362,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 end
             end
             
-            s = reshape(rawData, [m, n, M, N]);
+            s = reshape(rawData, [m, n, N, M]);
             s = permute(s, [2, 1, 3, 4]);
             
             timeNormalization = [obj.detectionDuration obj.referenceDetectionDuration]*musec;
@@ -1534,8 +1534,8 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             % All Experiments need this.
             M = obj.imageSize(1);
             N = obj.imageSize(2);
-            obj.signal = zeros(obj.detectionPeriodsPerRepeat * obj.runsPerPerform, obj.getTotalNumberOfParams, obj.averages, M, N);
-            obj.sterr = zeros(obj.detectionPeriodsPerRepeat * obj.runsPerPerform, obj.getTotalNumberOfParams, obj.averages, M, N);
+            obj.signal = zeros(obj.detectionPeriodsPerRepeat * obj.runsPerPerform, obj.getTotalNumberOfParams, obj.averages, N, M);
+            obj.sterr = zeros(obj.detectionPeriodsPerRepeat * obj.runsPerPerform, obj.getTotalNumberOfParams, obj.averages, N, M);
             
             obj.signalParam.value = [];
             obj.signalParam2.value = [];
@@ -1632,8 +1632,8 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             spcm = getObjByName(Spcm.NAME);
             if isempty(spcm); throwBaseObjException(Spcm.Name); end
             if spcm.hasCamera
-                obj.imagingFlag = input('Enter 1 if you want an image, 0 otherwise: ');
-                %obj.imagingFlag=1;
+%                 obj.imagingFlag = input('Enter 1 if you want an image, 0 otherwise: ');
+                obj.imagingFlag=0;
                 delay = spcm.camera.DELAY_BETWEEN_TRIGGERS;
                 S.addDelayAfterDetection(delay, 'greenLaser');
             end  
