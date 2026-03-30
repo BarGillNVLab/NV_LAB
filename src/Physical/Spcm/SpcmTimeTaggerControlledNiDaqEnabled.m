@@ -1,3 +1,4 @@
+
 classdef SpcmTimeTaggerControlledNiDaqEnabled < Spcm & NiDaqControlled
     %SPCM + TimeTagger, gated by a DAQ
     %   Counting is done by the TimeTagger.
@@ -61,7 +62,7 @@ classdef SpcmTimeTaggerControlledNiDaqEnabled < Spcm & NiDaqControlled
         timeSyncMeasTask
         
         % Channels
-        niDaqGateChannelName
+        DaqGateChannelName
         timeTaggerCount1ChannelName
         timeTaggerPGChannelName
         
@@ -72,7 +73,7 @@ classdef SpcmTimeTaggerControlledNiDaqEnabled < Spcm & NiDaqControlled
         
         % Alt counter
         timeTaggerAltCountChannelName
-        niDaqAltGateChannelName
+        DaqAltGateChannelName
         
         % Pulsed lasers
         timeTaggerLaserChannelName % For pulsed lasers
@@ -91,8 +92,8 @@ classdef SpcmTimeTaggerControlledNiDaqEnabled < Spcm & NiDaqControlled
     end
     
     properties (Constant, Hidden)
-        NEEDED_FIELDS_SPCM_NIDAQ_TIMETAGGER = {'nidaq_channel_gate', 'timeTagger_channel_counts', 'timeTagger_channel_counts_delay', 'timeTagger_channel_pg', 'timeTagger_channel_pg_delay'};
-        OPTIONAL_FIELDS_SPCM_NIDAQ_TIMETAGGER = {'nidaq_channel_alt_gate', 'timeTagger_channel_counts2', 'timeTagger_channel_counts2_delay', 'timeTagger_channel_alt_counts',...
+        NEEDED_FIELDS_SPCM_NIDAQ_TIMETAGGER = {'daq_channel_gate', 'timeTagger_channel_counts', 'timeTagger_channel_counts_delay', 'timeTagger_channel_pg', 'timeTagger_channel_pg_delay'};
+        OPTIONAL_FIELDS_SPCM_NIDAQ_TIMETAGGER = {'daq_channel_alt_gate', 'timeTagger_channel_counts2', 'timeTagger_channel_counts2_delay', 'timeTagger_channel_alt_counts',...
             'timeTagger_channel_alt_counts_delay', 'timeTagger_channel_laser', 'timeTagger_channel_laser_delay', 'timeTagger_conditionalFilter_trigger_channel', 'timeTagger_conditionalFilter_filter_channel' ...
             'timeTagger_bin_width', 'timeTagger_number_bins', 'timeTagger_start_bin', 'timeTagger_end_bin'};
     end
@@ -162,13 +163,13 @@ classdef SpcmTimeTaggerControlledNiDaqEnabled < Spcm & NiDaqControlled
     methods
         function obj = SpcmTimeTaggerControlledNiDaqEnabled( ...
             name, ...
-            niDaqGateChannel, ...
+            DaqGateChannel, ...
             countChannel, countChannelDelay, ...
             pgChannel, pgChannelDelay, ...
             count2Channel, count2ChannelDelay, ...
             laserChannel, laserChannelDelay, ...
             altCountChannel, altCountChannelDelay, ...
-            niDaqAltGateChannel, ...
+            DaqAltGateChannel, ...
             conditionalFilter_triggerChannels, ...
             conditionalFilter_filterChannels, ...
             binWidth, nBins, startBin, endBin)
@@ -188,9 +189,9 @@ classdef SpcmTimeTaggerControlledNiDaqEnabled < Spcm & NiDaqControlled
         end
         
         % Register gate channel in NiDaqControlled
-        niDaqGateChannelName = sprintf('%s_gate', name);
-        obj@NiDaqControlled({niDaqGateChannelName}, {niDaqGateChannel}, 0, 0);
-        obj.niDaqGateChannelName = niDaqGateChannelName;
+        DaqGateChannelName = sprintf('%s_gate', name);
+        obj@NiDaqControlled({DaqGateChannelName}, {DaqGateChannel}, 0, 0);
+        obj.DaqGateChannelName = DaqGateChannelName;
         
         % ---------- TimeTagger ----------
         tt = getObjByName(TimeTaggerWrapper.NAME);
@@ -249,15 +250,15 @@ classdef SpcmTimeTaggerControlledNiDaqEnabled < Spcm & NiDaqControlled
             tt.registerChannel(altCountChannel, altCountChannelName, altCountChannelDelay);
             
             % Optional separate NiDaq gate for alt counter
-            if ~isempty(niDaqAltGateChannel)
+            if ~isempty(DaqAltGateChannel)
                 % Avoid double registration if it’s the same physical line as main gate
-                if ~isequal(niDaqAltGateChannel, niDaqGateChannel)
-                    niDaqAltGateChannelName = sprintf('%s_alt_gate', name);
-                    obj.niDaqAltGateChannelName = niDaqAltGateChannelName;
-                    daq.registerChannel(niDaqAltGateChannel, niDaqAltGateChannelName);
+                if ~isequal(DaqAltGateChannel, DaqGateChannel)
+                    DaqAltGateChannelName = sprintf('%s_alt_gate', name);
+                    obj.DaqAltGateChannelName = DaqAltGateChannelName;
+                    daq.registerChannel(DaqAltGateChannel, DaqAltGateChannelName);
                 else
                     % Same hardware line as main gate
-                    obj.niDaqAltGateChannelName = obj.niDaqGateChannelName;
+                    obj.DaqAltGateChannelName = obj.DaqGateChannelName;
                 end
             end
         end
@@ -823,9 +824,9 @@ classdef SpcmTimeTaggerControlledNiDaqEnabled < Spcm & NiDaqControlled
         function setSPCMEnable(obj, newBooleanValue)
             % Enables/Disables the SPCM (or alt counter).
             if ~obj.bUseAltCounter
-                obj.daq.writeDigital(obj.niDaqGateChannelName, newBooleanValue)
-            elseif ~isempty(obj.niDaqAltGateChannelName) % If it's empty, then turning it on and off is manual
-                obj.daq.writeDigital(obj.niDaqAltGateChannelName, newBooleanValue)
+                obj.daq.writeDigital(obj.DaqGateChannelName, newBooleanValue)
+            elseif ~isempty(obj.DaqAltGateChannelName) % If it's empty, then turning it on and off is manual
+                obj.daq.writeDigital(obj.DaqAltGateChannelName, newBooleanValue)
             end
             obj.isEnabled = newBooleanValue;
         end
@@ -898,7 +899,7 @@ classdef SpcmTimeTaggerControlledNiDaqEnabled < Spcm & NiDaqControlled
         % If new generic key is used, copy it into nidaq_channel_gate so the
         % existing validation & code path still work.
         if ~isfield(spcmStruct, 'nidaq_channel_gate') && isfield(spcmStruct, 'daq_channel_gate')
-            spcmStruct.nidaq_channel_gate = spcmStruct.daq_channel_gate;
+            spcmStruct.daq_channel_gate = spcmStruct.daq_channel_gate;
         end
 
         % ---------- 2. Check required fields ----------
@@ -913,7 +914,7 @@ classdef SpcmTimeTaggerControlledNiDaqEnabled < Spcm & NiDaqControlled
         end
 
         % ---------- 3. Extract mandatory parameters ----------
-        gate        = spcmStruct.nidaq_channel_gate;
+        gate        = spcmStruct.daq_channel_gate;
         counts      = spcmStruct.timeTagger_channel_counts;
         countsDelay = spcmStruct.timeTagger_channel_counts_delay;
         pg          = spcmStruct.timeTagger_channel_pg;
@@ -930,7 +931,7 @@ classdef SpcmTimeTaggerControlledNiDaqEnabled < Spcm & NiDaqControlled
         laserDelay           = spcmStruct.timeTagger_channel_laser_delay;
         altCountChannel      = spcmStruct.timeTagger_channel_alt_counts;
         altCountChannelDelay = spcmStruct.timeTagger_channel_alt_counts_delay;
-        niDaqAltGateChannel  = spcmStruct.nidaq_channel_alt_gate;
+        DaqAltGateChannel    = spcmStruct.daq_channel_alt_gate;
         cf_triggerChannel    = spcmStruct.timeTagger_conditionalFilter_trigger_channel;
         cf_filterChannel     = spcmStruct.timeTagger_conditionalFilter_filter_channel;
         binWidth             = spcmStruct.timeTagger_bin_width;
@@ -947,7 +948,7 @@ classdef SpcmTimeTaggerControlledNiDaqEnabled < Spcm & NiDaqControlled
             counts2, counts2Delay, ...
             laser, laserDelay, ...
             altCountChannel, altCountChannelDelay, ...
-            niDaqAltGateChannel, ...
+            DaqAltGateChannel, ...
             cf_triggerChannel, cf_filterChannel, ...
             binWidth, nBins, startBin, endBin);
     end

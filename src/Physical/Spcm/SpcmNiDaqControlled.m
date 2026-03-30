@@ -27,7 +27,7 @@ classdef SpcmNiDaqControlled < Spcm & Daq
         counterExpTask
         
         % Channel Names
-        niDaqGateChannelName % GATE
+        DaqGateChannelName % GATE
         niDaqCountChannelName % SPCM
         niDaqPgChannelName % PG
 

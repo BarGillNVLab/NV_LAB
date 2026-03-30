@@ -50,7 +50,7 @@ classdef ExpT1 < Experiment
             % For T1, constantTime is added at the end, after detection! so
             % it is ok :)
             obj.constantTime = false;       % logical
-            obj.doubleMeasurement = true;   % logical
+            obj.doubleMeasurement = false;   % logical
             obj.startFromOne = false;       % logical
             
             obj.detectionDuration = 0.25;           % detection window, in us

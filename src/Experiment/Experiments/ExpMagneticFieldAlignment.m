@@ -50,7 +50,7 @@ classdef ExpMagneticFieldAlignment < ExpESR
             obj.axesLowerLimits = obj.stage.stage_lower_limit_;
             obj.axesUpperLimits = obj.stage.stage_upper_limit_;
             
-            obj.MWChannel = 'MW';
+            obj.MWChannel = {'MW'};
             obj.averages = 1;
             obj.repeats = 100;
         end
