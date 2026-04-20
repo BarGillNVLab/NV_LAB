@@ -57,7 +57,7 @@ classdef ExpESR < Experiment
             obj.averages = 1;
             
             %obj.frequency = obj.ZERO_FIELD_SPLITTING + (-100 : 2 : 100);     %in MHz
-            obj.frequency = [2785:3:2809,2810:0.5:2835,2838:6:2909,2910:0.5:2935,2938:3:2954]; %4A in Helmholtz z coil
+            obj.frequency = [2779:3:2797,2800:0.5:2828,2833:5:2908,2912:0.5:2940,2943:3:2961]; %4A Helmholz current Setup-6
             obj.amplitude = -1;        % dBm
             obj.phase = 0;
             obj.mode = 'CW';            % Can only be 'CW' for now.

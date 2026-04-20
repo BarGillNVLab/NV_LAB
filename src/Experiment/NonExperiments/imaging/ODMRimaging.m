@@ -9,7 +9,7 @@ function [B_z, params_all, FitDataMatrix] = ODMRimaging( signal, frequency, I_he
     if ~exist("I_helm", "var")
         I_helm = [0,0,2]; 
     end
-    pixBin = 2;
+    pixBin = 1;
     y= (squeeze(mean(mean(signal(:,:,:),2),3)))';
     x=squeeze(frequency);
     figure(11);

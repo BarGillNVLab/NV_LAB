@@ -499,12 +499,12 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         function size = get.imageSize(obj)
             spcm = getObjByName(Spcm.NAME);
             if spcm.hasCamera
-                [xstart, ystart, width, hight] = spcm.camera.getROI;
+                [~, ~, width, hight] = spcm.camera.getROI;
             else
                 width = 1;
                 hight = 1;
             end
-            size = [hight, width, xstart, ystart];
+            size = [width, hight];
         end
     end
     
@@ -1024,7 +1024,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             end
             data = dataParam.value;
             err = dataParam.sterr;
-            if isImageData&&~obj.twoDimageFlag; data = mean(mean(data, ndims(data)), ndims(9mdata)-1); end
+            if isImageData&&~obj.twoDimageFlag; data = mean(mean(data, ndims(data)), ndims(data)-1); end
             if isImageData&&~obj.twoDimageFlag; err = sqrt(sum(sum(err.^2, ndims(err)), ndims(err)-1)) / prod(obj.imageSize); end
             
             if isempty(data) || all(all(isnan(data)))
@@ -1633,8 +1633,8 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             spcm = getObjByName(Spcm.NAME);
             if isempty(spcm); throwBaseObjException(Spcm.Name); end
             if spcm.hasCamera
-%                 obj.imagingFlag = input('Enter 1 if you want an image, 0 otherwise: ');
-                obj.imagingFlag=0;
+%                obj.imagingFlag = input('Enter 1 if you want an image, 0 otherwise: ');
+                 obj.imagingFlag=0;
                 delay = spcm.camera.DELAY_BETWEEN_TRIGGERS;
                 S.addDelayAfterDetection(delay, 'greenLaser');
             end  
