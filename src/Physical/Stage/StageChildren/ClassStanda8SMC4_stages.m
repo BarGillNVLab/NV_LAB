@@ -5,7 +5,7 @@ classdef ClassStanda8SMC4_stages < ClassStage
         NAME = 'Stage - 8SMC4'
         UNITS = 'um'
         
-        NEEDED_FIELDS = {'niDaqChannel', 'address'}
+        NEEDED_FIELDS = {'address'}
         
         COMM_DELAY = 0.005; % 5ms delay needed between consecutive commands sent to the controllers.
         STEP_MINIMUM_SIZE = 0.001                   % in um
@@ -48,7 +48,6 @@ classdef ClassStanda8SMC4_stages < ClassStage
             
             
         % NiDaq
-        triggerChannel
         digitalPulseTask = -1; % Digital pulse task for scanning
         
         % Tilt
@@ -64,14 +63,18 @@ classdef ClassStanda8SMC4_stages < ClassStage
     methods (Static, Access = public)
         function obj = create(stageStruct)
             % Get instance constructor
-            missingField = FactoryHelper.usualChecks(stageStruct, ClassMCS2.NEEDED_FIELDS);
+            missingField = FactoryHelper.usualChecks(stageStruct, ClassStanda8SMC4_stages.NEEDED_FIELDS);
             if ~isnan(missingField)
                 EventStation.anonymousError(...
                     'Trying to create the Standa 8SMC4 stage, needed field "%s" was missing. Aborting',...
                     missingField);
             end
+            if isfield(stageStruct, 'pg_controlled') && stageStruct.pg_controlled
+                triggerChannel = 'pulseGenerator';
+            else
+                triggerChannel = stageStruct.niDaqChannel;
+            end
             
-            niDaqChannel = stageStruct.niDaqChannel;
             removeObjIfExists(ClassStanda8SMC4_stages.NAME);
 
             addressStruct = stageStruct.address;
@@ -82,7 +85,7 @@ classdef ClassStanda8SMC4_stages < ClassStage
                 validAxes = [validAxes, axes{k}];
                 address{k} = addressStruct.(axes{k});
             end
-            obj = ClassStanda8SMC4_stages(lower(validAxes), address, niDaqChannel);
+            obj = ClassStanda8SMC4_stages(lower(validAxes), address, triggerChannel);
         end
         
         function axis = GetAxisInternal(axisName)
@@ -105,7 +108,7 @@ classdef ClassStanda8SMC4_stages < ClassStage
     end
     
     methods (Access = protected) % Protected Functions
-        function obj = ClassStanda8SMC4_stages(availableAxes, address, niDaqChannel)
+        function obj = ClassStanda8SMC4_stages(availableAxes, address, triggerChannel)
             % name - string
             % availableAxes - string. example: "xyz"
             name = ClassStanda8SMC4_stages.NAME;
@@ -128,10 +131,13 @@ classdef ClassStanda8SMC4_stages < ClassStage
             
             try
                 obj.readStagesParameters;
-                
-                nidaq = getObjByName(NiDaq.NAME);
-                nidaq.registerChannel(niDaqChannel, obj.name);
-                obj.triggerChannel = niDaqChannel;
+                if ~strcmp(triggerChannel, 'pulseGenerator')
+                    nidaq = getObjByName(NiDaq.NAME);
+                    nidaq.registerChannel(triggerChannel, obj.name);
+                else
+                    obj.pgControlled = 1;
+                end
+                obj.triggerChannel = triggerChannel;
                 
                 Initialization(obj);
             catch err

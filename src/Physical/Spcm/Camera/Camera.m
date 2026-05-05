@@ -118,6 +118,8 @@ classdef Camera < BaseObject & EventSender
                     obj = CameraBasler.getInstance(cameraStruct);
                 case 'andor'
                     obj = CameraAndor.getInstance(cameraStruct);
+                case 'ueye'
+                    obj = UEeventCamera.getInstance(cameraStruct);
                 otherwise
                     EventStation.anonymousWarning('Could not create Camera of type %s!', type)
             end

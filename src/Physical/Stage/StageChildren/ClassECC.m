@@ -279,6 +279,37 @@ classdef ClassECC < ClassStage
             end
             GetPosition(obj, obj.axes); % Updates obj.curPos
             stagesJson = JsonInfoReader.getJson.stages;
+
+            % Case 1: already a struct → use as-is
+            if isstruct(stagesJson)
+            
+                % nothing to do, continue
+            
+            % Case 2: cell array → search for struct with type == 'ECC'
+            elseif iscell(stagesJson)
+            
+                found = false;
+            
+                for i = 1:numel(stagesJson)
+                    elem = stagesJson{i};
+            
+                    if isstruct(elem) && isfield(elem, 'type')
+                        if strcmpi(elem.type, 'ECC')
+                            stagesJson = elem;  % assign the matching struct
+                            found = true;
+                            break;
+                        end
+                    end
+                end
+            
+                if ~found
+                    error('No stage with type "ECC" found in stagesJson cell array.');
+                end
+            
+            % Case 3: invalid type
+            else
+                error('stagesJson must be either a struct or a cell array of structs.');
+            end
             if isfield(stagesJson, 'pg_controlled') && stagesJson.pg_controlled
                 triggerChannel = 'pulseGenerator';
             else
