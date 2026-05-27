@@ -57,8 +57,8 @@ classdef ExpESR < Experiment
             obj.averages = 1;
             
             %obj.frequency = obj.ZERO_FIELD_SPLITTING + (-100 : 2 : 100);     %in MHz
-            obj.frequency = [2779:3:2797,2800:0.5:2828,2833:5:2908,2912:0.5:2940,2943:3:2961]; %4A Helmholz current Setup-6
-            obj.amplitude = -1;        % dBm
+            obj.frequency = [2779:3:2800,2803.5:0.5:2832,2833:5:2913,2916:0.5:2944,2947:3:2961]; %4A Helmholz current Setup-6
+            obj.amplitude = -5;        % dBm
             obj.phase = 0;
             obj.mode = 'CW';            % Can only be 'CW' for now.
             obj.nChannels = 1;          % two channels can be added....
@@ -289,6 +289,8 @@ end
 
             sig = zeros(n, N, M);
             sterr = zeros(n, N, M);
+            sigC = zeros(obj.runsPerPerform, N, M);
+            sterrC = zeros(obj.runsPerPerform, N, M);
             
             % Run - Go over all frequencies, in random order
             for k = 1:len
@@ -316,9 +318,9 @@ end
                         end
                         data = obj.getRawData(pg, spcm);
                         if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled')
-                            [sig(1:2,:,:), sterr(1:2,:,:)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(1+~isSingleMeasurement)*(k-1)+1:end, :, :));%obj.detectionPeriodsPerRepeat*obj.repeats*k));
+                            [sig(1:2,:,:), sterr(1:2,:,:), sigC(1,:,:), sterrC(1,:,:)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(1+~isSingleMeasurement)*(k-1)+1:end, :, :));%obj.detectionPeriodsPerRepeat*obj.repeats*k));
                         else
-                            [sig(1:2,:,:), sterr(1:2,:,:)] = obj.processData(data);
+                            [sig(1:2,:,:), sterr(1:2,:,:), sigC(1,:,:), sterrC(1,:,:)] = obj.processData(data);
                         end
                         
                         if ~isSingleMeasurement % run another sweep with the same source
@@ -333,6 +335,8 @@ end
                         
                         obj.signal(:, i, obj.currIter, :, :) = sig;
                         obj.sterr(:, i, obj.currIter, :, :) = sterr;
+                        obj.signalC(:, i, obj.currIter, :, :) = sigC;
+                        obj.sterrC(:, i, obj.currIter, :, :) = sterrC;
                         
                         success = true;
                         obj.currParamIter = obj.currParamIter + 1;
@@ -387,23 +391,23 @@ end
             %if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled') %maybe check something different
             if size(data, 1) == obj.detectionPeriodsPerRepeat*obj.repeats*obj.getTotalNumberOfParams*(1+~isSingleMeasurement) %if true we're proccessing data at the end of the average
                 for k = 1:len
-                    [sig(1:2,:,:), sterr(1:2,:,:)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(1+~isSingleMeasurement)*(k-1)+(1:obj.detectionPeriodsPerRepeat*obj.repeats), :, :));
+                    [sig(1:2,:,:), sterr(1:2,:,:), sigC(1,:,:), sterrC(1,:,:)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(1+~isSingleMeasurement)*(k-1)+(1:obj.detectionPeriodsPerRepeat*obj.repeats), :, :));
                     if ~isSingleMeasurement % run another sweep with the same source
                          [sig(3:4,:,:), sterr(3:4,:,:)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*2*(k-0.5)+(1:obj.detectionPeriodsPerRepeat*obj.repeats), :, :));
                     end
                     obj.signal(:, f1(k), obj.currIter, : ,:) = sig;
                     obj.sterr(:, f1(k), obj.currIter, :, :) = sterr;
+                    obj.signalC(:, f1(k), obj.currIter, : ,:) = sigC;
+                    obj.sterrC(:, f1(k), obj.currIter, :, :) = sterrC;
                 end
             end
                 
                 
             
-            S1 = squeeze(obj.signal(1, :, 1:obj.currIter, :, :));
-            S1sterr = squeeze(obj.sterr(1, :, 1:obj.currIter, :, :));
-            S2 = squeeze(obj.signal(2, :, 1:obj.currIter, :, :));
-            S2sterr = squeeze(obj.sterr(2, :, 1:obj.currIter, :, :));
-            
-            [value, sterr] = getRatioDistributionValues(obj, S1, S2, S1sterr, S2sterr);
+            S = squeeze(obj.signalC(1, :, 1:obj.currIter, :, :));
+            Serr = squeeze(obj.sterrC(1, :, 1:obj.currIter, :, :));
+
+            [value, sterr] = getCompleteSignal(obj, S, Serr);
             obj.signalParam.value = value;
             obj.signalParam.sterr = sterr;
             

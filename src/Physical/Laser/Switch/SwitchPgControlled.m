@@ -59,7 +59,14 @@ classdef SwitchPgControlled < EventSender & EventListener
                     struct.onDelay, struct.offDelay);
             else
                 % No delay requested
-                switchChannel = Channel.Digital(struct.switchChannelName, struct.switchChannel);
+                if isfield(struct, 'switchChannel') && ...
+                   ischar(struct.switchChannel) && ...
+                   startsWith(struct.switchChannel, "ao")
+                    address = str2double(extractAfter(struct.switchChannel, 'ao'));
+                    switchChannel = Channel.Analog(struct.switchChannelName, address, struct.minVal, struct.maxVal);
+                else
+                    switchChannel = Channel.Digital(struct.switchChannelName, struct.switchChannel);
+                end
             end
             switchPhysicalPart = SwitchPgControlled(partName, switchChannel);
         end

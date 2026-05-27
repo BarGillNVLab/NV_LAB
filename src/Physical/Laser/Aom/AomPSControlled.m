@@ -9,7 +9,7 @@ classdef AomPSControlled < LaserPartAbstract
     end
     
     properties (Constant)
-        NEEDED_FIELDS = {'channel'};
+        NEEDED_FIELDS = {'switchChannel', 'switchChannelName', 'minVal', 'maxVal'};
         OPTIONAL_FIELDS = {'minVal', 'maxVal'};
         DEFUALT_VALUE = 0.5;
     end
@@ -46,7 +46,7 @@ classdef AomPSControlled < LaserPartAbstract
     
     methods (Static)
         function obj = create(name, jsonStruct)
-            missingField = FactoryHelper.usualChecks(jsonStruct, AomNiDaqControlled.NEEDED_FIELDS);
+            missingField = FactoryHelper.usualChecks(jsonStruct, AomPSControlled.NEEDED_FIELDS);
             if ~isnan(missingField)
                 EventStation.anonymousError(['While trying to create an AOM part for laser "%s",', ...
                     'could not find "%s" field. Aborting'], ...
@@ -56,8 +56,16 @@ classdef AomPSControlled < LaserPartAbstract
             % We want to get either values set in json, or empty variables
             % (which will be handled by NiDaqControlled constructor):
             jsonStruct = FactoryHelper.supplementStruct(jsonStruct, AomPSControlled.OPTIONAL_FIELDS);
-            
-            agChannel = jsonStruct.channel;
+                
+            switch lower(jsonStruct.classname)
+                case {'pulsegenerator', 'pulsestreamer', 'pulseblaster'}
+                    SwitchPgControlled.create(jsonStruct.switchChannelName, jsonStruct);
+                    otherwise
+                        EventStation.anonymousError(...
+                            'Can''t create a %s-class fast switch - unknown classname! Aborting.', ...
+                            S.classname);
+            end
+            agChannel = jsonStruct.switchChannel;
             minVal = jsonStruct.minVal;
             maxVal = jsonStruct.maxVal;
             obj = AomPSControlled(name, agChannel, minVal, maxVal);

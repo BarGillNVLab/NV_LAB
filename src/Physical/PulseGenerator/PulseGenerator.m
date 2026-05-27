@@ -266,22 +266,26 @@ classdef (Abstract) PulseGenerator < EventSender
             address = [channels.address];       % Careful! if channels.address is a char array, this might break!
             addressValid = ismember(address, obj.AVAILABLE_ADDRESSES);
             % & Not taken already
-            occupiedAdd = obj.channelAddresses; % List of physical addresses already taken
-            addressTaken = ismember(address, occupiedAdd);
-            if any(addressTaken)
-                % Maybe we are trying to register the same channel again,
-                % and that's fine
-                ind = find(addressTaken);
-                for k = 1:length(ind)
-                    pgInd = find(occupiedAdd == address(ind(k)));   % index of channel IN THE PG CHANNEL ARRAY
-                    if strcmp(name, occupiedName(pgInd)) %#ok<FNDSB>
-                        addressTaken(ind(k)) = false;
-                        nameValid(ind(k)) = true;
+            if ~strcmp(channels.type, 'analog')
+                occupiedAdd = obj.channelAddresses; % List of physical addresses already taken
+                addressTaken = ismember(address, occupiedAdd);
+                if any(addressTaken)
+                    % Maybe we are trying to register the same channel again,
+                    % and that's fine
+                    ind = find(addressTaken);
+                    for k = 1:length(ind)
+                        pgInd = find(occupiedAdd == address(ind(k)));   % index of channel IN THE PG CHANNEL ARRAY
+                        if strcmp(name, occupiedName(pgInd)) %#ok<FNDSB>
+                            addressTaken(ind(k)) = false;
+                            nameValid(ind(k)) = true;
+                        end
                     end
                 end
-            end
-            if any(~addressValid || addressTaken)
-                warnMsg = [warnMsg, 'Some of the channels could not be registered in specified adresses.\n'];
+                if any(~addressValid || addressTaken)
+                    warnMsg = [warnMsg, 'Some of the channels could not be registered in specified adresses.\n'];
+                end
+            else
+                addressTaken=0;
             end
             % Let user know what's going on
             tf = nameValid && addressValid && ~addressTaken;
@@ -312,28 +316,39 @@ classdef (Abstract) PulseGenerator < EventSender
         end
         
         function addresses = channelAddresses(obj)
-            %{
-            format = class(obj.AVAILABLE_ADDRESSES);
-            switch format
-                case {'int', 'double'}
-            %}
+            % Returns addresses of registered digital channels only.
+        
             if isempty(obj.channels)
                 addresses = [];
                 return
             end
-            addresses = [obj.channels.address];
-            %{
-                case 'cell'
-                    if isempty(obj.channels)
-                        addresses = {};
-                        return
-                    end
-                    addresses = {obj.channels.address};
-                otherwise
-                    error('Unknown address type!')
+        
+            % Keep only channels whose type is digital
+            tfDigital = arrayfun(@(c) strcmpi(c.type, 'digital'), obj.channels);
+        
+            digitalChannels = obj.channels(tfDigital);
+        
+            if isempty(digitalChannels)
+                addresses = [];
+                return
             end
-            %}
+        
+            addresses = [digitalChannels.address];
         end
+
+        function names = returnOnChannel(obj)
+            % returns a cell of all the channels that are currently on from
+            % the registered channel list
+            channelList = obj.channelNames;
+            names = cell(size(channelList));
+            for i = 1:length(channelList)
+                if obj.isOn(channelList{i})
+                    names(i) = channelList(i);
+                end
+            end
+            names = names(~cellfun('isempty', names));
+        end
+
     end
        
     methods (Access = protected)

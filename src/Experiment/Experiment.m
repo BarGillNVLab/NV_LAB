@@ -96,6 +96,8 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
     properties (SetAccess = protected)
         signal              % double. Measured signal in the experiment (basically, unprocessed)
         sterr               % double. Measured sterr of the signal.
+        signalC             % double. Measured signal in the experiment normalized by reference
+        sterrC              % double. Measured sterr of the signalC.
         currIter = 0;       % int. number of current iteration (average)
         currParamIter = 0;  % Counts the current parameters' iteration
     end
@@ -671,10 +673,13 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             switch length(size(obj.signal)) % 1st is meas/ref, last is averages
                 case 3 % one parameter
                     obj.signal(:, :, obj.currIter + 1) = 0;
+                    obj.signalC(:, :, obj.currIter + 1) = 0;
                 case 4 % two parameters
                     obj.signal(:, :, :, obj.currIter + 1) = 0;
+                    obj.signalC(:, :, :, obj.currIter + 1) = 0;
                 case 5 % three parameters
                     obj.signal(:, :, :, :, obj.currIter + 1) = 0;
+                    obj.signalC(:, :, :, :, obj.currIter + 1) = 0;
                 otherwise % wtf?
                     obj.sendError('Cannot clear last run');
             end
@@ -1025,7 +1030,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             data = dataParam.value;
             err = dataParam.sterr;
             if isImageData&&~obj.twoDimageFlag; data = mean(mean(data, ndims(data)), ndims(data)-1); end
-            if isImageData&&~obj.twoDimageFlag; err = sqrt(sum(sum(err.^2, ndims(err)), ndims(err)-1)) / prod(obj.imageSize); end
+            if isImageData&&~obj.twoDimageFlag; err = sqrt(sum(sum(err.^2, ndims(err)), ndims(err)-1) / prod(obj.imageSize)); end
             
             if isempty(data) || all(all(isnan(data)))
                 % Default plot
@@ -1344,7 +1349,9 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
     end
     
     methods (Access = protected)
-        function [signal, sterr] = processData(obj, rawData)
+        function [signal, sterr, signalC, sterrC] = processData(obj, rawData)
+            % signalC and sterrC are the correct method for calculating the
+            % normalizied signal by reference and its error
             kc = 1e3;     % kilocounts
             musec = 1e-6;   % microseconds
             
@@ -1396,6 +1403,21 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
 
             signal = mean(s(start:end, :, :, :), 1, "omitnan");                  % "omitnan" to ignore bad repeat and not throw all this point. added by yachel 23.07.23
             sterr = ste(s(start:end, :, :, :), 0, 1);
+
+            sigFrames = s(start:end, 1:2:end, :, :);
+            refFrames = s(start:end, 2:2:end, :, :);
+            
+            validC = isfinite(sigFrames) & isfinite(refFrames) & ...
+                     sigFrames ~= 0 & refFrames ~= 0;
+            
+            sC = nan(size(sigFrames));
+            sC(validC) = sigFrames(validC) ./ refFrames(validC);
+            
+            signalC = squeeze(mean(sC, 1, "omitnan"));
+            
+            nValidC = sum(~isnan(sC), 1);
+            sterrC = squeeze(std(sC, 0, 1, "omitnan") ./ sqrt(nValidC));
+            sterrC(nValidC < 2) = NaN;
 
             if ~spcm.hasPhotodiode && ~spcm.hasCamera
                 signal = signal./timeNormalization/kc;      %kcounts per second
@@ -1513,6 +1535,35 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             end
             sterr = (S1mean./S2mean).*sqrt(S1sterr.^2./S1mean.^2 + S2sterr.^2./S2mean.^2);
         end
+
+        function [value, sterr] = getCompleteSignal(obj, S, Serr)
+            M = obj.imageSize(1);
+            N = obj.imageSize(2);
+
+            if obj.currIter == 1
+                % Nothing to calculate the mean over
+                value = S;
+                sterr = Serr;
+            else
+                dataSize = size(S);
+                dim = length(dataSize) -(M>1)-(N>1);
+                if dim > 2
+                    S = reshape(S, [], dataSize(end-(M>1)-(N>1)));
+                    Serr = reshape(Serr, [], dataSize(end-(M>1)-(N>1)));
+                end
+                value = mean(S, 2, "omitnan");
+                sterr = sqrt(sum(Serr.^2, 2, "omitnan")./dataSize(end-(M>1)-(N>1)));
+                if dim > 2
+                    sz = 1:length(dataSize);
+                    imageDim = BooleanHelper.ifTrueElse(M > 1, sz(end-1:end), []);
+                    dataSize = dataSize([1:end-1-(M>1)-(N>1), imageDim]);
+                    value = reshape(value, dataSize);
+                    sterr = reshape(sterr, dataSize);
+                end
+            end
+            
+        end
+
         
         function sterr = getCombinedSterr(obj, means, sterrs)
             % Calculate the combined standard error when combining the data
@@ -1537,6 +1588,8 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             N = obj.imageSize(2);
             obj.signal = zeros(obj.detectionPeriodsPerRepeat * obj.runsPerPerform, obj.getTotalNumberOfParams, obj.averages, N, M);
             obj.sterr = zeros(obj.detectionPeriodsPerRepeat * obj.runsPerPerform, obj.getTotalNumberOfParams, obj.averages, N, M);
+            obj.signalC = zeros(obj.runsPerPerform, obj.getTotalNumberOfParams, obj.averages, N, M);
+            obj.sterrC  = zeros(obj.runsPerPerform, obj.getTotalNumberOfParams, obj.averages, N, M);
             
             obj.signalParam.value = [];
             obj.signalParam2.value = [];

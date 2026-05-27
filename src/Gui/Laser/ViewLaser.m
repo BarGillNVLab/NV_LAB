@@ -54,6 +54,10 @@ classdef ViewLaser < GuiComponent
                 heights = [heights, aomView.height];
                 width = max([width, aomView.width]);
             end
+
+            pulsedAOM = ViewAOMPulsedControl(obj, controller);
+            heights = [heights, pulsedAOM.height];
+            width = max([width,pulsedAOM.width]);
             
             
             %%%% UI components set values  %%%%

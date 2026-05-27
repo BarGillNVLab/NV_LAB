@@ -78,16 +78,18 @@ classdef (Sealed) PulseStreamerNewClass < PulseGenerator
             
             seqTime = obj.sequence.duration * obj.repeats;
             tic
-            TF = hasFinished(obj);
-            % tic_vec = []
-            while TF == 0
-                % pause(seqTime/1e6)
-                % start_time = tic
+            if ~obj.repeats == Inf
                 TF = hasFinished(obj);
-                % tic_vec = [tic_vec, toc(start_time)];
-                if toc > 5*seqTime
-                    error('pulse streamer time out')
-                end 
+                % tic_vec = []
+                while TF == 0
+                    % pause(seqTime/1e6)
+                    % start_time = tic
+                    TF = hasFinished(obj);
+                    % tic_vec = [tic_vec, toc(start_time)];
+                    if toc > 5*seqTime
+                        error('pulse streamer time out')
+                    end 
+                end
             end
         end
 
@@ -105,15 +107,25 @@ classdef (Sealed) PulseStreamerNewClass < PulseGenerator
             for i = 1:numberOfSequences
                 p = pulses(i);
                 onChannels = obj.channelName2Address(p.getOnChannels);
+                onChannels = unique(onChannels, 'stable');
                 newSequence = P(p.duration * 1e3, onChannels, obj.analogChannel0Value, obj.analogChannel1Value);
                 sequences = sequences + newSequence;
             end
             seq_new = convert_PPH_to_PSSequence(sequences); % In the future, need to use the new builder functions
-            obj.ps.stream(seq_new, obj.repeats, finalOutputState);
+            if obj.repeats == Inf
+                repeats = -1;
+            else
+                repeats = obj.repeats;
+            end
+            obj.ps.stream(seq_new, repeats, finalOutputState);
         end
         
         function TF = hasFinished(obj)
             TF = obj.ps.hasFinished();
+        end
+        
+        function stopStreaming(obj)
+            obj.ps.forceFinal();
         end
     end
     
