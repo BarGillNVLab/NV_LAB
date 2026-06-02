@@ -191,7 +191,13 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             
             obj.isTracking = true;   % Initialize tracking
             obj.trackThreshhold = 0.7;
-            obj.shouldAutosave = true;
+            spcm = getObjByName(Spcm.NAME);
+            iscamera = spcm.hasCamera;
+            if iscamera
+                obj.shouldAutosave = false;
+            else
+                obj.shouldAutosave = true;
+            end
         end
         
         function cellOfStrings = getAllExpParameterProperties(obj)
@@ -1537,29 +1543,15 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         end
 
         function [value, sterr] = getCompleteSignal(obj, S, Serr)
-            M = obj.imageSize(1);
-            N = obj.imageSize(2);
-
+            %S and Serr are of size 4 where (measurement param, averages, signaldim1, signaldim2 (optional))
+            % measurement param can be frequency/ free percision time, etc
             if obj.currIter == 1
                 % Nothing to calculate the mean over
                 value = S;
                 sterr = Serr;
-            else
-                dataSize = size(S);
-                dim = length(dataSize) -(M>1)-(N>1);
-                if dim > 2
-                    S = reshape(S, [], dataSize(end-(M>1)-(N>1)));
-                    Serr = reshape(Serr, [], dataSize(end-(M>1)-(N>1)));
-                end
+            else    
                 value = mean(S, 2, "omitnan");
-                sterr = sqrt(sum(Serr.^2, 2, "omitnan")./dataSize(end-(M>1)-(N>1)));
-                if dim > 2
-                    sz = 1:length(dataSize);
-                    imageDim = BooleanHelper.ifTrueElse(M > 1, sz(end-1:end), []);
-                    dataSize = dataSize([1:end-1-(M>1)-(N>1), imageDim]);
-                    value = reshape(value, dataSize);
-                    sterr = reshape(sterr, dataSize);
-                end
+                sterr = obj.getCombinedSterr(S, Serr);
             end
             
         end
