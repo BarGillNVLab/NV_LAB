@@ -25,8 +25,8 @@ classdef FrequencyGeneratorWindfreak < FrequencyGenerator %& SerialControlled
     end
     
     methods (Access = private)
-        function obj = FrequencyGeneratorWindfreak(name, address, frequencyLimits, amplitudeLimits, keepOn)
-            obj@FrequencyGenerator(name, frequencyLimits, amplitudeLimits, keepOn);
+        function obj = FrequencyGeneratorWindfreak(name, address, frequencyLimits, amplitudeLimits, numChannels, keepOn)
+            obj@FrequencyGenerator(name, frequencyLimits, amplitudeLimits, numChannels, keepOn);
             %obj@SerialControlled(address); % there's an issue with NAME property when calling SerialControlled
             
             obj.s = serialport(address, 115200); % using 115200 as default, if doesn't work we should check for the windfreak's expected baudrate.
@@ -54,6 +54,9 @@ classdef FrequencyGeneratorWindfreak < FrequencyGenerator %& SerialControlled
             % Actually sends command to hardware
             % sendCommand@SerialControlled(obj, command) % Just to make it implicit
             writeline(obj.s, command);
+%             disp(command);
+%             value = writeread(obj.s, 'C0f?');
+%             disp(value);
         end
         
         function value = readOutput(obj, command) %#ok<INUSD>
@@ -194,9 +197,10 @@ classdef FrequencyGeneratorWindfreak < FrequencyGenerator %& SerialControlled
             name = [lower(type), '-', struct.serialNumber];
             frequencyLimits = [struct.minFrequency, struct.maxFrequency];
             amplitudeLimits = [struct.minAmplitude, struct.maxAmplitude];
+            numChannels = FrequencyGeneratorWindfreak.NUM_CHANNELS;
             keepOn = struct.keepOn;
 
-            obj = FrequencyGeneratorWindfreak(name, struct.address, frequencyLimits, amplitudeLimits, keepOn);
+            obj = FrequencyGeneratorWindfreak(name, struct.address, frequencyLimits, amplitudeLimits, numChannels, keepOn);
             addBaseObject(obj);
         end
     end

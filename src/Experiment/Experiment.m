@@ -1135,7 +1135,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
     end
     
     methods (Access = protected)
-        function [signal, sterr] = processData(obj, rawData)
+        function [signal, sterr, normSig, normSterr] = processData(obj, rawData)
             kc = 1e3;     % kilocounts
             musec = 1e-6;   % microseconds
             
@@ -1197,31 +1197,39 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             end
 
             start = BooleanHelper.ifTrueElse(size(s,1) > 10, 2, 1);     % removing the first repeat because the first detection is not after init sequence. Yachel 08.05.22
-            if spcm.hasPhotodiode
+%             if spcm.hasPhotodiode
                 % normalization of the signal before avarage, to reduce low frequency noise. Yachel 03/25
                 refSignal = s(:, 1:2:end) ./ s(:, 2:2:end);
                 ref = mean(s(start:end, 2:2:end), "omitnan");
                 s(:, 1:2:end) = ref .* refSignal;
                 s(:, 2:2:end) = ref +  refSignal * 0;
-            end
+%             end
 
             signal = mean(s(start:end, :), "omitnan");                  % "omitnan" to ignore bad repeat and not throw all this point. added by yachel 23.07.23
             sterr = ste(s(start:end, :));
+            normSig = mean(s(start:end, 1)./s(start:end, 2), "omitnan");
+            normSterr = ste(s(start:end, 1)./s(start:end, 2));
 
             if ~spcm.hasPhotodiode
                 % added by Ittai for weak measurement without normalization
                 if isprop(obj, 'weakDetectionDuration')
                     signal = signal./timeNormalization/kc;
                     sterr = sterr./timeNormalization/kc;
+%                     normSig = normSig./timeNormalization/kc;
+%                     normSterr = normSterr./timeNormalization/kc;
                 else
                     signal = signal./timeNormalization/kc;      %kcounts per second
                     sterr = sterr./timeNormalization/kc;        % convert to kcps
+%                     normSig = normSig./timeNormalization/kc;
+%                     normSterr = normSterr./timeNormalization/kc;
                 end
             else
                 if spcm.detectionWithGI
                     timeNormalization = timeNormalization / musec;
                     signal = signal./timeNormalization./spcm.GIgain; %kcounts per second
                     sterr = sterr./timeNormalization./spcm.GIgain; % convert to kcps
+%                     normSig = normSig./timeNormalization./spcm.GIgain;
+%                     normSterr = normSterr./timeNormalization./spcm.GIgain;
                 end
             end
 
@@ -1229,6 +1237,8 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 d =  obj.detectionPeriodsPerRepeat;
                 signal = reshape(signal, d, m/d);
                 sterr = reshape(sterr, d, m/d);
+                normSig = reshape(normSig, d, m/d);
+                normSterr = reshape(normSterr, d, m/d);
             end
         end
 

@@ -27,7 +27,8 @@ signal = reshape(signal,[length(signal) 1]);
 sterr = reshape(sterr,[length(sterr) 1]);
 signal_2 = reshape(signal_2,[length(signal_2) 1]);
 sterr_2 = reshape(sterr_2,[length(sterr_2) 1]);
-freq = reshape(freq,[length(freq) 1]);
+freq = reshape(Exp.frequencyInternal,[length(Exp.frequencyInternal) 1]);
+
 
 % Fit:
 [fitObj, gof] = ESRfitInternal(freq, signal, sterr);

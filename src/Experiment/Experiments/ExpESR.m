@@ -4,7 +4,7 @@ classdef ExpESR < Experiment
     properties (Constant)
         NAME = 'ESR'
         
-        ZERO_FIELD_SPLITTING = 2.87e3     % in Mhz
+        ZERO_FIELD_SPLITTING = 2.87e3    % in Mhz
     end
     
     properties
@@ -26,6 +26,8 @@ classdef ExpESR < Experiment
         
         piTime              % in us. For pulsed ESR.
         singletDelay        % in us. For Pulsed ESR. day between Laser and MW
+        normSig
+        normSterr
     end
     
     properties %(Hidden, Access = private)
@@ -237,6 +239,8 @@ end
     methods (Access = protected)
         function prepare(obj)
             % Initialize devices (SPCM, PulseGenerator, etc.)
+
+           
             
             % Sequence
             %%% Useful parameters for what follows
@@ -249,6 +253,13 @@ end
             obj.runsPerPerform = (1 + ~isSingleMeasurement);
             obj.freqMirrored = obj.mirrorFrequency;
             MWChannel = obj.MWChannel;
+
+             % make sure that normSig and normSterr are initialized to the
+            % correct size
+            if ~size(obj.normSig, 1) > 0
+                obj.normSig = squeeze(zeros(obj.detectionPeriodsPerRepeat * obj.runsPerPerform / 2, obj.getTotalNumberOfParams, obj.averages));
+                obj.normSterr = squeeze(zeros(obj.detectionPeriodsPerRepeat * obj.runsPerPerform / 2, obj.getTotalNumberOfParams, obj.averages));
+            end
             
             %%% Create
             S = Sequence;
@@ -266,7 +277,7 @@ end
                             obj.sendError('What should we do here?')
                     end
                     
-%                     S.addEvent(1000,                       '');
+                    S.addEvent(10,                      'greenLaser');
                     S.addEvent(obj.laserInitializationDuration,     {MWChannel{1}, 'greenLaser'});
                     S.addPulse(P);
                     S.addEvent(obj.laserInitializationDuration,     {'greenLaser'});
@@ -368,7 +379,7 @@ end
                             [sig(1:2), sterr(1:2)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(1+~isSingleMeasurement)*(k-1)+1:end));%obj.detectionPeriodsPerRepeat*obj.repeats*k));
                         
                         else
-                            [sig(1:2), sterr(1:2)] = obj.processData(data);
+                            [sig(1:2), sterr(1:2), normSig, normSterr] = obj.processData(data);
                         end
                         
                         if ~isSingleMeasurement % run another sweep with the same source
@@ -387,6 +398,8 @@ end
                         
                         obj.signal(:, i, obj.currIter) = sig;
                         obj.sterr(:, i, obj.currIter) = sterr;
+                        obj.normSig(i, obj.currIter) = normSig;
+                        obj.normSterr(i, obj.currIter) = normSterr;
                         
                         success = true;
                         obj.currParamIter = obj.currParamIter + 1;
@@ -500,15 +513,23 @@ end
             S1sterr = squeeze(obj.sterr(1, :, 1:obj.currIter));
             S2 = squeeze(obj.signal(2, :, 1:obj.currIter));
             S2sterr = squeeze(obj.sterr(2, :, 1:obj.currIter));
-            if obj.currIter ~= 1
-                % Calculate the mean
-                S1sterr = obj.getCombinedSterr(S1, S1sterr);
-                S2sterr = obj.getCombinedSterr(S2, S2sterr);
-                S1 = mean(S1, 2);
-                S2 = mean(S2, 2);
-            end
+
+%             S2 = obj.normSig(:, 1:obj.currIter);
+%             S2sterr = obj.normSterr(:, 1:obj.currIter);
+%             S2sterr = getCombinedSterr(obj, S2, S2sterr);
+%             S2 = mean(S2,2);
+            
+
+%             if obj.currIter ~= 1
+%                 % Calculate the mean
+%                 S2sterr = obj.getCombinedSterr(S2, S2sterr);
+%                 S2 = mean(S2, 2);
+%             end
             dataParam = ExpResultDoubleVector('FL', S1, S1sterr, 'kcps', obj.NAME, 'With MW');
             dataParam2 = ExpResultDoubleVector('FL', S2, S2sterr, 'kcps', obj.NAME, 'Without MW');
+
+%             dataParam = ExpResultDoubleVector('FL', S2, S2sterr, 'Normalized', obj.NAME, 'Normal');
+%             dataParam2 = ExpResultDoubleVector('FL', S2, S2sterr, 'Normalized', obj.NAME, 'Pre Normal');
             
             isSingleMeasurement = (isempty(obj.mirrorSweepAround) || obj.nChannels > 1);
             if ~isSingleMeasurement
