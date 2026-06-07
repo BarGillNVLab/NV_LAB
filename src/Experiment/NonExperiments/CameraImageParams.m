@@ -25,55 +25,17 @@ classdef CameraImageParams < handle
     end
 
     methods
-        function obj = CameraImageParams(roi, exposure_time, binning, Avarage_exposures, nframes, timedelay, isMWcontrastImg, MWAmplitude, MWFrequency)
-
-            %%%% default no-args constructor if needed %%%%
-            
-            if nargin == 0
-                obj.roi = obj.DEFAULT_ROI;
-                obj.exposuretime = obj.DEFAULT_EXPOSURE_TIME;
-                obj.binning = obj.DEFAULT_BINNING;
-                obj.Avarage_exposures = false;
-                obj.nframes = 1;
-                obj.timedelay = 0;
-                obj.isMWcontrastImg = false;
-                obj.MWAmplitude = -10;
-                obj.MWFrequency = 2870;
-                return
-            end
-
-            if ~isnumeric(roi) || numel(roi) ~= 4
-                EventStation.anonymousError('ROI must be a numeric array of 4 elements.');
-            end
-        
-            % Ensure all elements are integers
-            if ~all(mod(roi, 1) == 0)
-                EventStation.anonymousError('ROI elements must be integers.');
-            end
-        
-            if roi(1)<1 || roi(2)<1||(roi(3)+roi(1))>MAX_ROI(3)|| (roi(4)+roi(2))<MAX_ROI(4)
-                EventStation.anonymousError('roi not in legal range')
-            end
-
-
-            % check if the booleans are actually booleans
-            objects_to_check_boolean = {'Avarage_exposures', 'isMWcontrastImg'};
-            for i = 1 : length(objects_to_check_boolean)
-                funcParamName = objects_to_check_boolean{i};
-                funcParamValue = eval(funcParamName);
-                if ~ValidationHelper.isTrueOrFalse(funcParamValue)
-                    EventStation.anonymousError('"%s" should be logical!', funcParamName);
-                end
-            end
-            obj.roi = roi;
-            obj.exposuretime = exposure_time;
-            obj.binning = binning;
-            obj.Avarage_exposures = Avarage_exposures;
-            obj.nframes = nframes;
-            obj.timedelay = timedelay;
-            obj.isMWcontrastImg = isMWcontrastImg;
-            obj.MWAmplitude = MWAmplitude;
-            obj.MWFrequency = MWFrequency;
+        function obj = CameraImageParams
+            %%%% default no-args constructor if needed %%%%   
+            obj.Avarage_exposures = false;
+            obj.nframes = 1;
+            obj.timedelay = 0;
+            obj.isMWcontrastImg = false;
+            obj.MWAmplitude = -10;
+            obj.MWFrequency = 2870; 
+            obj.roi = obj.DEFAULT_ROI;
+            obj.exposuretime = obj.DEFAULT_EXPOSURE_TIME;
+            obj.binning = obj.DEFAULT_BINNING;
         end
 
         function phAxis = getFirstImageAxisVector(obj)

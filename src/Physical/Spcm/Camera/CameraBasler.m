@@ -17,6 +17,7 @@ classdef CameraBasler < Camera & EventSender
         DEFAULT_EXPOSURE_TIME = 10;           % default exposure time in ms
         MAXIMUM_BINNING = 4;
         DELAY_BETWEEN_TRIGGERS = 5000;        % minimum delay of 5 ms between triggers (in us)
+        DEFAULT_STRING = 'Camera Parameters';
     end
 
     %% Public properties
@@ -58,9 +59,9 @@ classdef CameraBasler < Camera & EventSender
             if cameraOn
                 stop(obj.vid);
             end
-            obj.setBinning(1);
             obj.setExposureTime(obj.DEFAULT_EXPOSURE_TIME);
             obj.setROI(obj.ROI_DEFULT);
+            obj.setBinning(1);         
         end
 
         function on = IsLoggin(obj)
@@ -126,15 +127,16 @@ classdef CameraBasler < Camera & EventSender
                 error('ROI must be a vector of length 4: [x_init, y_init, width, height]');
             end
             try
+                ImageParams = obj.imgparams;
                 set(obj.vid,'ROIPosition', newROI);
                 v = get(obj.vid);
                 ROI = v.ROIPosition;
                 if ROI ~= newROI
-                    obj.imgparams.roi = ROI;
+                    ImageParams.roi = ROI;
                 else
-                    obj.imgparams.roi = newROI;
+                    ImageParams.roi = newROI;
                 end
-                obj.sendEventScanParamsChanged;
+                obj.imgparams = ImageParams;
             catch
                 obj.sendError('ROI implementation was unsuccessful');
             end
@@ -150,10 +152,11 @@ classdef CameraBasler < Camera & EventSender
 
         function setExposureTime(obj, t)
             % exposure time set to the camera must be in microseconds
+            ImageParams = obj.imgparams;
             obj.setExposureAuto(0);
             obj.src.ExposureTime = t * obj.UNIT_CONV;
-            obj.imgparams.exposuretime = t * obj.UNIT_CONV;
-            obj.sendEventScanParamsChanged;
+            ImageParams.exposuretime = t * obj.UNIT_CONV;
+            obj.imgparams = ImageParams;
         end
 
         function setExposureAuto(obj, state)
@@ -171,6 +174,7 @@ classdef CameraBasler < Camera & EventSender
         end
 
         function setBinning(obj, bin)
+            ImageParams = obj.imgparams;
             cameraOn = islogging(obj.vid);
             ROI = obj.imgparams.roi;
             ibin = obj.imgparams.binning;
@@ -193,8 +197,8 @@ classdef CameraBasler < Camera & EventSender
             yOffset = obj.offset_calculation(bin, ROI(2));
             roi = [xOffset, yOffset, nwidth, nlength];
             obj.setROI(roi);
-            obj.imgparams.binning = bin;
-            obj.sendEventScanParamsChanged;
+            ImageParams.binning = bin;
+            obj.imgparams = ImageParams;
         end
 
         function newOffset = offset_calculation(obj, newBinning, initialOffset)
@@ -296,7 +300,7 @@ classdef CameraBasler < Camera & EventSender
             cameraprop = obj.imgparams;
             if cameraprop.exposuretime ~= obj.src.ExposureTime
                 cameraprop.exposuretime = obj.src.ExposureTime;
-                obj.camera.sendEventScanParamsChanged;
+                obj.imgparams = cameraprop;
             end
         end
     end
@@ -341,12 +345,11 @@ classdef CameraBasler < Camera & EventSender
             end
             obj.setExposureAuto(0);
             obj.src.ExposureMode = 'Timed';
-            obj.setExposureTime(obj.DEFAULT_EXPOSURE_TIME);
             obj.setTriggerType('manual');
             obj.framesPerTrigger(1);
             obj.setTriggerRepeats(0);
             obj.clearMemory;
-            obj.sendEventScanParamsChanged;
+            obj.setExposureTime(obj.DEFAULT_EXPOSURE_TIME);
             fprintf('[INFO] Camera parameters have been reset to default.\n');
         end
     end
@@ -379,4 +382,88 @@ classdef CameraBasler < Camera & EventSender
             set(obj.vid, 'UserData', data);
         end
     end
+
+     %% overriden from Savable
+    methods (Access = protected) 
+        function outStruct = saveStateAsStruct(obj, category, type) %#ok<INUSL>
+            % Saves the state as struct. if you want to save stuff, make
+            % (outStruct = struct;) and put stuff inside. If you dont
+            % want to save, make (outStruct = NaN;)
+            %
+            % category - string. Some objects saves themself only with
+            %                    specific category (image/experiments/etc.)
+            % type - string.     Whether the objects saves at the beginning
+            %                    of the run (parameter) or at its end (result)
+            if ~strcmp(type, Savable.TYPE_PARAMS)
+                outStruct = NaN;
+                return
+            end
+            
+            % Save the three basic camera parameters: ROI, exposure time,
+            % binning. Can add more parameters if needed
+            imageparams = obj.imgparams;
+
+            outStruct = struct( ...
+                'CameraParams', struct( ...
+                    'roi', imageparams.roi, ...
+                    'exposuretime', imageparams.exposuretime, ...
+                    'binning', imageparams.binning));
+        end
+        
+        function loadStateFromStruct(obj, savedStruct, ~, ~)
+
+            if ~isfield(savedStruct, 'CameraParams')
+                obj.sendWarning('CameraParams field not found.');
+                return;
+            end
+        
+            params = savedStruct.CameraParams;
+        
+            % Physically update camera
+            if isfield(params, 'roi')
+                obj.setROI(params.roi);
+            end
+        
+            if isfield(params, 'exposuretime')
+                obj.setExposureTime(params.exposuretime);
+            end
+        
+            if isfield(params, 'binning')
+                obj.setBinning(params.binning);
+            end
+        
+        end
+        function string = returnReadableString(obj, savedStruct)
+
+            string = obj.DEFAULT_STRING; 'Camera Parameters';
+        
+            if ~isfield(savedStruct, 'CameraParams')
+                return;
+            end
+        
+            params = savedStruct.CameraParams;
+        
+            if isfield(params, 'roi')
+                string = sprintf('%s\nROI: [%s]', ...
+                    string, num2str(params.roi));
+            else
+                string = sprintf('%s\nROI: NaN', string);
+            end
+        
+            if isfield(params, 'exposuretime')
+                string = sprintf('%s\nExposure Time: %g ms', ...
+                    string, params.exposuretime/1000);
+            else
+                string = sprintf('%s\nExposure Time: NaN', string);
+            end
+        
+            if isfield(params, 'binning')
+                string = sprintf('%s\nBinning: %g', ...
+                    string, params.binning);
+            else
+                string = sprintf('%s\nBinning: NaN', string);
+            end
+        
+        end
+    end  
 end

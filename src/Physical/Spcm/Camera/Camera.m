@@ -1,4 +1,4 @@
-classdef Camera < BaseObject & EventSender
+classdef Camera < Savable & EventSender
     
     
     properties (Constant, Hidden)
@@ -12,7 +12,6 @@ classdef Camera < BaseObject & EventSender
 
     
     properties (Access = public)
-        binning = 1         % The number of pixels to sum together. For N the binning is N*N pixels
         timeout
         triggertype         % type of trigger the camera has daq/ pulsestreamer
         imgparams           % CameraImageParams object (roi, exposuretime, Avarage_exposures, nframes, timedelay, isMWcontrastImg, MWAmplitude, MWFrequency)
@@ -37,7 +36,7 @@ classdef Camera < BaseObject & EventSender
     methods
 
         function obj = Camera()
-            obj@BaseObject(Camera.NAME)
+            obj@Savable(Camera.NAME)
             obj@EventSender(Camera.NAME);
             
         end
@@ -102,7 +101,11 @@ classdef Camera < BaseObject & EventSender
         % read data from an experiment
         prepareReadbyStage(nPixels, timeout, pixelTime)
 
+   
     end
+
+  
+%%
 
     
 
