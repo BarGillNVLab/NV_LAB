@@ -621,7 +621,19 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             obj.stopFlag = true;
             obj.wrapUp;
             sendEventExpPaused(obj);
-            
+
+            % Autosave when the run stops -- completed, paused, or halted.
+            % The flag is read only here, at the end, so the GUI checkbox
+            % can be toggled at any point during the run.
+            % `first` was set before the loop; currIter >= first means at
+            % least one average completed in THIS invocation.
+            if obj.shouldAutosave && obj.currIter >= first
+                try
+                    obj.save;
+                catch err
+                    err2warning(err)
+                end
+            end
             % Turn off helmholtz if exist
             if ~isempty(h)
                 if strcmp(h.helmControl, h.CONTROL_STATE{2})
@@ -1215,21 +1227,21 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 if isprop(obj, 'weakDetectionDuration')
                     signal = signal./timeNormalization/kc;
                     sterr = sterr./timeNormalization/kc;
-%                     normSig = normSig./timeNormalization/kc;
-%                     normSterr = normSterr./timeNormalization/kc;
+                    normSig = normSig./timeNormalization/kc;
+                    normSterr = normSterr./timeNormalization/kc;
                 else
                     signal = signal./timeNormalization/kc;      %kcounts per second
                     sterr = sterr./timeNormalization/kc;        % convert to kcps
-%                     normSig = normSig./timeNormalization/kc;
-%                     normSterr = normSterr./timeNormalization/kc;
+                    normSig = normSig./timeNormalization/kc;
+                    normSterr = normSterr./timeNormalization/kc;
                 end
             else
                 if spcm.detectionWithGI
                     timeNormalization = timeNormalization / musec;
                     signal = signal./timeNormalization./spcm.GIgain; %kcounts per second
                     sterr = sterr./timeNormalization./spcm.GIgain; % convert to kcps
-%                     normSig = normSig./timeNormalization./spcm.GIgain;
-%                     normSterr = normSterr./timeNormalization./spcm.GIgain;
+                    normSig = normSig./timeNormalization./spcm.GIgain;
+                    normSterr = normSterr./timeNormalization./spcm.GIgain;
                 end
             end
 

@@ -28,8 +28,8 @@ classdef SpcmNiDaqControlled < Spcm & NiDaqControlled
         
         % Channel Names
         DaqGateChannelName % GATE
-        niDaqCountChannelName % SPCM
-        niDaqPgChannelName % PG
+        DaqCountChannelName % SPCM
+        DaqPgChannelName % PG
 
 %         added by LION
         % Scalar counting path (software-gated)
@@ -37,7 +37,7 @@ classdef SpcmNiDaqControlled < Spcm & NiDaqControlled
         spcmCtrNumber = 0;           % which counter we bind for scalar reads (Ctr0 by default)
 
         % Physical PFI string for SPCM input (e.g., 'PFI5') for scalar path
-        spcmCountsPFI = '';          % set in constructor from niDaqCountsChannel
+        spcmCountsPFI = '';          % set in constructor from DaqCountsChannel
 
     end
     
@@ -48,22 +48,22 @@ classdef SpcmNiDaqControlled < Spcm & NiDaqControlled
     
     
     methods
-        function obj = SpcmNiDaqControlled(name, niDaqGateChannel, niDaqCountsChannel, niDaqPgChannel, ...
+        function obj = SpcmNiDaqControlled(name, DaqGateChannel, DaqCountsChannel, DaqPgChannel, ...
                 channelMinValue, channelMaxValue)
             % Contructor, creates the object and registers the channels in
             % the DAQ.
             obj@Spcm(name);
-            niDaqGateChannelName = sprintf('%s_gate', name);
-            niDaqCountChannelName = sprintf('%s_channel', name);
-            niDaqPgChannelName = sprintf('%s_PG_channel', name);
-            obj@NiDaqControlled({niDaqGateChannelName, niDaqCountChannelName, niDaqPgChannelName}, ...
-                {niDaqGateChannel, niDaqCountsChannel, niDaqPgChannel}, channelMinValue, channelMaxValue);
-            obj.niDaqGateChannelName = niDaqGateChannelName;
-            obj.niDaqCountChannelName = niDaqCountChannelName;
-            obj.niDaqPgChannelName = niDaqPgChannelName;
+            DaqGateChannelName = sprintf('%s_gate', name);
+            DaqCountChannelName = sprintf('%s_channel', name);
+            DaqPgChannelName = sprintf('%s_PG_channel', name);
+            obj@NiDaqControlled({DaqGateChannelName, DaqCountChannelName, DaqPgChannelName}, ...
+                {DaqGateChannel, DaqCountsChannel, DaqPgChannel}, channelMinValue, channelMaxValue);
+            obj.DaqGateChannelName = DaqGateChannelName;
+            obj.DaqCountChannelName = DaqCountChannelName;
+            obj.DaqPgChannelName = DaqPgChannelName;
             
             daq = getObjByName(NiDaq.NAME);
-            obj.isEnabled = daq.readDigital(obj.niDaqGateChannelName);
+            obj.isEnabled = daq.readDigital(obj.DaqGateChannelName);
             obj.nScanCounts = 0;
         end
     end
@@ -72,7 +72,7 @@ classdef SpcmNiDaqControlled < Spcm & NiDaqControlled
         function setSPCMEnable(obj, newBooleanValue)
             % Enables/Disables the SPCM.
             daq = getObjByName(NiDaq.NAME);
-            daq.writeDigital(obj.niDaqGateChannelName, newBooleanValue)
+            daq.writeDigital(obj.DaqGateChannelName, newBooleanValue)
             obj.isEnabled = newBooleanValue;
         end
         
@@ -207,7 +207,7 @@ classdef SpcmNiDaqControlled < Spcm & NiDaqControlled
             
             daq = getObjByName(NiDaq.NAME);
             task = daq.CreateDAQPulseWidthMeas(nReads, ...
-                obj.niDaqCountChannelName, obj.niDaqPgChannelName); % Set pulse-width measurement
+                obj.DaqCountChannelName, obj.DaqPgChannelName); % Set pulse-width measurement
             obj.counterExpTask = task;
 
             daq.startTask(obj.counterExpTask);
@@ -263,10 +263,10 @@ classdef SpcmNiDaqControlled < Spcm & NiDaqControlled
             % Creates the measurment in the DAQ according to the parameters
             % in the object.
             if obj.fastScan
-                obj.counterScanSPCMTask = niDaq.CreateDAQEdgeCountingMeas(obj.nScanCounts, obj.niDaqCountChannelName, obj.scanningStageName, 0);
+                obj.counterScanSPCMTask = niDaq.CreateDAQEdgeCountingMeas(obj.nScanCounts, obj.DaqCountChannelName, obj.scanningStageName, 0);
                 obj.counterScanTimeTask = niDaq.CreateDAQEdgeCountingMeas(obj.nScanCounts, niDaq.CHANNEL_100MHZ, obj.scanningStageName, 1);
             else
-                obj.counterScanSPCMTask = niDaq.CreateDAQPulseWidthMeas(obj.nScanCounts, obj.niDaqCountChannelName, obj.scanningStageName, 0);
+                obj.counterScanSPCMTask = niDaq.CreateDAQPulseWidthMeas(obj.nScanCounts, obj.DaqCountChannelName, obj.scanningStageName, 0);
                 obj.counterScanTimeTask = niDaq.CreateDAQPulseWidthMeas(obj.nScanCounts, niDaq.CHANNEL_100MHZ, obj.scanningStageName, 1);
                 obj.countsLastSPCM = 0;
                 obj.countsLastTime = 0;
