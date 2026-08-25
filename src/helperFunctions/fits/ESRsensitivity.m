@@ -1,0 +1,773 @@
+function out = ESRsensitivity(filePath, answers)
+%ESRSENSITIVITY  Magnetic-field sensitivity vs #averages from an autosaved ESR file.
+%
+%   out = ESRsensitivity()           % pick a file, answer 3 dialogs
+%   out = ESRsensitivity(filePath)
+%   out = ESRsensitivity(filePath, answers)   % headless: answers struct
+%   ESRsensitivity('selftest')       % synthetic-data self-check
+%
+% Uses the ESR autosave structure (myStruct.<ESR>) and its NORMALIZED
+% parameters normSig / normSterr (see Experiment.processData / saveResultsToStruct).
+% Reuses the Lorentzian model from ESRfit.m:  c - a*g^2/((x-f0)^2+g^2),  FWHM = 2g.
+%
+% Implements the DC magnetic sensitivity of the MCF project summary (Eqs 13 & 16):
+%   eta_meas      = (4/(3*sqrt3)) * dNu_FWHM / ((g/2pi)*SNR(k)) * sqrt(t_meas)
+%   eta_corrected = eta_meas * sqrt(T_ND)              (ND removes a photon penalty)
+% with SNR(k) = Contrast / sigma_ste(k). sigma_ste(k) is the STANDARD ERROR of the noise
+% after k*R total shots: sigma_ste = sigma_single / sqrt(k*R), where sigma_single is the
+% SINGLE-SHOT noise estimated by POOLING the averages as independent groups (combined-
+% variance formula, https://math.stackexchange.com/q/2971315) so the BETWEEN-average
+% scatter (drift / non-stationarity) is kept, not just standard-error propagation.
+% Because it is an STE, eta_meas DECREASES ~1/sqrt(k) (ideal) and is directly comparable
+% to the shot-noise STE floor; drift flattens the decay. (Eqs 3,4,7,11-16 of the PDF.)
+%
+% answers fields (all optional; missing -> asked via dialog):
+%   .ndTransmission  double in (0,1]   collection-path ND transmission (1 = no ND / ND0.0)
+%   .bg              double            DC background subtracted from the signal (0 = none)
+%   .nDips           1 or 2            number of Lorentzians to fit
+%   .tMeas           double [s]        single-measurement time (overrides the value from the file)
+%   .freq            vector [MHz]      frequency axis, for files whose saved frequencyInternal
+%                                      no longer matches the data. Full vector, or
+%                                      [fStart fStop], or [fStart fStep fStop].
+
+% --- calibration knobs (the physical world needs tuning a minimal model can't see) ---
+GAMMA_HZ_PER_T = 28.025e9;    % NV gyromagnetic ratio g*muB/h (g=2.0028), Hz per Tesla.
+% ponytail: NV g~2.003 assumed (PDF rounded to 28e9). Different g-factor -> change this.
+% t_meas (single-measurement time) = full CW sequence duration, reconstructed from
+% the saved durations exactly as ExpESR.prepare builds the CW sequence (all in us):
+%   10 + 2*laserInitializationDuration + detectionDuration + referenceDetectionDuration
+% (Sequence.duration is the plain sum of event durations; the leading 10 us green
+% pulse is hardcoded in ExpESR.) The PDF body's "t_meas = 2 ns" is a typo.
+ESR_CW_LEAD_US = 10;          % ExpESR.prepare: S.addEvent(10, 'greenLaser')
+
+if nargin >= 1 && ischar(filePath) && strcmp(filePath, 'selftest')
+    out = selftest(); return
+end
+if nargin < 1 || isempty(filePath)
+    [f, p] = uigetfile({'*.mat','ESR autosave (*.mat)'}, 'Pick an autosaved ESR file');
+    if isequal(f, 0); out = []; return; end
+    filePath = fullfile(p, f);
+end
+if nargin < 2; answers = struct(); end
+
+E = loadESRstruct(filePath, getfielddef(answers, 'freq', []));
+
+% ---- preview: raw + normalized spectra with file specs, then the inputs ----
+% Shown only in interactive mode (skipped when `answers` fully specifies the run).
+previewFig = [];
+if ~(isfield(answers,'ndTransmission') && isfield(answers,'bg') && isfield(answers,'nDips'))
+    previewFig = previewFile(E, filePath, ESR_CW_LEAD_US);
+end
+
+% ---- the 3 questions (single window) ----
+[nd, bg, nDips] = askAll(answers);
+if ~isempty(previewFig) && ishandle(previewFig); close(previewFig); end
+
+% ---- assemble per-average normalized data (use only completed averages) ----
+N = E.currIter;
+assert(N >= 2, 'Need at least 2 completed averages (currIter=%d).', N);
+sig  = E.normSig(:, 1:N);      % [nFreq x N]
+serr = E.normSterr(:, 1:N);    % [nFreq x N]
+freq = E.freq(:);              % [nFreq x 1] in MHz
+% assert(size(sig,1) == numel(freq), 'normSig rows (%d) ~= #frequencies (%d).', size(sig,1), numel(freq))
+
+% Q2 BG: subtract the DC background from the signal (ND is handled at the end, Q1).
+sig  = sig - bg;
+
+% Cumulative mean spectrum and its combined error after k averages.
+% Mean of k independent averages, each with standard error serr(:,i):
+%   value = mean_i sig(:,i),   sterr = sqrt(sum serr(:,i)^2)/k   (unweighted-mean prop.)
+cumMean  = cumsum(sig, 2)  ./ (1:N);
+cumSterr = sqrt(cumsum(serr.^2, 2)) ./ (1:N);
+
+% Single-measurement time t_meas = full CW sequence duration [us -> s].
+if isfield(answers, 'tMeas') && ~isempty(answers.tMeas)
+    tMeas = answers.tMeas;
+else
+    if ~isempty(E.mode) && ~strcmpi(E.mode, 'CW')
+        warning('ESRsensitivity:mode', ...
+            'Sequence reconstruction assumes CW mode; file mode is "%s". Pass answers.tMeas.', E.mode);
+    end
+    d = [E.laserInitializationDuration, E.detectionDuration, E.referenceDetectionDuration];
+    assert(all(isfinite(d)), ['Sequence durations (laserInitializationDuration / ' ...
+        'detectionDuration / referenceDetectionDuration) missing from file; pass answers.tMeas.']);
+    tMeas = (ESR_CW_LEAD_US + 2*E.laserInitializationDuration ...
+        + E.detectionDuration + E.referenceDetectionDuration) * 1e-6;
+end
+nrep = E.repeats;
+if ~isfinite(nrep) || nrep <= 0
+    nrep = 1; warning('ESRsensitivity:repeats', 'repeats missing in file; using repeats=1.');
+end
+K = (4/(3*sqrt(3))) * sqrt(tMeas) / GAMMA_HZ_PER_T;   % T/sqrt(Hz) per (Hz / SNR(k))
+
+% ---- sensitivity vs #averages (PDF Eqs 13 & 16), refit per averaging level ----
+% SNR(k) = Contrast / sigma_ste(k), the STE of the noise after k*R TOTAL shots.
+% sigma_single is first the SINGLE-SHOT noise (std) from POOLING averages 1..k as
+% independent groups (combined-variance formula):
+%   sigma_single^2 = [ sum_i (R-1) s_i^2  +  sum_i R (m_i - mu)^2 ] / (k*R - 1)
+% group size R = repeats, group mean m_i = normSig(:,i). normSterr(:,i) is ALREADY the
+% STE of the R repeats, so the within-group std is recovered as s_i = normSterr(:,i)*sqrt(R)
+% (that is why the within term multiplies serr back by sqrt(R)). grand mean mu = mean_i m_i.
+% The 2nd (between) term keeps drift. Then take the STE over all k*R shots:
+%   sigma_ste(k) = sigma_single / sqrt(k*R)
+% so the measured eta DECREASES ~1/sqrt(k) (ideal stationary noise -> exponent -0.5),
+% directly comparable to the shot-noise STE floor below. Drift lifts the late-k tail,
+% making the decay shallower (exponent > -0.5).
+nAvg = 1:N;
+R = nrep;
+% Working point: the single frequency bin ALL noise estimates are read at. It must be the
+% steepest-slope flank (max |dS/dnu|), where frequency->signal conversion is best -- that is
+% the point Eq 4 of the PDF assumes. Take it from the FULL-average fit (best SNR, so the most
+% reliable line position) and snap to the nearest measured bin, instead of hardcoding an index
+% that is only valid for one particular sweep length. fitObj/fdip are reused for the spectrum plot.
+[fitObj, ~, ~, fdip] = fitLorentzians(freq, cumMean(:,end), cumSterr(:,end), nDips);
+[~, div_max] = min(abs(freq - fdip));
+fprintf('working point: bin %d of %d (%.4g MHz, steepest slope of the full-average fit)\n', ...
+    div_max, numel(freq), freq(div_max));
+sigma_shot = @(n1,n2) (n1/n2)*sqrt(1/n1 + 1/n2);
+
+r = E.counts; % [reads x nFreq x averages] kcps, row 1 = signal, row 2 = reference
+[deltaBmin, etaMeas, SNRk, Cn, FWHMn, Sx, Sx_shot,Sx_shot_corrected, SNRk_shot, SNRk_shot_corr] = deal(nan(1, N));
+ideal_ = nan(1, N); norm_end = nan(1, N);
+[etaShot, etaShotCorr] = deal([]);
+for k = 1:N
+    [~, Ck, fwhmk] = fitLorentzians(freq, cumMean(:,k), cumSterr(:,k), nDips);
+    n = R*(k-1);
+    if k == 1 
+        Sx(k) = serr(div_max, k);
+    else  
+        Sy = serr(div_max, k); 
+        a = ((n-1)*n*Sx(k-1)^2 + R*(R-1)*Sy^2)/ (n + R - 1);
+        b = n*R*(mean(sig(div_max, 1:k-1))-sig(div_max, k))^2 / ((n + R - 1)*(n + R));
+        Sx(k) = sqrt((a + b)/(n + R)); % single-shot std at div_max                           
+    end
+    SNRk(k)   = Ck / Sx(k);                           % SNR of the k-averaged spectrum
+    etaMeas(k) = K * (fwhmk * 1e6) * sqrt(k*R) / SNRk(k);          % FWHM MHz->Hz; eta [T/sqrt(Hz)]
+    Cn(k) = Ck; FWHMn(k) = fwhmk;
+    deltaBmin(k) = etaMeas(k) / sqrt(tMeas*k*R);                  % [T]
+
+    % ---- shot-noise-limited sensitivity (photon-counting floor) ----
+    % Per-shot photons N = rate[kcps]*1e3*window[s]. sigma_shot = (N1/N2)*sqrt(1/N1+1/N2)
+    % is the shot noise on the normalized ratio for ONE repeat. Expressed as STE after
+    % k*nrep total shots: sigma_shot_ste(k) = sigma_shot / sqrt(k*nrep). This gives
+    % eta_shot(k) = K*FWHM*sigma_shot_ste(k)/C, a decreasing curve (~1/sqrt(k)) showing
+    % the best possible eta the photon budget allows at each averaging level.
+    % ponytail: assumes standard SPCM path (signal in kcps); GI/photodiode setups differ.
+    N1_ = mean(r(1,48:51,1:k), 'all', 'omitnan') * 1e3 * E.detectionDuration * 1e-6;          % photons/shot, signal
+    N2_ = mean(r(2,48:51,1:k), 'all', 'omitnan') * 1e3 * E.referenceDetectionDuration * 1e-6; % photons/shot, reference
+    ideal_(k) = sigma_shot(N1_, N2_); 
+    norm_end(k) = mean((serr(48:51,1:k).*sqrt(R)).^2,'all')^0.5;
+
+    if ~isempty(E.counts) && size(E.counts, 1) >= 2
+        N1 = mean(r(1,div_max,k), 'all', 'omitnan') * 1e3 * E.detectionDuration * 1e-6;          % photons/shot, signal
+        N2 = mean(r(2,div_max,k), 'all', 'omitnan') * 1e3 * E.referenceDetectionDuration * 1e-6; % photons/shot, reference
+        if k == 1 
+            Sx_shot(k) = sigma_shot(N1, N2)/sqrt(R); % single-shot std at div_max
+            Sx_shot_corrected(k) = sigma_shot(N1/nd, N2/nd)/sqrt(R);
+        else  
+            Sy_shot = sigma_shot(N1, N2)/sqrt(R); 
+            a_shot = ((n-1)*n*Sx_shot(k-1)^2 + R*(R-1)*Sy_shot^2)/ (n + R - 1);
+            b_shot = n*R*(mean(sig(div_max, 1:k-1))-sig(div_max, k))^2 / ((n + R - 1)*(n + R));
+            Sx_shot(k) = sqrt((a_shot+b_shot)/(n + R)); % single-shot std at div_max    
+            
+            Sy_shot_corr = sigma_shot(N1/nd, N2/nd)/sqrt(R); 
+            a_shot_corr = ((n-1)*n*Sx_shot_corrected(k-1)^2 + R*(R-1)*Sy_shot_corr^2)/ (n + R - 1);
+            b_shot_corr = n*R*(mean(sig(div_max, 1:k-1))-sig(div_max, k))^2 *nd^2/ ((n + R - 1)*(n + R));
+            Sx_shot_corrected(k) = sqrt((a_shot_corr+b_shot_corr)/(n + R)); % single-shot std at div_max 
+        end
+        SNRk_shot(k)   = Ck / Sx_shot(k);                           % SNR of the k-averaged spectrum
+        SNRk_shot_corr(k)   = Ck / Sx_shot_corrected(k);
+        etaShot(k) = K * (fwhmk * 1e6) * sqrt(k*R) / SNRk_shot(k);          % FWHM MHz->Hz; eta [T/sqrt(Hz)]
+        etaShotCorr(k) = K * (fwhmk * 1e6) * sqrt(k*R) / SNRk_shot_corr(k);          % FWHM MHz->Hz; eta [T/sqrt(Hz)]  
+    end
+end
+etaCorr = etaMeas .* sqrt(nd);                     % ND-corrected sensitivity (Eq 16): eta_corr = eta_meas*sqrt(T), T=nd<1 => corr<meas (better)
+
+
+
+% open a new figure and plots Sx_, Sx_shot_, and ideal_ vs nAvg, to visualize the shot-noise limit and the measured noise.
+figure;
+hold on; box on; grid on
+% plot(nAvg, Sx_, 'o-', 'MarkerSize', 5, 'LineWidth', 1.2, 'Color', [0 0.2 0.7], 'DisplayName', 'measured single-shot std'); hold on
+% plot(nAvg, Sx_shot_, 's-', 'MarkerSize', 5, 'LineWidth', 1.2, 'Color', [0.2 0.6 0.2], 'DisplayName', 'shot-noise single-shot std');
+plot(nAvg, norm_end);
+plot(nAvg, ideal_);
+
+hold off; xlabel('# averages'); ylabel('Single-shot std (normalized units)'); legend({'system \sigma','ideal \sigma'},'Location', 'best');
+% Absolute min detectable field. etaMeas is now an STE (already carries 1/sqrt(k*R)),
+% so the averaging is folded in: deltaBmin(k) = etaMeas(k)/sqrt(tMeas) [T]. (Proportional
+% to etaMeas now, unlike the old flat-eta design where this was the only improving curve.)
+
+if isempty(etaShot)
+    warning('ESRsensitivity:noCounts', 'No usable raw counts ("signal") in file; skipping shot-noise limit.');
+end
+
+% (fitObj / fdip for the spectrum figure were computed above, when div_max was chosen.)
+
+% ---- fit the measured-sensitivity curve:  eta = A * n^b  (b~-0.5 => ideal 1/sqrt(n)
+% averaging; b > -0.5 => drift makes averaging less effective; b < -0.5 => better than
+% ideal, e.g. a noisy warm-up transient at the start) ----
+good = isfinite(etaMeas) & etaMeas > 0;
+pl = polyfit(log(nAvg(good)), log(etaMeas(good)), 1);
+b = pl(1); A = exp(pl(2));
+etaFit = A * nAvg.^b;
+
+% ---- theoretical limit (PDF "Effect of Averaging on Noise and Sensitivity") ----
+% Ideal eta is a MATERIAL PROPERTY of the working point: K*FWHM*sigma_single/C, independent
+% of averaging (the sqrt(n) in numerator and denominator cancel). Estimate sigma_single from
+% the WITHIN-average (per-shot) noise pooled over ALL averages: this drops the between-average
+% (drift) term, yet uses every average -- so it is BOTH drift-free AND well-determined (unlike
+% any single point, least of all k=1 which has the fewest shots and so the noisiest estimate).
+% serr(:,k) is the STE of the R repeats in average k, so the single-shot std is serr*sqrt(R);
+% pooling = RMS over k. Pair it with the converged (full-average) contrast and FWHM. Drift
+% then lifts the MEASURED curve above this flat floor; the field resolution still goes 1/sqrt(n).
+sigmaWithin     = sqrt(R * mean(serr(div_max,:).^2, 'omitnan'));  % drift-free single-shot std at div_max
+etaIdeal        = K * (FWHMn(end)*1e6) * sigmaWithin / Cn(end);   % flat theoretical eta_B^DC
+etaTheory       = etaIdeal * ones(1, N);                          % flat eta_B^DC (drift-free, all-average)
+etaTheoryCorr   = etaTheory * sqrt(nd);                           % ND-corrected flat line (Eq 16)
+deltaBminTheory = etaIdeal ./ sqrt(tMeas * nAvg * R);            % ideal 1/sqrt(n) field resolution
+
+% ---- plots ----
+plotSpectrum(freq, cumMean(:,end), cumSterr(:,end), fitObj, fdip);
+plotSensitivity(nAvg, etaMeas, etaCorr, etaFit, A, b, deltaBmin, etaShot, etaShotCorr, ...
+    etaTheory, etaTheoryCorr, deltaBminTheory);
+% Raw-count noise check at the working point: empirical average-to-average STD of the
+% signal/reference photon counts (photons/shot) vs the Poisson expectation sqrt(mu/R)
+% (mu = mean per-shot photons; each average is a mean of R repeats -> variance mu/R).
+[sigStd, refStd, sigShot, refShot] = deal([]);
+if ~isempty(E.counts) && size(E.counts,1) >= 2
+    N1v = squeeze(r(1, div_max, 1:N)).' * 1e3 * E.detectionDuration * 1e-6;          % photons/shot per average
+    N2v = squeeze(r(2, div_max, 1:N)).' * 1e3 * E.referenceDetectionDuration * 1e-6;
+    cmean = @(x) cumsum(x) ./ (1:numel(x));
+    cstd  = @(x) arrayfun(@(k) std(x(1:k)), 1:numel(x));   % cumulative empirical STD (std of 1 pt = 0)
+    sigStd  = cstd(N1v);            refStd  = cstd(N2v);
+    sigShot = sqrt(cmean(N1v)/R);   refShot = sqrt(cmean(N2v)/R);
+end
+plotSNRnoise(nAvg, SNRk, Sx, SNRk_shot, Sx_shot, sigStd, sigShot, refStd, refShot);
+plotFitParams(nAvg, Cn, FWHMn);
+if ~isempty(E.counts) && size(E.counts,1) >= 2
+    plotCounts(freq, E.counts, N);
+end
+
+% ---- pack + report ----
+out = struct('eta_meas_TrtHz', etaMeas, 'eta_corrected_TrtHz', etaCorr, ...
+    'eta_fit_TrtHz', etaFit, 'fit_A', A, 'fit_b', b, 'nAverages', nAvg, ...
+    'deltaBmin_T', deltaBmin, 'eta_shot_TrtHz', etaShot, 'eta_shot_corrected_TrtHz', etaShotCorr, ...
+    'eta_theory_TrtHz', etaTheory, 'eta_theory_corrected_TrtHz', etaTheoryCorr, 'deltaBmin_theory_T', deltaBminTheory, ...
+    'SNR', SNRk, 'contrast', Cn, 'FWHM_MHz', FWHMn, 'fitObj', fitObj, ...
+    'ND', nd, 'BG', bg, 'nDips', nDips, 'tMeas_s', tMeas, 'repeats', nrep, 'K', K, ...
+    'workPointBin', div_max, 'workPointFreq_MHz', freq(div_max));
+fprintf(['t_meas = %.3g s (K = %.3g) | last avg: SNR = %.3f, ', ...
+    'eta_meas = %.3g nT/sqrt(Hz), eta_corrected = %.3g nT/sqrt(Hz)\n'], ...
+    tMeas, K, SNRk(end), etaMeas(end)*1e9, etaCorr(end)*1e9);
+if ~isempty(etaShot)
+    ratio = etaMeas(end) / etaShot(end);       % both STE at the same k; ratio = sigma_single/sigma_shot
+    if ratio > 1.3
+        status = sprintf('%.2gx above shot noise (excess technical noise)', ratio);
+    else
+        status = 'shot-noise limited (within count-calibration error)';
+    end
+    fprintf(['shot-noise eta (last avg) = %.3g nT/sqrt(Hz) | eta_meas/eta_shot = %.2f -> %s | ', ...
+        'ND-corrected shot-noise eta (last avg) = %.3g nT/sqrt(Hz)\n'], ...
+        etaShot(end)*1e9, ratio, status, etaShotCorr(end)*1e9);
+end
+end
+
+% ======================================================================
+function E = loadESRstruct(filePath, freqOverride)
+% freqOverride (optional): explicit frequency axis [MHz] for files whose saved parameter
+% state no longer matches the saved data (see the error message below). Either the full
+% vector, or [fStart fStop] / [fStart fStep fStop] to build it.
+S = load(filePath);
+assert(isfield(S, 'myStruct'), '%s has no "myStruct" (not an autosave file).', filePath);
+ms = S.myStruct;
+% Collect EVERY savable carrying normSig -- a file can hold more than one experiment, and
+% only some of them have a frequency axis consistent with their data. Pick the first
+% CONSISTENT one rather than blindly taking the first match.
+fn = fieldnames(ms);
+cand = {}; cname = {};
+for i = 1:numel(fn)
+    v = ms.(fn{i});
+    if isstruct(v) && isfield(v, 'normSig') && ~isempty(v.normSig)
+        cand{end+1} = v; cname{end+1} = fn{i}; %#ok<AGROW>
+    end
+end
+assert(~isempty(cand), 'No experiment with normSig found in the file.');
+
+% ESR stores the swept vector in frequencyInternal. NOTE: during a run ExpESR.changeSequence
+% overwrites obj.frequency with {frequencyInternal(idx)}, so the saved `frequency` is just the
+% LAST set point (a 1-element cell), never the axis -- it is only a fallback for older saves.
+% normSig is wanted as [nFreq x nAverages]; some saves are transposed, so accept whichever
+% dimension the axis matches and flip the data.
+expS = []; E.freq = []; report = '';
+for i = 1:numel(cand)
+    sz = size(cand{i}.normSig);
+    axes_ = {asNumericVec(getfielddef(cand{i}, 'frequencyInternal', [])), ...
+             asNumericVec(getfielddef(cand{i}, 'frequency', []))};
+    if ~isempty(freqOverride); axes_ = [expandAxis(freqOverride, sz), axes_]; end %#ok<AGROW>
+    report = sprintf('%s  %-20s normSig [%s], axis candidates: %s\n', report, cname{i}, ...
+        num2str(sz), mat2str(cellfun(@numel, axes_)));
+    for j = 1:numel(axes_)
+        if     numel(axes_{j}) == sz(1) && sz(1) > 1
+            expS = cand{i}; E.freq = axes_{j};
+        elseif numel(axes_{j}) == sz(2) && sz(2) > 1
+            expS = cand{i}; E.freq = axes_{j};
+            expS.normSig = expS.normSig.'; expS.normSterr = expS.normSterr.';   % -> [nFreq x nAvg]
+        end
+        if ~isempty(expS); break; end
+    end
+    if ~isempty(expS); break; end
+end
+if isempty(expS)
+    error(['No experiment in this file has a frequency axis matching its data:\n%s\n' ...
+        'ExpESR overwrites `frequency` with the last set point during a run, so the axis must ' ...
+        'come from `frequencyInternal` -- here it does not match, meaning the sweep was ' ...
+        'reconfigured after this data was taken. Rather than invent an axis (which would ' ...
+        'corrupt FWHM and hence the sensitivity), pass the real sweep explicitly:\n' ...
+        '    ESRsensitivity(file, struct(''freq'', [fStart fStop]))        %% linspace over nFreq\n' ...
+        '    ESRsensitivity(file, struct(''freq'', [fStart fStep fStop]))\n' ...
+        '    ESRsensitivity(file, struct(''freq'', <full vector>))'], report);
+end
+E.normSig   = expS.normSig;
+E.normSterr = expS.normSterr;
+E.currIter = getfielddef(expS, 'currIter', size(E.normSig, 2));
+E.repeats  = getfielddef(expS, 'repeats',  NaN);
+E.averages = getfielddef(expS, 'averages', size(E.normSig, 2));
+E.detectionDuration          = getfielddef(expS, 'detectionDuration', NaN);
+E.referenceDetectionDuration = getfielddef(expS, 'referenceDetectionDuration', NaN);
+E.laserInitializationDuration = getfielddef(expS, 'laserInitializationDuration', NaN);
+E.mode = getfielddef(expS, 'mode', '');
+% Raw count RATES (kcps) for the shot-noise floor: [reads x nFreq x averages],
+% row 1 = signal, row 2 = reference (Experiment.processData -> kcps). [] if absent.
+% Same transpose caveat as normSig: if the freq axis sits in dim 3, swap dims 2<->3.
+E.counts = getfielddef(expS, 'signal', []);
+nF = numel(E.freq);
+if ~isempty(E.counts) && ndims(E.counts) == 3 && size(E.counts,2) ~= nF && size(E.counts,3) == nF
+    E.counts = permute(E.counts, [1 3 2]);
+end
+if ~isempty(E.counts) && size(E.counts,2) ~= nF
+    warning('ESRsensitivity:countsShape', ...
+        'signal counts are [%s] but the freq axis has %d points; skipping shot-noise floor.', ...
+        num2str(size(E.counts)), nF);
+    E.counts = [];
+end
+end
+
+% ======================================================================
+function [fitObj, C, fwhmMHz, fdip] = fitLorentzians(freq, S, Serr, nDips)
+% Reuse ESRfit's start-point heuristic and Lorentzian shape (FWHM = 2g).
+% Returns the contrast C and FWHM (MHz) of the steepest dip (max C/g), and the
+% steepest-slope frequency. PDF Eq 3 lineshape S = 1 - C/(1+4((nu-nu0)/dNu)^2)
+% is identical to this c - a*g^2/((x-f0)^2+g^2) with a=C, g=dNu/2 (FWHM=2g).
+w = 1 ./ max(Serr, eps).^2;
+cont = max(S) - min(S);
+baseLine = mean(S([1:min(5,end), max(1,end-4):end]));
+df = mean(diff(freq));
+g0 = max(df * sum(S < baseLine - cont/2) / 2, df);
+
+if nDips == 1
+    [~, i] = min(S); c0 = freq(i);
+    ft = fittype('c - a*g^2/((x-f0)^2+g^2)', 'coefficients', {'a','f0','g','c'});
+    sp = [cont, c0, g0, baseLine];
+    lo = [0.3*cont, freq(1),  0.1*g0, 0.7*baseLine];
+    up = [2*cont,   freq(end), 5*g0,  1.3*baseLine];
+    fitObj = fit(freq, S, ft, 'Weights', w, 'StartPoint', sp, 'Lower', lo, 'Upper', up);
+    cv = coeffvalues(fitObj);                 % [a f0 g c]
+    amp = cv(1); gg = cv(3); centers = cv(2);
+else
+    % two dips: seed centers at the two deepest separated minima
+    [c1, c2] = twoMinima(freq, S);
+    ft = fittype('c - a1*g1^2/((x-f1)^2+g1^2) - a2*g2^2/((x-f2)^2+g2^2)', ...
+        'coefficients', {'a1','f1','g1','a2','f2','g2','c'});
+    sp = [cont, c1, g0, cont, c2, g0, baseLine];
+    lo = [0.2*cont, freq(1),  0.1*g0, 0.2*cont, freq(1),  0.1*g0, 0.7*baseLine];
+    up = [2*cont,   freq(end), 5*g0,  2*cont,   freq(end), 5*g0,  1.3*baseLine];
+    fitObj = fit(freq, S, ft, 'Weights', w, 'StartPoint', sp, 'Lower', lo, 'Upper', up);
+    cv = coeffvalues(fitObj);                 % [a1 f1 g1 a2 f2 g2 c]
+    amp = [cv(1) cv(4)]; gg = [cv(3) cv(6)]; centers = [cv(2) cv(5)];
+end
+
+% Pick the steepest dip (max slope ~ a/g). FWHM = 2g, contrast = a.
+[~, k] = max(amp ./ gg);
+C = amp(k);
+fwhmMHz = 2 * gg(k);
+% Steepest slope is at f0 +/- g/sqrt(3). With two dips the INNER flank overlaps the
+% neighbouring dip (slope partially cancels), so mark the OUTER flank: point g/sqrt(3)
+% away from the other dip. Single dip: away from the band centre. (Display only - the
+% sensitivity uses |slope| ~ a/g, identical on both flanks.)
+if numel(centers) > 1
+    sgn = sign(centers(k) - centers(3 - k));  % +1 if chosen dip is the rightmost
+else
+    sgn = sign(centers(k) - mean(freq));
+end
+if sgn == 0; sgn = 1; end
+fdip = centers(k) + sgn * gg(k)/sqrt(3);      % outer steepest-slope frequency
+end
+
+% ======================================================================
+function plotSpectrum(freq, S, Serr, fitObj, fdip)
+figure('Name', 'ESR fit');
+hold on; box on; grid on
+fi = linspace(freq(1), freq(end), 1000);
+errorbar(freq, S, Serr, '.', 'MarkerSize', 9, 'Color', [0 0.2 0.7], 'DisplayName', 'data');
+plot(fi, fitObj(fi), 'LineWidth', 2, 'Color', [0.85 0.33 0.1], 'DisplayName', 'Lorentzian fit');
+xline(fdip, '--', 'steepest slope', 'HandleVisibility', 'off');
+xlabel('Frequency (MHz)'); ylabel('Normalized signal'); legend('Location', 'best');
+set(gca, 'FontSize', 12);
+end
+
+function plotCounts(freq, counts, N)
+% Raw signal (MW on) and reference (MW off) count spectra, averaged over completed
+% averages. counts: [reads x nFreq x averages] kcps; row 1 signal, row 2 reference.
+n = min(N, size(counts, 3));
+sigC = reshape(mean(counts(1,:,1:n), 3, 'omitnan'), [], 1);
+refC = reshape(mean(counts(2,:,1:n), 3, 'omitnan'), [], 1);
+figure('Name', 'Signal & reference counts');
+hold on; box on; grid on
+plot(freq, sigC, 'o-', 'MarkerSize', 4, 'LineWidth', 1.2, 'Color', [0 0.2 0.7], 'DisplayName', 'signal (MW on)');
+plot(freq, refC, 's-', 'MarkerSize', 4, 'LineWidth', 1.2, 'Color', [0.6 0.4 0.1], 'DisplayName', 'reference (MW off)');
+xlabel('Frequency (MHz)'); ylabel('Counts (kcps)'); legend('Location', 'best');
+title(sprintf('Raw counts (mean of %d averages)', n)); set(gca, 'FontSize', 12);
+end
+
+function plotSensitivity(n, etaMeas, etaCorr, etaFit, A, b, deltaBmin, etaShot, etaShotCorr, etaTheory, etaTheoryCorr, deltaBminTheory)
+figure('Name', 'Sensitivity vs #averages');
+
+% (1) Measured sensitivity vs its shot-noise STE floor and the flat theoretical limit.
+ax1 = subplot(3, 1, 1);
+plot(n, etaMeas*1e9, 'o-', 'MarkerSize', 5, 'LineWidth', 1.2, 'Color', [0 0.2 0.7], 'DisplayName', 'measured \eta_B^{DC}'); hold on
+if ~isempty(etaShot)
+    plot(n, etaShot*1e9, ':', 'LineWidth', 1.8, 'Color', [0.3 0.3 0.3], 'DisplayName', 'shot-noise STE floor');
+end
+plot(n, etaTheory*1e9, '--', 'LineWidth', 1.5, 'Color', [0.85 0.1 0.1], 'DisplayName', 'theoretical limit (flat)');
+box on; grid on; ylabel('\eta_B^{DC} (nT/\surdHz)'); legend('Location', 'best');
+title('Measured sensitivity vs shot noise'); set(gca, 'FontSize', 12);
+
+% (2) ND-corrected sensitivity vs its shot-noise STE floor and the flat theoretical limit.
+ax2 = subplot(3, 1, 2);
+plot(n, etaCorr*1e9, 's-', 'MarkerSize', 5, 'LineWidth', 1.2, 'Color', [0.2 0.6 0.2], 'DisplayName', 'ND-corrected \eta_B^{DC}'); hold on
+if ~isempty(etaShotCorr)
+    plot(n, etaShotCorr*1e9, ':', 'LineWidth', 1.8, 'Color', [0.1 0.45 0.1], 'DisplayName', 'shot-noise floor (ND-corrected)');
+end
+plot(n, etaTheoryCorr*1e9, '--', 'LineWidth', 1.5, 'Color', [0.85 0.1 0.1], 'DisplayName', 'theoretical limit (flat)');
+box on; grid on; ylabel('\eta_B^{DC} (nT/\surdHz)'); legend('Location', 'best');
+title('Corrected sensitivity vs shot noise'); set(gca, 'FontSize', 12);
+
+% (3) Absolute min detectable field vs its ideal 1/sqrt(n) limit.
+ax3 = subplot(3, 1, 3);
+plot(n, deltaBmin*1e9, '-', 'LineWidth', 1.8, 'Color', [0.5 0.2 0.6], 'DisplayName', '\deltaB_{min}'); hold on
+plot(n, deltaBminTheory*1e9, '--', 'LineWidth', 1.5, 'Color', [0.85 0.1 0.1], 'DisplayName', 'theoretical 1/\surdn');
+box on; grid on; ylabel('\deltaB_{min} (nT)'); xlabel('# averages'); legend('Location', 'best');
+title('Absolute min detectable field'); set(gca, 'FontSize', 12);
+
+linkaxes([ax1 ax2 ax3], 'x');
+end
+
+function plotSNRnoise(n, SNRk, Sx, SNRk_shot, Sx_shot, sigStd, sigShot, refStd, refShot)
+% (1) SNR, (2) normalized noise, (3) signal-count STD, (4) reference-count STD vs
+% #averages, each with its shot-noise counterpart overlaid.
+figure('Name', 'SNR & noise vs #averages');
+
+ax1 = subplot(2, 2, 1);
+plot(n, SNRk, 'o-', 'MarkerSize', 5, 'LineWidth', 1.2, 'Color', [0 0.2 0.7], 'DisplayName', 'measured SNR'); hold on
+if any(isfinite(SNRk_shot))
+    plot(n, SNRk_shot, ':', 'LineWidth', 1.8, 'Color', [0.3 0.3 0.3], 'DisplayName', 'shot-noise SNR');
+end
+box on; grid on; ylabel('SNR'); legend('Location', 'best');
+title('SNR vs #averages'); set(gca, 'FontSize', 12);
+
+ax2 = subplot(2, 2, 2);
+plot(n, Sx, 's-', 'MarkerSize', 5, 'LineWidth', 1.2, 'Color', [0.85 0.33 0.1], 'DisplayName', 'measured noise \sigma (STE of mean)'); hold on
+if any(isfinite(Sx_shot))
+    plot(n, Sx_shot, ':', 'LineWidth', 1.8, 'Color', [0.3 0.3 0.3], 'DisplayName', 'shot-noise \sigma');
+end
+box on; grid on; ylabel('noise \sigma'); title('Normalized noise vs #averages'); set(gca, 'FontSize', 12);
+legend('Location', 'best');
+
+ax3 = subplot(2, 2, 3);
+if ~isempty(sigStd)
+    plot(n, sigStd, 'o-', 'MarkerSize', 5, 'LineWidth', 1.2, 'Color', [0 0.2 0.7], 'DisplayName', 'real STD (signal)'); hold on
+    plot(n, sigShot, ':', 'LineWidth', 1.8, 'Color', [0.3 0.3 0.3], 'DisplayName', 'shot noise \surd(\mu/R)');
+end
+box on; grid on; ylabel('STD (photons/shot)'); xlabel('# averages');
+title('Signal counts: real STD vs shot noise'); set(gca, 'FontSize', 12); legend('Location', 'best');
+
+ax4 = subplot(2, 2, 4);
+if ~isempty(refStd)
+    plot(n, refStd, 's-', 'MarkerSize', 5, 'LineWidth', 1.2, 'Color', [0.6 0.4 0.1], 'DisplayName', 'real STD (reference)'); hold on
+    plot(n, refShot, ':', 'LineWidth', 1.8, 'Color', [0.3 0.3 0.3], 'DisplayName', 'shot noise \surd(\mu/R)');
+end
+box on; grid on; ylabel('STD (photons/shot)'); xlabel('# averages');
+title('Reference counts: real STD vs shot noise'); set(gca, 'FontSize', 12); legend('Location', 'best');
+
+linkaxes([ax1 ax2 ax3 ax4], 'x');
+end
+
+function plotFitParams(n, Cn, FWHMn)
+% Lorentzian fit parameters of the cumulative-mean spectrum vs #averages:
+% (1) contrast and (2) FWHM. Both come from the per-average refit (fitLorentzians).
+figure('Name', 'Fit parameters vs #averages');
+
+ax1 = subplot(2, 1, 1);
+plot(n, Cn*100, 'o-', 'MarkerSize', 5, 'LineWidth', 1.2, 'Color', [0 0.2 0.7], 'DisplayName', 'contrast');
+box on; grid on; ylabel('contrast (%)'); legend('Location', 'best');
+title('Contrast vs #averages'); set(gca, 'FontSize', 12);
+
+ax2 = subplot(2, 1, 2);
+plot(n, FWHMn, 's-', 'MarkerSize', 5, 'LineWidth', 1.2, 'Color', [0.85 0.33 0.1], 'DisplayName', 'FWHM');
+box on; grid on; ylabel('FWHM (MHz)'); xlabel('# averages'); legend('Location', 'best');
+title('FWHM vs #averages'); set(gca, 'FontSize', 12);
+
+linkaxes([ax1 ax2], 'x');
+end
+
+% ======================================================================
+function [c1, c2] = twoMinima(freq, S)
+[~, i1] = min(S);
+mask = abs(freq - freq(i1)) > (freq(end)-freq(1))/10;   % exclude near the 1st dip
+Sm = S; Sm(~mask) = max(S);
+[~, i2] = min(Sm);
+c1 = freq(i1); c2 = freq(i2);
+end
+
+function [nd, bg, nDips] = askAll(answers)
+% All three inputs in ONE inputdlg window. answers fields (if present) override and
+% pre-fill the corresponding default; a fully-specified answers struct skips the dialog.
+%   ND: enter optical density OD (0 = no ND); transmission nd = 10^(-OD).
+%   BG: DC background to subtract (normalized-signal units; 0 = none).
+%   nDips: 1 or 2 Lorentzians to fit.
+if isfield(answers,'ndTransmission') && isfield(answers,'bg') && isfield(answers,'nDips')
+    nd = answers.ndTransmission; bg = answers.bg; nDips = answers.nDips; return
+end
+ndDef   = '0'; bgDef = '0'; dipsDef = '1';
+if isfield(answers,'ndTransmission'); ndDef   = num2str(-log10(answers.ndTransmission)); end
+if isfield(answers,'bg');             bgDef   = num2str(answers.bg); end
+if isfield(answers,'nDips');          dipsDef = num2str(answers.nDips); end
+prompts = {'ND optical density OD (0 = no ND; transmission = 10^{-OD}):', ...
+           'DC background to subtract (normalized-signal units; 0 = none):', ...
+           'Number of dips (1 or 2):'};
+a = inputdlg(prompts, 'ESR sensitivity inputs', 1, {ndDef, bgDef, dipsDef});
+assert(~isempty(a), 'Inputs required.');
+od = str2double(a{1}); assert(od >= 0, 'OD must be >= 0.');
+nd = 10^(-od); bg = str2double(a{2}); nDips = str2double(a{3});
+assert(nDips == 1 || nDips == 2, 'nDips must be 1 or 2.');
+% headless partial override
+if isfield(answers,'ndTransmission'); nd = answers.ndTransmission; end
+if isfield(answers,'bg');             bg = answers.bg; end
+if isfield(answers,'nDips');          nDips = answers.nDips; end
+end
+
+function v = getfielddef(s, f, d)
+if isfield(s, f) && ~isempty(s.(f)); v = s.(f); else; v = d; end
+end
+
+function c = expandAxis(spec, sz)
+% Candidate frequency axes from a user-supplied spec, as a cell: a full vector is used
+% as-is; [start step stop] is explicit; [start stop] is spread over EITHER data dimension
+% (we do not know yet which one is frequency -- the caller matches by length).
+spec = double(spec(:));
+switch numel(spec)
+    case 2; c = {linspace(spec(1), spec(2), sz(1)).', linspace(spec(1), spec(2), sz(2)).'};
+    case 3; c = {(spec(1):spec(2):spec(3)).'};
+    otherwise; c = {spec};
+end
+end
+
+function v = asNumericVec(x)
+% Flatten a possibly-cell-wrapped axis to a numeric column ([] if not convertible).
+if iscell(x)
+    num = x(cellfun(@isnumeric, x));
+    v = vertcat(num{:});                 % {vec} -> vec ; {a,b,c} -> [a;b;c]
+elseif isnumeric(x)
+    v = x;
+else
+    v = [];
+end
+v = double(v(:));
+end
+
+% ======================================================================
+function fig = previewFile(E, filePath, leadUS)
+%PREVIEWFILE  Pre-run look at the file: raw signal/reference counts, the
+% normalized spectrum, and the acquisition parameters that drive t_meas.
+% Purely informational -- closed automatically once the input dialog returns.
+[~, fname, fext] = fileparts(filePath);
+N    = E.currIter;
+freq = E.freq(:);
+nF   = numel(freq);
+
+fig = figure('Name', ['ESR preview -- ' fname fext], 'Color', 'w', ...
+    'NumberTitle', 'off', 'Position', [80 80 1180 620]);
+
+% ---------- panel 1: raw counts (signal & reference, kcps) ----------
+ax1 = subplot('Position', [0.055 0.56 0.60 0.36]); hold(ax1, 'on');
+haveCounts = ~isempty(E.counts) && ndims(E.counts) == 3 && size(E.counts,2) == nF;
+if haveCounts
+    nUse = min(N, size(E.counts, 3));
+    sigC = squeeze(mean(E.counts(1, :, 1:nUse), 3));    % [1 x nF] kcps
+    refC = squeeze(mean(E.counts(2, :, 1:nUse), 3));
+    plot(ax1, freq, refC, '-o', 'Color', [0.20 0.55 0.30], 'LineWidth', 1.5, ...
+        'MarkerSize', 3.5, 'MarkerFaceColor', [0.55 0.85 0.60], 'DisplayName', 'reference (MW off)');
+    plot(ax1, freq, sigC, '-o', 'Color', [0.80 0.25 0.15], 'LineWidth', 1.5, ...
+        'MarkerSize', 3.5, 'MarkerFaceColor', [1.00 0.65 0.55], 'DisplayName', 'signal (MW on)');
+    ylabel(ax1, 'count rate (kcps)');
+    legend(ax1, 'Location', 'best', 'FontSize', 8.5);
+else
+    text(ax1, 0.5, 0.5, 'raw counts not available in this file', 'Units', 'normalized', ...
+        'HorizontalAlignment', 'center', 'Color', [0.45 0.45 0.45], 'FontAngle', 'italic');
+    set(ax1, 'XTick', [], 'YTick', []);
+end
+grid(ax1, 'on'); box(ax1, 'on');
+title(ax1, 'Raw counts (mean over completed averages)', 'FontWeight', 'bold');
+if haveCounts; xlim(ax1, [freq(1) freq(end)]); end
+
+% ---------- panel 2: normalized spectrum ----------
+ax2 = subplot('Position', [0.055 0.09 0.60 0.36]); hold(ax2, 'on');
+nSig = mean(E.normSig(:, 1:N), 2);
+if ~isempty(E.normSterr)
+    nErr = sqrt(sum(E.normSterr(:, 1:N).^2, 2)) / N;    % STE of the mean
+    errorbar(ax2, freq, nSig, nErr, 'o', 'Color', [0.15 0.35 0.75], 'MarkerSize', 4.5, ...
+        'MarkerFaceColor', [0.55 0.72 1.00], 'CapSize', 3, 'DisplayName', 'normSig +/- STE');
+else
+    plot(ax2, freq, nSig, '-o', 'Color', [0.15 0.35 0.75], 'LineWidth', 1.6, ...
+        'MarkerSize', 4.5, 'DisplayName', 'normSig');
+end
+[mn, imn] = min(nSig);
+plot(ax2, freq(imn), mn, 'v', 'Color', [0.85 0.20 0.20], 'MarkerFaceColor', [0.85 0.20 0.20], ...
+    'MarkerSize', 8, 'HandleVisibility', 'off');
+text(ax2, freq(imn), mn, sprintf('  min %.4f @ %.2f MHz', mn, freq(imn)), ...
+    'Color', [0.85 0.20 0.20], 'FontSize', 8.5, 'VerticalAlignment', 'top');
+grid(ax2, 'on'); box(ax2, 'on'); xlim(ax2, [freq(1) freq(end)]);
+xlabel(ax2, 'frequency (MHz)'); ylabel(ax2, 'normalized signal');
+title(ax2, 'Normalized spectrum (mean over completed averages)', 'FontWeight', 'bold');
+legend(ax2, 'Location', 'best', 'FontSize', 8.5);
+
+% ---------- panel 3: file / acquisition specs ----------
+% All saved durations are in MICROSECONDS.
+L = {};
+L{end+1} = '\bfFile\rm';
+L{end+1} = ['  ' fname fext];
+L{end+1} = '';
+L{end+1} = '\bfSweep\rm';
+L{end+1} = sprintf('  %d points,  %.2f - %.2f MHz', nF, freq(1), freq(end));
+if nF > 1
+    L{end+1} = sprintf('  step %.3f MHz', (freq(end)-freq(1))/(nF-1));
+end
+L{end+1} = '';
+L{end+1} = '\bfAveraging\rm';
+L{end+1} = sprintf('  completed averages: %d', N);
+if isfinite(E.averages) && E.averages ~= N
+    L{end+1} = sprintf('  planned averages:   %d', E.averages);
+end
+if isfinite(E.repeats)
+    L{end+1} = sprintf('  repeats per point:  %d', E.repeats);
+    L{end+1} = sprintf('  total shots/point:  %s', addCommas(E.repeats * N));
+end
+L{end+1} = '';
+L{end+1} = '\bfSequence durations [us]\rm';
+L{end+1} = sprintf('  green lead:        %g', leadUS);
+L{end+1} = sprintf('  laser init:        %g  (x2)', E.laserInitializationDuration);
+L{end+1} = sprintf('  detection:         %g', E.detectionDuration);
+L{end+1} = sprintf('  ref. detection:    %g', E.referenceDetectionDuration);
+d = [E.laserInitializationDuration, E.detectionDuration, E.referenceDetectionDuration];
+if all(isfinite(d))
+    tMeasUS = leadUS + 2*E.laserInitializationDuration + E.detectionDuration + E.referenceDetectionDuration;
+    L{end+1} = ['  \bft_{meas} = ' sprintf('%g us', tMeasUS) '\rm  (= ' sprintf('%.3g s)', tMeasUS*1e-6)];
+    if isfinite(E.repeats)
+        tPt = tMeasUS * E.repeats * 1e-6;
+        L{end+1} = sprintf('  per freq point:    %.4g s', tPt);
+        L{end+1} = sprintf('  per average:       %.4g s', tPt * nF);
+        L{end+1} = sprintf('  total acquired:    %.4g s', tPt * nF * N);
+    end
+else
+    L{end+1} = '  (durations incomplete -> pass answers.tMeas)';
+end
+L{end+1} = '';
+L{end+1} = '\bfOther\rm';
+if ~isempty(E.mode); L{end+1} = sprintf('  mode: %s', E.mode); end
+if haveCounts
+    L{end+1} = sprintf('  ref level:  %.1f kcps', mean(refC));
+    L{end+1} = sprintf('  contrast:   %.2f %%', (1 - mn)*100);
+else
+    L{end+1} = '  raw counts: not saved';
+end
+
+annotation(fig, 'textbox', [0.675 0.075 0.305 0.85], 'String', L, ...
+    'Interpreter', 'tex', 'FontSize', 9, 'BackgroundColor', [0.97 0.97 0.99], ...
+    'EdgeColor', [0.55 0.60 0.75], 'LineWidth', 1.2, 'Margin', 6, ...
+    'FitBoxToText', 'off', 'VerticalAlignment', 'top');
+
+annotation(fig, 'textbox', [0 0.955 1 0.04], 'String', ...
+    'ESR file preview -- close-read the data, then enter the analysis inputs', ...
+    'FontSize', 12, 'FontWeight', 'bold', 'HorizontalAlignment', 'center', ...
+    'EdgeColor', 'none');
+drawnow;
+end
+
+function s = addCommas(n)
+%ADDCOMMAS  Thousands separators for a non-negative integer.
+s = sprintf('%d', round(n));
+for i = numel(s)-3 : -3 : 1
+    s = [s(1:i) ',' s(i+1:end)];
+end
+end
+
+% ======================================================================
+function out = selftest()
+% Synthetic ESR: one Lorentzian dip + white per-average noise, known timing.
+rng(0);
+freq = (2770:2:2970)';                 % MHz
+nF = numel(freq); nAvg = 50;
+a = 0.15; g = 6; f0 = 2870; c = 1.0;   % contrast, half-width, center, baseline
+clean = c - a*g^2./((freq-f0).^2 + g^2);
+noise1 = 0.02;                          % single-average sterr
+normSig = clean + noise1*randn(nF, nAvg);
+normSterr = noise1*ones(nF, nAvg);
+% Full CW sequence: 10 + 2*laserInit + detection + reference = 10+2*5+1+1 = 22 us
+laserInit = 5; det = 1; ref = 1;
+tMeasExpected = (10 + 2*laserInit + det + ref) * 1e-6;
+% Raw count rates [reads x nFreq x averages] in kcps: with det=ref=1us, 1e5 kcps
+% -> N = 1e5*1e3*1e-6 = 100 photons/shot -> sigma_shot = sqrt(2/100) ~ 0.141 < 0.2.
+counts = 1e5 * ones(2, nF, nAvg);
+ESR = struct('normSig', normSig, 'normSterr', normSterr, 'frequency', freq', ...
+    'frequencyInternal', freq', 'currIter', nAvg, 'repeats', 100, 'averages', nAvg, ...
+    'mode', 'CW', 'laserInitializationDuration', laserInit, ...
+    'detectionDuration', det, 'referenceDetectionDuration', ref, 'signal', counts);
+myStruct = struct('ESR', ESR); %#ok<NASGU>
+tmp = [tempname '.mat'];
+save(tmp, 'myStruct');
+nd = 0.01;   % ND2.0 -> corrected should be measured/10
+out = ESRsensitivity(tmp, struct('ndTransmission', nd, 'bg', 0, 'nDips', 1));
+delete(tmp);
+assert(abs(out.tMeas_s - tMeasExpected) < 1e-12, 'selftest: full CW t_meas not reconstructed.');
+% Ideal stationary noise => sigma_single constant => eta is an STE ~1/sqrt(k) => b~-0.5.
+assert(abs(out.fit_b + 0.5) < 0.12, 'selftest: expected ~1/sqrt(n) decay (b~-0.5), got b=%.3f', out.fit_b);
+% ND-corrected sensitivity must be measured * sqrt(T) = measured/10 for ND2.0 (PDF Eq 16).
+assert(all(abs(out.eta_corrected_TrtHz - out.eta_meas_TrtHz*sqrt(nd)) < 1e-30), ...
+    'selftest: corrected ~= measured*sqrt(T).');
+% Cross-check the PDF closed form against the loop for the last point.
+K = (4/(3*sqrt(3)))*sqrt(out.tMeas_s)/28.025e9;
+etaPdf = K * (out.FWHM_MHz(end)*1e6) / out.SNR(end);
+assert(abs(etaPdf - out.eta_meas_TrtHz(end)) < 1e-3*etaPdf, 'selftest: eta ~= PDF formula.');
+% Shot-noise STE floor below the measured eta at the SAME k (sigma_shot 0.141 < sigma_single 0.2);
+% both decrease as 1/sqrt(k) so the ratio is k-independent -> compare at full averaging.
+assert(isfinite(out.eta_shot_TrtHz(end)) && out.eta_shot_TrtHz(end) < out.eta_meas_TrtHz(end), ...
+    'selftest: shot-noise STE floor should sit below measured eta (got %.3g).', out.eta_shot_TrtHz(end));
+% Drift check: inject an average-to-average baseline drift LARGE vs the single-shot
+% noise (sigma_single = serr*sqrt(R) = 0.2 here) -> the pooled single-shot noise grows
+% with averages -> the 1/sqrt(k) decay flattens (b moves UP toward 0, i.e. less negative).
+% Pure SE-propagation (the old formula) keeps the ideal slope and misses this. Mild drift
+% (<< sigma_single) is correctly a non-event; only poor reproducibility (drift >> error
+% bar) degrades the decay. Drift here is deliberately strong (~40x the per-average error bar).
+drift = linspace(0, 40*noise1, nAvg);                % [1 x nAvg] per-average baseline shift
+ESRd = ESR; ESRd.normSig = normSig + drift;          % implicit-expanded over frequency
+myStruct = struct('ESR', ESRd); %#ok<NASGU>
+tmpd = [tempname '.mat']; save(tmpd, 'myStruct');
+outd = ESRsensitivity(tmpd, struct('ndTransmission', 1, 'bg', 0, 'nDips', 1));
+delete(tmpd);
+assert(outd.fit_b > out.fit_b + 0.05, ...
+    'selftest: drift should worsen sensitivity with averages (b_drift=%.3f <= b_flat=%.3f).', ...
+    outd.fit_b, out.fit_b);
+fprintf('selftest passed: b=%.3f (ideal ~-0.5), SNR=%.3f, eta_meas=%.3g nT/sqrt(Hz)\n', ...
+    out.fit_b, out.SNR(end), out.eta_meas_TrtHz(end)*1e9);
+end
