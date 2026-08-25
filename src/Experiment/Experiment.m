@@ -622,16 +622,28 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             obj.wrapUp;
             sendEventExpPaused(obj);
 
-            % Autosave when the run stops -- completed, paused, or halted.
-            % The flag is read only here, at the end, so the GUI checkbox
-            % can be toggled at any point during the run.
-            % `first` was set before the loop; currIter >= first means at
-            % least one average completed in THIS invocation.
+                        % Autosave when the run stops -- completed, paused, or halted.
+            % The flag is read only here, so the GUI checkbox can be toggled
+            % at any point during the run. currIter >= first means at least
+            % one average completed in THIS invocation (guards against
+            % re-saving when Start is pressed on an already-finished run).
             if obj.shouldAutosave && obj.currIter >= first
+                if obj.currIter >= obj.averages
+                    obj.autosaveReason = sprintf('run completed, %d averages', obj.currIter);
+                else
+                    obj.autosaveReason = sprintf('run stopped after %d of %d averages', ...
+                        obj.currIter, obj.averages);
+                end
                 try
-                    obj.save;
+                    obj.save;   % onEvent() prints the filename on success
                 catch err
+                    obj.autosaveReason = '';
                     err2warning(err)
+                end
+                if ~isempty(obj.autosaveReason)
+                    % No success event arrived -- the save did not complete
+                    obj.autosaveReason = '';
+                    obj.sendWarning('Autosave was requested, but no file was written.')
                 end
             end
             % Turn off helmholtz if exist
@@ -1015,6 +1027,11 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 folder = event.extraInfo.(SaveLoad.EVENT_FOLDER);
                 filename = event.extraInfo.(SaveLoad.EVENT_FILENAME);
                 obj.savePlot(folder, filename);
+                if ~isempty(obj.autosaveReason)
+                    fprintf('[%s] Autosaved (%s)\n       %s\n', ...
+                        obj.NAME, obj.autosaveReason, PathHelper.joinToFullPath(folder, filename));
+                    obj.autosaveReason = '';
+                end
                 return
             end
             
