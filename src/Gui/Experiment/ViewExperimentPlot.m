@@ -5,7 +5,7 @@ classdef ViewExperimentPlot < ViewVBox & EventListener
         expName
         
         vAxes
-        
+        cbxAutosave
         progressbarAverages
         progressbarParameters
         btnStartStop
@@ -66,7 +66,21 @@ classdef ViewExperimentPlot < ViewVBox & EventListener
                 'String', '<html><center>Open In<br />Figure</center></html>', ...
                 'Callback', @obj.btnOpenInFigureCallback);
             
-            hboxControls.Widths = [-1, 100, 150, 70];
+                        % Autosave toggle. Wrapped in a VBox so the checkbox is
+            % vertically centred rather than stretched by the HBox.
+            vboxAutosave = uix.VBox('Parent', hboxControls, 'Padding', 0);
+                uix.Empty('Parent', vboxAutosave);
+                obj.cbxAutosave = uicontrol(...
+                    'Parent', vboxAutosave, ...
+                    'Style', 'checkbox', ...
+                    'String', 'Autosave', ...
+                    'TooltipString', 'Autosave results when the run completes', ...
+                    'Value', logical(exp.shouldAutosave), ...
+                    'Callback', @obj.cbxAutosaveCallback);
+                uix.Empty('Parent', vboxAutosave);
+            vboxAutosave.Heights = [-1, 20, -1];
+            
+            hboxControls.Widths = [-1, 100, 150, 70, 80];
             obj.progressbarParameters = progressbar(fig, 0, 'Parameters Progress Bar');
             obj.btnEmergencyStop = uicontrol(obj.PROP_BUTTON_BIG_RED{:}, ...
                 'Parent', fig, ...
@@ -129,7 +143,16 @@ classdef ViewExperimentPlot < ViewVBox & EventListener
             exp.plotResultsWhenSwitchingViews;
             drawnow
         end
-        
+
+        function cbxAutosaveCallback(obj, ~, ~)
+            exp = getExpByName(obj.expName);
+            if isempty(exp)
+                EventStation.anonymousWarning('%s Experiment does not exist!', obj.expName)
+                return
+            end
+            exp.shouldAutosave = logical(obj.cbxAutosave.Value);
+        end
+
         function btnEmergencyStopCallback(obj, ~, ~)
             exp = getObjByName(obj.expName);
             if isempty(exp)
@@ -194,7 +217,10 @@ classdef ViewExperimentPlot < ViewVBox & EventListener
                 % Take care of Restart button
                 obj.btnStartStop.isRunning = exp.isRunning;
                 obj.btnRestart.Enable = BooleanHelper.boolToOnOff(~exp.isRunning && inTheMiddleOfRun);
-            
+                
+                % Autosave checkbox: stays live during the run, so the user
+                % can decide mid-experiment whether the result gets saved.
+                obj.cbxAutosave.Value = logical(exp.shouldAutosave);
                 % Display type
                 if exp.isPlotAlternateAvailable
                     obj.radioAlterDisplay.Enable = 'on';
