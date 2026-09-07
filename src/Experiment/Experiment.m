@@ -538,6 +538,9 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 % if QuestionUserYesNo(strTitle, strQuestion)
                 %     obj.restartFlag = true;
                 % end
+                if QuestionUserYesNo(strTitle, strQuestion)
+                    obj.restartFlag = true;
+                end
             end
             if obj.restartFlag
                 % Resetting data
@@ -622,7 +625,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             obj.wrapUp;
             sendEventExpPaused(obj);
 
-                        % Autosave when the run stops -- completed, paused, or halted.
+            % Autosave when the run stops -- completed, paused, or halted.
             % The flag is read only here, so the GUI checkbox can be toggled
             % at any point during the run. currIter >= first means at least
             % one average completed in THIS invocation (guards against
@@ -915,6 +918,8 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                     xAxisParam = obj.mCurrentXAxisParam;
                 end
             else % We are not in alternate plot, but there is something to plot
+%                 obj.signalParam.value = mean(obj.normSig,2);
+%                 obj.signalParam.sterr = mean(obj.normSterr,2);
                 dataParam = obj.signalParam;
                 if isa(obj.signalParam2, 'ExpParameter') && ~isempty(obj.signalParam2.value) % Check if we have a second signal to plot over the first
                     dataParam2Plus = obj.signalParam2;
@@ -1225,40 +1230,79 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 s = obj.checkGlitchInRawData(rawData, s);
             end
 
+%             start = BooleanHelper.ifTrueElse(size(s,1) > 10, 2, 1);     % removing the first repeat because the first detection is not after init sequence. Yachel 08.05.22
+% %             if spcm.hasPhotodiode
+%                 % normalization of the signal before avarage, to reduce low frequency noise. Yachel 03/25
+%                 refSignal = s(:, 1:2:end) ./ s(:, 2:2:end);
+%                 ref = mean(s(start:end, 2:2:end), "omitnan");
+%                 s(:, 1:2:end) = ref .* refSignal;
+%                 s(:, 2:2:end) = ref +  refSignal * 0;
+% %             end
+% 
+%             signal = mean(s(start:end, :), "omitnan");                  % "omitnan" to ignore bad repeat and not throw all this point. added by yachel 23.07.23
+%             sterr = ste(s(start:end, :));
+%             normSig = mean(s(start:end, 1)./s(start:end, 2), "omitnan");
+%             normSterr = ste(s(start:end, 1)./s(start:end, 2));
+
+
+
+            % lion - fix for inf or NaN in the SPCM readout 25/08/2026
             start = BooleanHelper.ifTrueElse(size(s,1) > 10, 2, 1);     % removing the first repeat because the first detection is not after init sequence. Yachel 08.05.22
-%             if spcm.hasPhotodiode
-                % normalization of the signal before avarage, to reduce low frequency noise. Yachel 03/25
-                refSignal = s(:, 1:2:end) ./ s(:, 2:2:end);
-                ref = mean(s(start:end, 2:2:end), "omitnan");
-                s(:, 1:2:end) = ref .* refSignal;
-                s(:, 2:2:end) = ref +  refSignal * 0;
-%             end
+
+            % Guard against empty detection windows. A reference gate with
+            % zero counts makes the ratio Inf, and "omitnan" does NOT filter
+            % Inf -- a single bad repeat would poison the whole average.
+            % Map zero-count and non-finite entries to NaN so omitnan can
+            % actually drop them.
+%             sRef = s(:, 2:2:end);
+%             sRef(sRef <= 0 | ~isfinite(sRef)) = NaN;
+% 
+%             % normalization of the signal before avarage, to reduce low frequency noise. Yachel 03/25
+%             refSignal = s(:, 1:2:end) ./ sRef;
+%             refSignal(~isfinite(refSignal)) = NaN;
+% 
+%             ref = mean(sRef(start:end, :), "omitnan");
+%             ref(~isfinite(ref)) = 1;        % no counts at all: keep sizes valid
+% 
+%             s(:, 1:2:end) = ref .* refSignal;
+%             s(:, 2:2:end) = ref + refSignal * 0;
 
             signal = mean(s(start:end, :), "omitnan");                  % "omitnan" to ignore bad repeat and not throw all this point. added by yachel 23.07.23
             sterr = ste(s(start:end, :));
-            normSig = mean(s(start:end, 1)./s(start:end, 2), "omitnan");
-            normSterr = ste(s(start:end, 1)./s(start:end, 2));
 
+            ratio = s(start:end, 1) ./ s(start:end, 2);
+            ratio(~isfinite(ratio)) = NaN;
+            nValid = sum(~isnan(ratio));
+            if nValid == 0
+                normSig   = NaN;            % nothing usable at this point
+                normSterr = NaN;
+            else
+                normSig   = mean(ratio, "omitnan");
+                normSterr = ste(ratio);
+            end
+            if ~isfinite(normSig);   normSig   = NaN; end
+            if ~isfinite(normSterr); normSterr = NaN; end
+            
             if ~spcm.hasPhotodiode
                 % added by Ittai for weak measurement without normalization
                 if isprop(obj, 'weakDetectionDuration')
                     signal = signal./timeNormalization/kc;
                     sterr = sterr./timeNormalization/kc;
-                    normSig = normSig./timeNormalization/kc;
-                    normSterr = normSterr./timeNormalization/kc;
+%                     normSig = normSig./timeNormalization/kc;
+%                     normSterr = normSterr./timeNormalization/kc;
                 else
                     signal = signal./timeNormalization/kc;      %kcounts per second
                     sterr = sterr./timeNormalization/kc;        % convert to kcps
-                    normSig = normSig./timeNormalization/kc;
-                    normSterr = normSterr./timeNormalization/kc;
+%                     normSig = normSig./timeNormalization/kc;
+%                     normSterr = normSterr./timeNormalization/kc;
                 end
             else
                 if spcm.detectionWithGI
                     timeNormalization = timeNormalization / musec;
                     signal = signal./timeNormalization./spcm.GIgain; %kcounts per second
                     sterr = sterr./timeNormalization./spcm.GIgain; % convert to kcps
-                    normSig = normSig./timeNormalization./spcm.GIgain;
-                    normSterr = normSterr./timeNormalization./spcm.GIgain;
+%                     normSig = normSig./timeNormalization./spcm.GIgain;
+%                     normSterr = normSterr./timeNormalization./spcm.GIgain;
                 end
             end
 
@@ -1384,6 +1428,10 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             
             obj.signal = zeros(obj.detectionPeriodsPerRepeat * obj.runsPerPerform, obj.getTotalNumberOfParams, obj.averages);
             obj.sterr = zeros(obj.detectionPeriodsPerRepeat * obj.runsPerPerform, obj.getTotalNumberOfParams, obj.averages);
+            if isprop(obj, 'normSig')
+                obj.normSig = squeeze(zeros(obj.detectionPeriodsPerRepeat * obj.runsPerPerform / 2, obj.getTotalNumberOfParams, obj.averages));
+                obj.normSterr = squeeze(zeros(obj.detectionPeriodsPerRepeat * obj.runsPerPerform / 2, obj.getTotalNumberOfParams, obj.averages));
+            end
             
             obj.signalParam.value = [];
             obj.signalParam2.value = [];
@@ -2234,7 +2282,11 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             switch nargin
                 case 1
                     % Use case 1
-                    sl.save;
+                    if obj.shouldAutosave
+                        sl.autoSave
+                    else
+                        sl.save;
+                    end
                 case 2
                     filename = PathHelper.getFileNameFromFullPathFile(path);
                     if isempty(filename)

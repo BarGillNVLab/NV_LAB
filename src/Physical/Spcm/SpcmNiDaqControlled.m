@@ -84,7 +84,7 @@ classdef SpcmNiDaqControlled < Spcm & NiDaqControlled
             obj.nTimeCounts = integrationTimeInSec*100e3; % 100kHz basis.
             
             niDaq = getObjByName(NiDaq.NAME);
-            obj.counterTimeTask = CreateDAQEdgeCountingMeas(niDaq,  obj.nTimeCounts, obj.niDaqCountChannelName, niDaq.CHANNEL_100kHZ);
+            obj.counterTimeTask = CreateDAQEdgeCountingMeas(niDaq,  obj.nTimeCounts, obj.DaqCountChannelName, niDaq.CHANNEL_100kHZ);
             niDaq.startTask(obj.counterTimeTask);
         end
         
