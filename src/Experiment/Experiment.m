@@ -89,6 +89,10 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         appendBlank = 0             % double. in us. the duration of zero I,Q to append to the waveform.
         baseband = [];              % double, MHz. user defined baseband for the AWG
         frequencyInternal           % double, MHz. populated automatically if needed to save obj.frequency parameters before they are changed
+        
+        autosaveReason = '';
+
+        
         % clearAWG = true             % logical. Whether to clear the sequences from the awg or not. Default is true.
 %         IQ.wv_path;             % string array
 %         IQ.IQ_arrays; % creating a 2x1x3 matrix. [2,i,j] - 2: I&Q, i: IQ vector length, j: number of segments. if IQ vector length = 1, we will create a constant I&Q with that value.
@@ -2274,10 +2278,13 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             % need to set it as The Current Experiment
             Experiment.getSetCurrentExp(obj.NAME);
             
+%             sl = SaveLoad.getInstance(Savable.CATEGORY_EXPERIMENTS);
+%             if ~isfield(sl.mLocalSaveStruct, obj.NAME)
+%                 sl.saveParamsToLocalStruct();
+%             end
+%             sl.saveResultsToLocalStruct();
             sl = SaveLoad.getInstance(Savable.CATEGORY_EXPERIMENTS);
-            if ~isfield(sl.mLocalSaveStruct, obj.NAME)
-                sl.saveParamsToLocalStruct();
-            end
+            sl.saveParamsToLocalStruct();     % always regenerate filename/timestamp
             sl.saveResultsToLocalStruct();
             switch nargin
                 case 1

@@ -28,7 +28,7 @@ classdef ExpESR < Experiment
         singletDelay        % in us. For Pulsed ESR. day between Laser and MW
         normSig
         normSterr
-        autosaveReason
+%         autosaveReason
     end
     
     properties %(Hidden, Access = private)
