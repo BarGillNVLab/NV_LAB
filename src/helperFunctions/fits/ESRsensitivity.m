@@ -159,10 +159,10 @@ for k = 1:N
     % eta_shot(k) = K*FWHM*sigma_shot_ste(k)/C, a decreasing curve (~1/sqrt(k)) showing
     % the best possible eta the photon budget allows at each averaging level.
     % ponytail: assumes standard SPCM path (signal in kcps); GI/photodiode setups differ.
-    N1_ = mean(r(1,48:51,1:k), 'all', 'omitnan') * 1e3 * E.detectionDuration * 1e-6;          % photons/shot, signal
-    N2_ = mean(r(2,48:51,1:k), 'all', 'omitnan') * 1e3 * E.referenceDetectionDuration * 1e-6; % photons/shot, reference
+    N1_ = mean(r(1,size(r,2)-4:size(r,2)-1,1:k), 'all', 'omitnan') * 1e3 * E.detectionDuration * 1e-6;          % photons/shot, signal
+    N2_ = mean(r(2,size(r,2)-4:size(r,2)-1,1:k), 'all', 'omitnan') * 1e3 * E.referenceDetectionDuration * 1e-6; % photons/shot, reference
     ideal_(k) = sigma_shot(N1_, N2_); 
-    norm_end(k) = mean((serr(48:51,1:k).*sqrt(R)).^2,'all')^0.5;
+    norm_end(k) = mean((serr(size(r,2)-4:size(r,2),1:k).*sqrt(R)).^2,'all')^0.5;
 
     if ~isempty(E.counts) && size(E.counts, 1) >= 2
         N1 = mean(r(1,div_max,k), 'all', 'omitnan') * 1e3 * E.detectionDuration * 1e-6;          % photons/shot, signal

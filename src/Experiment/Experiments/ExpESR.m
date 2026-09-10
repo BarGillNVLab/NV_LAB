@@ -28,6 +28,7 @@ classdef ExpESR < Experiment
         singletDelay        % in us. For Pulsed ESR. day between Laser and MW
         normSig
         normSterr
+%         autosaveReason
     end
     
     properties %(Hidden, Access = private)
@@ -514,10 +515,10 @@ end
             S2 = squeeze(obj.signal(2, :, 1:obj.currIter));
             S2sterr = squeeze(obj.sterr(2, :, 1:obj.currIter));
 
-%             S2 = obj.normSig(:, 1:obj.currIter);
-%             S2sterr = obj.normSterr(:, 1:obj.currIter);
-%             S2sterr = getCombinedSterr(obj, S2, S2sterr);
-%             S2 = mean(S2,2);
+            S5 = obj.normSig(:, 1:obj.currIter);
+            S5sterr = obj.normSterr(:, 1:obj.currIter);
+            S5sterr = getCombinedSterr(obj, S5, S5sterr);
+            S5 = mean(S5,2);
             
 
 %             if obj.currIter ~= 1
@@ -528,8 +529,7 @@ end
             dataParam = ExpResultDoubleVector('FL', S1, S1sterr, 'kcps', obj.NAME, 'With MW');
             dataParam2 = ExpResultDoubleVector('FL', S2, S2sterr, 'kcps', obj.NAME, 'Without MW');
 
-%             dataParam = ExpResultDoubleVector('FL', S2, S2sterr, 'Normalized', obj.NAME, 'Normal');
-%             dataParam2 = ExpResultDoubleVector('FL', S2, S2sterr, 'Normalized', obj.NAME, 'Pre Normal');
+            dataParam5 = ExpResultDoubleVector('FL', S5, S5sterr, 'Normalized', obj.NAME, 'Normal');
             
             isSingleMeasurement = (isempty(obj.mirrorSweepAround) || obj.nChannels > 1);
             if ~isSingleMeasurement
@@ -547,7 +547,7 @@ end
                 end
                 dataParam3 = ExpResultDoubleVector('FL', S3, S3sterr, 'kcps', obj.NAME, 'With MW - Mirrored');
                 dataParam4 = ExpResultDoubleVector('FL', S4, S4sterr, 'kcps', obj.NAME, 'Without MW - Mirrored');
-                params = {dataParam, {dataParam2, dataParam3, dataParam4}, {'yParam', 'yParam2+'}};
+                params = {dataParam, {dataParam3, dataParam4}, {'yParam', 'yParam2+'}};
             else
                 params = {dataParam, dataParam2, {'yParam', 'yParam2'}};
             end
