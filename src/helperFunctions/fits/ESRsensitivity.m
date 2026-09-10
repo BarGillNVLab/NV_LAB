@@ -29,6 +29,12 @@ function out = ESRsensitivity(filePath, answers)
 %   .freq            vector [MHz]      frequency axis, for files whose saved frequencyInternal
 %                                      no longer matches the data. Full vector, or
 %                                      [fStart fStop], or [fStart fStep fStop].
+%   .plots           which figures to draw. Interactively these are the V-markers
+%                                      (checkboxes) of the input dialog; headless, pass
+%                                      'all' (default) / 'none', a cellstr of keys, a
+%                                      logical vector in catalog order, or a struct of
+%                                      logicals. Keys: see plotCatalog() below --
+%                                      noise, spectrum, sensitivity, snr, fitparams, counts.
 
 % --- calibration knobs (the physical world needs tuning a minimal model can't see) ---
 GAMMA_HZ_PER_T = 28.025e9;    % NV gyromagnetic ratio g*muB/h (g=2.0028), Hz per Tesla.
@@ -59,8 +65,8 @@ if ~(isfield(answers,'ndTransmission') && isfield(answers,'bg') && isfield(answe
     previewFig = previewFile(E, filePath, ESR_CW_LEAD_US);
 end
 
-% ---- the 3 questions (single window) ----
-[nd, bg, nDips] = askAll(answers);
+% ---- the questions + the figure V-markers (single window) ----
+[nd, bg, nDips, plots] = askAll(answers);
 if ~isempty(previewFig) && ishandle(previewFig); close(previewFig); end
 
 % ---- assemble per-average normalized data (use only completed averages) ----
@@ -186,14 +192,16 @@ etaCorr = etaMeas .* sqrt(nd);                     % ND-corrected sensitivity (E
 
 
 % open a new figure and plots Sx_, Sx_shot_, and ideal_ vs nAvg, to visualize the shot-noise limit and the measured noise.
-figure;
-hold on; box on; grid on
-% plot(nAvg, Sx_, 'o-', 'MarkerSize', 5, 'LineWidth', 1.2, 'Color', [0 0.2 0.7], 'DisplayName', 'measured single-shot std'); hold on
-% plot(nAvg, Sx_shot_, 's-', 'MarkerSize', 5, 'LineWidth', 1.2, 'Color', [0.2 0.6 0.2], 'DisplayName', 'shot-noise single-shot std');
-plot(nAvg, norm_end);
-plot(nAvg, ideal_);
+if plots.noise
+    figure('Name', 'Single-shot noise vs #averages');
+    hold on; box on; grid on
+    % plot(nAvg, Sx_, 'o-', 'MarkerSize', 5, 'LineWidth', 1.2, 'Color', [0 0.2 0.7], 'DisplayName', 'measured single-shot std'); hold on
+    % plot(nAvg, Sx_shot_, 's-', 'MarkerSize', 5, 'LineWidth', 1.2, 'Color', [0.2 0.6 0.2], 'DisplayName', 'shot-noise single-shot std');
+    plot(nAvg, norm_end);
+    plot(nAvg, ideal_);
 
-hold off; xlabel('# averages'); ylabel('Single-shot std (normalized units)'); legend({'system \sigma','ideal \sigma'},'Location', 'best');
+    hold off; xlabel('# averages'); ylabel('Single-shot std (normalized units)'); legend({'system \sigma','ideal \sigma'},'Location', 'best');
+end
 % Absolute min detectable field. etaMeas is now an STE (already carries 1/sqrt(k*R)),
 % so the averaging is folded in: deltaBmin(k) = etaMeas(k)/sqrt(tMeas) [T]. (Proportional
 % to etaMeas now, unlike the old flat-eta design where this was the only improving curve.)
@@ -227,15 +235,19 @@ etaTheory       = etaIdeal * ones(1, N);                          % flat eta_B^D
 etaTheoryCorr   = etaTheory * sqrt(nd);                           % ND-corrected flat line (Eq 16)
 deltaBminTheory = etaIdeal ./ sqrt(tMeas * nAvg * R);            % ideal 1/sqrt(n) field resolution
 
-% ---- plots ----
-plotSpectrum(freq, cumMean(:,end), cumSterr(:,end), fitObj, fdip);
-plotSensitivity(nAvg, etaMeas, etaCorr, etaFit, A, b, deltaBmin, etaShot, etaShotCorr, ...
-    etaTheory, etaTheoryCorr, deltaBminTheory);
+% ---- plots (each gated by its V-marker from the input dialog) ----
+if plots.spectrum
+    plotSpectrum(freq, cumMean(:,end), cumSterr(:,end), fitObj, fdip);
+end
+if plots.sensitivity
+    plotSensitivity(nAvg, etaMeas, etaCorr, etaFit, A, b, deltaBmin, etaShot, etaShotCorr, ...
+        etaTheory, etaTheoryCorr, deltaBminTheory);
+end
 % Raw-count noise check at the working point: empirical average-to-average STD of the
 % signal/reference photon counts (photons/shot) vs the Poisson expectation sqrt(mu/R)
 % (mu = mean per-shot photons; each average is a mean of R repeats -> variance mu/R).
 [sigStd, refStd, sigShot, refShot] = deal([]);
-if ~isempty(E.counts) && size(E.counts,1) >= 2
+if plots.snr && ~isempty(E.counts) && size(E.counts,1) >= 2
     N1v = squeeze(r(1, div_max, 1:N)).' * 1e3 * E.detectionDuration * 1e-6;          % photons/shot per average
     N2v = squeeze(r(2, div_max, 1:N)).' * 1e3 * E.referenceDetectionDuration * 1e-6;
     cmean = @(x) cumsum(x) ./ (1:numel(x));
@@ -243,9 +255,13 @@ if ~isempty(E.counts) && size(E.counts,1) >= 2
     sigStd  = cstd(N1v);            refStd  = cstd(N2v);
     sigShot = sqrt(cmean(N1v)/R);   refShot = sqrt(cmean(N2v)/R);
 end
-plotSNRnoise(nAvg, SNRk, Sx, SNRk_shot, Sx_shot, sigStd, sigShot, refStd, refShot);
-plotFitParams(nAvg, Cn, FWHMn);
-if ~isempty(E.counts) && size(E.counts,1) >= 2
+if plots.snr
+    plotSNRnoise(nAvg, SNRk, Sx, SNRk_shot, Sx_shot, sigStd, sigShot, refStd, refShot);
+end
+if plots.fitparams
+    plotFitParams(nAvg, Cn, FWHMn);
+end
+if plots.counts && ~isempty(E.counts) && size(E.counts,1) >= 2
     plotCounts(freq, E.counts, N);
 end
 
@@ -255,7 +271,7 @@ out = struct('eta_meas_TrtHz', etaMeas, 'eta_corrected_TrtHz', etaCorr, ...
     'deltaBmin_T', deltaBmin, 'eta_shot_TrtHz', etaShot, 'eta_shot_corrected_TrtHz', etaShotCorr, ...
     'eta_theory_TrtHz', etaTheory, 'eta_theory_corrected_TrtHz', etaTheoryCorr, 'deltaBmin_theory_T', deltaBminTheory, ...
     'SNR', SNRk, 'contrast', Cn, 'FWHM_MHz', FWHMn, 'fitObj', fitObj, ...
-    'ND', nd, 'BG', bg, 'nDips', nDips, 'tMeas_s', tMeas, 'repeats', nrep, 'K', K, ...
+    'ND', nd, 'BG', bg, 'nDips', nDips, 'plots', plots, 'tMeas_s', tMeas, 'repeats', nrep, 'K', K, ...
     'workPointBin', div_max, 'workPointFreq_MHz', freq(div_max));
 fprintf(['t_meas = %.3g s (K = %.3g) | last avg: SNR = %.3f, ', ...
     'eta_meas = %.3g nT/sqrt(Hz), eta_corrected = %.3g nT/sqrt(Hz)\n'], ...
@@ -530,12 +546,16 @@ Sm = S; Sm(~mask) = max(S);
 c1 = freq(i1); c2 = freq(i2);
 end
 
-function [nd, bg, nDips] = askAll(answers)
-% All three inputs in ONE inputdlg window. answers fields (if present) override and
-% pre-fill the corresponding default; a fully-specified answers struct skips the dialog.
+function [nd, bg, nDips, plots] = askAll(answers)
+% All inputs in ONE window: the three numbers plus a V-marker (checkbox) per output
+% figure. answers fields (if present) override and pre-fill the corresponding default;
+% an answers struct that specifies the three numbers skips the dialog entirely.
 %   ND: enter optical density OD (0 = no ND); transmission nd = 10^(-OD).
 %   BG: DC background to subtract (normalized-signal units; 0 = none).
 %   nDips: 1 or 2 Lorentzians to fit.
+%   plots: struct of logicals, one field per plotCatalog key -- which figures to draw.
+pc = plotCatalog();
+plots = plotSelection(getfielddef(answers, 'plots', []), pc);
 if isfield(answers,'ndTransmission') && isfield(answers,'bg') && isfield(answers,'nDips')
     nd = answers.ndTransmission; bg = answers.bg; nDips = answers.nDips; return
 end
@@ -543,10 +563,10 @@ ndDef   = '0'; bgDef = '0'; dipsDef = '1';
 if isfield(answers,'ndTransmission'); ndDef   = num2str(-log10(answers.ndTransmission)); end
 if isfield(answers,'bg');             bgDef   = num2str(answers.bg); end
 if isfield(answers,'nDips');          dipsDef = num2str(answers.nDips); end
-prompts = {'ND optical density OD (0 = no ND; transmission = 10^{-OD}):', ...
+prompts = {'ND optical density OD (0 = no ND; transmission = 10^-OD):', ...
            'DC background to subtract (normalized-signal units; 0 = none):', ...
            'Number of dips (1 or 2):'};
-a = inputdlg(prompts, 'ESR sensitivity inputs', 1, {ndDef, bgDef, dipsDef});
+[a, plots] = inputsAndPlotsDlg(prompts, {ndDef, bgDef, dipsDef}, pc, plots);
 assert(~isempty(a), 'Inputs required.');
 od = str2double(a{1}); assert(od >= 0, 'OD must be >= 0.');
 nd = 10^(-od); bg = str2double(a{2}); nDips = str2double(a{3});
@@ -555,6 +575,123 @@ assert(nDips == 1 || nDips == 2, 'nDips must be 1 or 2.');
 if isfield(answers,'ndTransmission'); nd = answers.ndTransmission; end
 if isfield(answers,'bg');             bg = answers.bg; end
 if isfield(answers,'nDips');          nDips = answers.nDips; end
+end
+
+function pc = plotCatalog()
+%PLOTCATALOG  The figures this function can draw: {key, checkbox label}.
+% Row order = checkbox order in the dialog = field order of the `plots` struct =
+% index order of a logical `answers.plots` vector. Add a figure here and gate its
+% call site on plots.<key>; nothing else needs to know about it.
+pc = { ...
+    'noise',       'Single-shot noise vs #averages (system vs ideal sigma)'
+    'spectrum',    'ESR fit (spectrum + Lorentzian)'
+    'sensitivity', 'Sensitivity vs #averages (eta, ND-corrected, deltaB_min)'
+    'snr',         'SNR & noise vs #averages'
+    'fitparams',   'Fit parameters vs #averages (contrast, FWHM)'
+    'counts',      'Signal & reference counts vs frequency'
+    };
+end
+
+function p = plotSelection(spec, pc)
+%PLOTSELECTION  Normalize an answers.plots spec into a struct of logicals.
+% spec: [] (default -- everything on) | 'all' | 'none' | cellstr of keys to enable |
+% logical/numeric vector in catalog order | struct with any subset of the keys.
+keys = pc(:,1);
+p = cell2struct(repmat({true}, numel(keys), 1), keys, 1);
+if isempty(spec); return; end
+if ischar(spec) || (isstring(spec) && isscalar(spec))
+    switch lower(char(spec))
+        case 'all';  return
+        case 'none'; spec = {};
+        otherwise;   spec = {char(spec)};
+    end
+elseif isstring(spec)
+    spec = cellstr(spec);
+end
+if isstruct(spec)
+    f = fieldnames(spec);
+    bad = setdiff(f, keys);
+    assert(isempty(bad), 'Unknown answers.plots field(s): %s', strjoin(bad, ', '));
+    for i = 1:numel(f); p.(f{i}) = logical(spec.(f{i})); end
+    return
+end
+if islogical(spec) || isnumeric(spec)
+    assert(numel(spec) == numel(keys), ...
+        'A logical answers.plots must have %d entries (one per figure), got %d.', ...
+        numel(keys), numel(spec));
+    for i = 1:numel(keys); p.(keys{i}) = logical(spec(i)); end
+    return
+end
+assert(iscell(spec), ['answers.plots must be [], ''all''/''none'', a cellstr of keys, ' ...
+    'a logical vector or a struct of logicals.']);
+sel = lower(cellfun(@char, spec(:), 'UniformOutput', false));
+bad = setdiff(sel, keys);
+assert(isempty(bad), 'Unknown answers.plots key(s): %s', strjoin(bad, ', '));
+for i = 1:numel(keys); p.(keys{i}) = ismember(keys{i}, sel); end
+end
+
+function [a, plots] = inputsAndPlotsDlg(prompts, defaults, pc, plots)
+%INPUTSANDPLOTSDLG  inputdlg-style modal window that also carries one V-marker
+% (checkbox) per output figure, so the user picks which figures to get BEFORE the
+% analysis runs. Returns a = {} (and the incoming `plots` untouched) if cancelled.
+keys  = pc(:,1);
+nBox  = numel(keys);
+W     = 580; padL = 14; lblH = 18; rowH = 24; gap = 8; btnH = 26;
+panelH  = 20 + nBox*22 + 8 + btnH + 8;              % title strip + boxes + All/None row
+inputsH = numel(prompts)*(lblH + rowH + gap);
+H       = 12 + inputsH + 6 + panelH + 14 + btnH + 12;
+
+ok  = false;
+fig = figure('Name', 'ESR sensitivity inputs', 'NumberTitle', 'off', ...
+    'MenuBar', 'none', 'ToolBar', 'none', 'Resize', 'off', 'WindowStyle', 'modal', ...
+    'Color', get(0, 'defaultUicontrolBackgroundColor'), 'Position', [0 0 W H], ...
+    'CloseRequestFcn', @(src,~) uiresume(src));
+movegui(fig, 'center');
+
+y  = H - 12;
+ed = gobjects(1, numel(prompts));
+for i = 1:numel(prompts)
+    y = y - lblH;
+    uicontrol(fig, 'Style', 'text', 'String', prompts{i}, 'HorizontalAlignment', 'left', ...
+        'Position', [padL y W-2*padL lblH]);
+    y = y - rowH;
+    ed(i) = uicontrol(fig, 'Style', 'edit', 'String', defaults{i}, 'BackgroundColor', 'w', ...
+        'HorizontalAlignment', 'left', 'Position', [padL y W-2*padL rowH-2]);
+    y = y - gap;
+end
+
+y = y - 6 - panelH;
+pnl = uipanel(fig, 'Title', 'Figures to plot', 'Units', 'pixels', ...
+    'Position', [padL y W-2*padL panelH]);
+cb = gobjects(1, nBox);
+for i = 1:nBox
+    cb(i) = uicontrol(pnl, 'Style', 'checkbox', 'String', pc{i,2}, ...
+        'Value', plots.(keys{i}), 'HorizontalAlignment', 'left', ...
+        'Position', [10 panelH-20-i*22 W-2*padL-24 20]);
+end
+uicontrol(pnl, 'Style', 'pushbutton', 'String', 'All', 'Position', [10 8 70 btnH], ...
+    'Callback', @(~,~) set(cb, 'Value', 1));
+uicontrol(pnl, 'Style', 'pushbutton', 'String', 'None', 'Position', [88 8 70 btnH], ...
+    'Callback', @(~,~) set(cb, 'Value', 0));
+
+uicontrol(fig, 'Style', 'pushbutton', 'String', 'OK', 'Position', [W-2*90-padL-8 12 90 btnH], ...
+    'Callback', @(~,~) accept());
+uicontrol(fig, 'Style', 'pushbutton', 'String', 'Cancel', 'Position', [W-90-padL 12 90 btnH], ...
+    'Callback', @(~,~) uiresume(fig));
+
+uiwait(fig);
+if ok
+    a = get(ed, 'String');
+    if ~iscell(a); a = {a}; end
+    for i = 1:nBox; plots.(keys{i}) = logical(get(cb(i), 'Value')); end
+else
+    a = {};
+end
+delete(fig);
+
+    function accept()
+        ok = true; uiresume(fig);
+    end
 end
 
 function v = getfielddef(s, f, d)
