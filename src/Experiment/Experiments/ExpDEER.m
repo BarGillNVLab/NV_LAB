@@ -181,19 +181,14 @@ classdef ExpDEER < Experiment
     end
     
     %% Overridden from Experiment
-    methods (Access = protected)
-        function prepare(obj)
-            % Initialize devices (SPCM, PulseGenerator, etc.)
-            
-            % Sequence
-            %%% Useful parameters for what follows
+    methods
+        function S = buildSequence(obj)
+            % Build the DEER sequence, without touching any hardware.
+            % Called by prepare(), and by the GUI to preview the
+            % sequence live while its parameters are being edited.
             initDuration = obj.laserInitializationDuration-obj.detectionDuration-obj.referenceDetectionDuration;
-            obj.detectionPeriodsPerRepeat = 2 * (1 + double(obj.doubleMeasurement));
-            obj.runsPerPerform = 1;
             MWChannel = obj.MWChannel;
             piTime_diff = abs(obj.piTime_scan - obj.piTime); %assuming piTime_scan is longer than piTime (relevant in the sequence)
-            
-            %%% Creating the sequence
             S = Sequence;
             for k = 1:1+obj.doubleMeasurement
                 S.addEvent(obj.halfPiTime,                  MWChannel);                         % MW in x
@@ -230,6 +225,23 @@ classdef ExpDEER < Experiment
                  S.addEvent(1,                   'greenLaser');                                  % 1usec delay to ensure full overlap of ref detection and laser, and to init first repaet (less important), Ofir 28.02.22
 
             end
+        end
+    end
+    
+    methods (Access = protected)
+        function prepare(obj)
+            % Initialize devices (SPCM, PulseGenerator, etc.)
+            
+            % Sequence
+            %%% Useful parameters for what follows
+            initDuration = obj.laserInitializationDuration-obj.detectionDuration-obj.referenceDetectionDuration;
+            obj.detectionPeriodsPerRepeat = 2 * (1 + double(obj.doubleMeasurement));
+            obj.runsPerPerform = 1;
+            MWChannel = obj.MWChannel;
+            piTime_diff = abs(obj.piTime_scan - obj.piTime); %assuming piTime_scan is longer than piTime (relevant in the sequence)
+            
+            %%% Creating the sequence
+            S = obj.buildSequence();
             
             obj.prepareInternal(S)
             

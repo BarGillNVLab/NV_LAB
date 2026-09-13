@@ -237,7 +237,69 @@ end
     end
     
     %% Overridden from Experiment
+    methods
+        function S = buildSequence(obj)
+            % Build the ESR sequence, without touching any hardware.
+            % Called by prepare(), and by the GUI to preview the sequence
+            % live while its parameters are being edited.
+            MWChannel = obj.MWChannel;
+            S = Sequence;
+            switch obj.mode
+                case 'CW'
+                    switch obj.nChannels
+                        case 1
+                            P = Pulse(obj.detectionDuration,        {MWChannel{1}, 'greenLaser', 'detector'});
+                        case 2
+                            P = Pulse(obj.detectionDuration,        {MWChannel, 'MW2', 'greenLaser', 'detector'});
+                        otherwise
+                            obj.sendError('What should we do here?')
+                    end
+                    
+                    S.addEvent(10,                      'greenLaser');
+                    S.addEvent(obj.laserInitializationDuration,     {MWChannel{1}, 'greenLaser'});
+                    S.addPulse(P);
+                    S.addEvent(obj.laserInitializationDuration,     {'greenLaser'});
+                    S.addEvent(obj.referenceDetectionDuration,      {'greenLaser','detector'});
+                case 'pulsed'
+                    initDuration = obj.laserInitializationDuration-obj.detectionDuration-obj.referenceDetectionDuration;
+                    lastDelay = Experiment.DEFAULT_LAST_DELAY;
+                    
+                    if length(obj.piTime) ~= obj.nChannels
+                        obj.sendError('There should be pi pulse time for each MW channel')
+                    end
+                    
+                    S.addEvent(obj.piTime(1),                   MWChannel)
+                    if obj.nChannels > 1
+                        S.addEventAtGivenTime(0, obj.piTime(2), 'MW2');                     % Add second MW at the same time as first MW
+                    end
+                    
+                    S.addEvent(lastDelay,                       '');                        % Last delay
+                    S.addEvent(obj.detectionDuration,           {'greenLaser','detector'})  % Detection
+                    S.addEvent(initDuration,                    'greenLaser')               % Initialization
+                    S.addEvent(obj.referenceDetectionDuration,...
+                                                                {'greenLaser','detector'})  % Reference detection
+                    S.addEvent(obj.singletDelay,                       '');                        % Last delay
+            end
+        end
+    end
+    
     methods (Access = protected)
+        function warnIfDurationsMismatchMode(obj)
+            % Durations that look like they belong to the other mode are
+            % worth flagging, but only when actually about to run - not on
+            % every edit made during a live preview.
+            switch obj.mode
+                case 'CW'
+                    if obj.laserInitializationDuration > obj.detectionDuration
+                        warning('A CW experiment is set but it seems that the durations are for a pulsed experiment.');
+                    end
+                case 'pulsed'
+                    if obj.laserInitializationDuration < obj.detectionDuration
+                        warning('A pulsed experiment is set but it seems that the durations are for a CW experiment.');
+                    end
+            end
+        end
+        
         function prepare(obj)
             % Initialize devices (SPCM, PulseGenerator, etc.)
 
@@ -263,49 +325,8 @@ end
             end
             
             %%% Create
-            S = Sequence;
-            switch obj.mode
-                case 'CW'
-                    if obj.laserInitializationDuration > obj.detectionDuration
-                        warning('A CW experiment is set but it seems that the durations are for a pulsed experiment.');
-                    end
-                    switch obj.nChannels
-                        case 1
-                            P = Pulse(obj.detectionDuration,        {MWChannel{1}, 'greenLaser', 'detector'});
-                        case 2
-                            P = Pulse(obj.detectionDuration,        {MWChannel, 'MW2', 'greenLaser', 'detector'});
-                        otherwise
-                            obj.sendError('What should we do here?')
-                    end
-                    
-                    S.addEvent(10,                      'greenLaser');
-                    S.addEvent(obj.laserInitializationDuration,     {MWChannel{1}, 'greenLaser'});
-                    S.addPulse(P);
-                    S.addEvent(obj.laserInitializationDuration,     {'greenLaser'});
-                    S.addEvent(obj.referenceDetectionDuration,      {'greenLaser','detector'});
-                case 'pulsed'
-                    if obj.laserInitializationDuration < obj.detectionDuration
-                        warning('A pulsed experiment is set but it seems that the durations are for a CW experiment.');
-                    end
-                    initDuration = obj.laserInitializationDuration-obj.detectionDuration-obj.referenceDetectionDuration;
-                    lastDelay = Experiment.DEFAULT_LAST_DELAY;
-                    
-                    if length(obj.piTime) ~= obj.nChannels
-                        obj.sendError('There should be pi pulse time for each MW channel')
-                    end
-                    
-                    S.addEvent(obj.piTime(1),                   MWChannel)
-                    if obj.nChannels > 1
-                        S.addEventAtGivenTime(0, obj.piTime(2), 'MW2');                     % Add second MW at the same time as first MW
-                    end
-                    
-                    S.addEvent(lastDelay,                       '');                        % Last delay
-                    S.addEvent(obj.detectionDuration,           {'greenLaser','detector'})  % Detection
-                    S.addEvent(initDuration,                    'greenLaser')               % Initialization
-                    S.addEvent(obj.referenceDetectionDuration,...
-                                                                {'greenLaser','detector'})  % Reference detection
-                    S.addEvent(obj.singletDelay,                       '');                        % Last delay
-            end
+            obj.warnIfDurationsMismatchMode();
+            S = obj.buildSequence();
             
             % Initialize FrequencyGenerator
             % if isempty(obj.givenFG)

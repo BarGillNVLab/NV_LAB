@@ -122,18 +122,13 @@ classdef ExpT1 < Experiment
     end
     
     %% Overridden from Experiment
-    methods (Access = protected)
-       function prepare(obj)
-            % Initializtions before run
-            
-            % Sequence
-            %%% Useful parameters for what follows
+    methods
+        function S = buildSequence(obj)
+            % Build the T1 sequence, without touching any hardware.
+            % Called by prepare(), and by the GUI to preview the
+            % sequence live while its parameters are being edited.
             initDuration = obj.laserInitializationDuration-obj.detectionDuration-obj.referenceDetectionDuration;
-            obj.detectionPeriodsPerRepeat = 2 * (1 + double(obj.doubleMeasurement));
-            obj.runsPerPerform = 1;
             MWChannel = obj.MWChannel;
-            
-            %%% Creating the sequence
             S = Sequence;
             for k = 1:1+obj.doubleMeasurement
                 if obj.constantTime
@@ -153,6 +148,22 @@ classdef ExpT1 < Experiment
                     {'greenLaser', 'detector'});                                            % Reference detection
                 S.addEvent(Experiment.DEFAULT_LAST_DELAY,           '',     'lastDelay');   % Last delay
             end
+        end
+    end
+    
+    methods (Access = protected)
+       function prepare(obj)
+            % Initializtions before run
+            
+            % Sequence
+            %%% Useful parameters for what follows
+            initDuration = obj.laserInitializationDuration-obj.detectionDuration-obj.referenceDetectionDuration;
+            obj.detectionPeriodsPerRepeat = 2 * (1 + double(obj.doubleMeasurement));
+            obj.runsPerPerform = 1;
+            MWChannel = obj.MWChannel;
+            
+            %%% Creating the sequence
+            S = obj.buildSequence();
             
             obj.prepareInternal(S)
             

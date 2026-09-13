@@ -156,21 +156,13 @@ classdef ExpRabi < Experiment
     end
     
     %% Overridden from Experiment
-    methods (Access = protected)
-       function prepare(obj)
-            % Initialize devices (SPCM, PulseGenerator, etc.)
-            
-            % Sequence
-            %%% Useful parameters for what follows
+    methods
+        function S = buildSequence(obj)
+            % Build the Rabi sequence, without touching any hardware.
+            % Called by prepare(), and by the GUI to preview the
+            % sequence live while its parameters are being edited.
             initDuration = obj.laserInitializationDuration - obj.detectionDuration;
-            obj.detectionPeriodsPerRepeat = 2;
-            obj.runsPerPerform = 1;
-            checkDetectionDuration(obj, obj.detectionDuration); % The mode might have changed; before running, we check obj.detectionDuration again.
-            lastDelay = Experiment.DEFAULT_LAST_DELAY;
-            
             MW = obj.MWChannel;
-            %tau=obj.tau(end);
-            %%% Creating the sequence
             S = Sequence;
             % if obj.useAWG
             %     S.addEvent(0.05, 'AWG', '')
@@ -188,7 +180,26 @@ classdef ExpRabi < Experiment
             S.addEvent(obj.referenceDetectionDuration,...
                                             {'greenLaser', 'detector'});                    % Reference detection
             S.addEvent(1,                   'greenLaser');                                  % 1usec delay to ensure full overlap of ref detection and laser, and to init first repaet (less important), Yachel 27.02.22
-
+        end
+    end
+    
+    methods (Access = protected)
+       function prepare(obj)
+            % Initialize devices (SPCM, PulseGenerator, etc.)
+            
+            % Sequence
+            %%% Useful parameters for what follows
+            initDuration = obj.laserInitializationDuration - obj.detectionDuration;
+            obj.detectionPeriodsPerRepeat = 2;
+            obj.runsPerPerform = 1;
+            checkDetectionDuration(obj, obj.detectionDuration); % The mode might have changed; before running, we check obj.detectionDuration again.
+            lastDelay = Experiment.DEFAULT_LAST_DELAY;
+            
+            MW = obj.MWChannel;
+            %tau=obj.tau(end);
+            %%% Creating the sequence
+            S = obj.buildSequence();
+            
             if obj.useAWG && ~obj.isRunning
                 % obj.setAWG();
                 obj.appendBlank = 2; % an arbitrary number so the AWG output will be correct
