@@ -420,9 +420,14 @@ classdef Sequence < handle
             end
             
             % Plot
+            % Everything below is addressed to axisHandle explicitly:
+            % plot(ax, ...) does not make ax current, so bare axis()/xlabel()
+            % would land on whatever gca happens to be. Standalone that is
+            % the same axes anyway, but when plotting into a GUI panel it
+            % silently rescales and relabels a different panel's axes.
             plot(axisHandle, t, y)
-            axis([0 t(end) -0.5 2*numOfChannels-0.5]);
-            xlabel('t [\mus]')
+            axis(axisHandle, [0 t(end) -0.5 2*numOfChannels-0.5]);
+            xlabel(axisHandle, 't [\mus]')
             yticks(axisHandle, 0.5:2:(2*numOfChannels)-1.5)
             yticklabels(axisHandle, channelNames)
             

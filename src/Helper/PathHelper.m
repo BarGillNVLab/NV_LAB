@@ -107,6 +107,69 @@ classdef PathHelper
             % 2 is for files. 7 for folders. 0 means not exists
         end
         
+        function added = addSourceFoldersToPath()
+            %%% Puts every first-party src\ folder on the MATLAB path
+            %
+            % The path is normally configured once per machine through Set
+            % Path, which means a folder added to the repository afterwards
+            % is invisible until somebody saves the path again. That is a
+            % trap: the code is present, and MATLAB still says
+            % "Unrecognized function or variable".
+            %
+            % Vendor trees are left out deliberately - they are large, and
+            % the code map marks them as not-ours.
+            %
+            % ADDED is a cell of the folders that were not already there.
+            %
+            root = PathHelper.getSourceSubfolder();
+            vendorFolders = { ...
+                fullfile(root, 'Physical', 'NiDaq', 'nidaqmx'), ...
+                fullfile(root, 'Physical', 'CompuScope'), ...
+                fullfile(root, 'Physical', 'PulseGenerator', 'PulseStreamer', 'PS Examples')};
+
+            % addpath stores folders without a trailing separator, while
+            % genpath echoes back whatever it was given. Strip it from both
+            % sides, or the root gets re-added on every call.
+            stripTrailing = @(c) regexprep(c, '[\\/]+$', '');
+
+            candidates = strsplit(genpath(root), pathsep);
+            candidates = candidates(~cellfun(@isempty, candidates));
+            candidates = cellfun(stripTrailing, candidates, 'UniformOutput', false);
+            onPath = cellfun(stripTrailing, strsplit(path, pathsep), 'UniformOutput', false);
+
+            added = {};
+            for i = 1 : numel(candidates)
+                folder = candidates{i};
+                if isempty(folder); continue; end
+                if contains(folder, [filesep '.git']); continue; end
+                if any(cellfun(@(v) strncmpi(folder, v, length(v)), vendorFolders)); continue; end
+                if any(strcmpi(folder, onPath)); continue; end
+                % Appended, not prepended. This tree has duplicate file
+                % names (AWGExpDynamicalBase.m exists twice), so a folder
+                % added at the front could quietly shadow whichever copy is
+                % in use today. Lowest precedence changes nothing that
+                % already resolves.
+                addpath(folder, '-end');
+                added{end+1} = folder; %#ok<AGROW>
+            end
+        end
+
+        function folderPath = getSourceSubfolder(varargin)
+            %%% Returns a folder inside the src\ tree this code runs from
+            %
+            % Resolves against the location of PathHelper.m itself, so it is
+            % correct in any checkout (prod, beta, a clone on someone's
+            % laptop) rather than depending on a hardcoded absolute path.
+            %
+            % Example:
+            %   PathHelper.getSourceSubfolder('Experiment', 'Experiments')
+            %       -> '...\src\Experiment\Experiments\'
+            %
+            thisFile = mfilename('fullpath');               % ...\src\Helper\PathHelper
+            srcFolder = fileparts(fileparts(thisFile));     % ...\src
+            folderPath = PathHelper.appendBackslashIfNeeded(fullfile(srcFolder, varargin{:}));
+        end
+
         function string = appendBackslashIfNeeded(inputFolder)
             %%% Checks the input and appends a backslash if needed
             %

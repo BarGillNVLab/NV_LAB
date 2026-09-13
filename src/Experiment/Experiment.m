@@ -123,12 +123,12 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         clearAWG = true;            % if true, clear all waveforms and sequences from memory
     end
     
-    properties (Dependent, Access = {?Experiment, ?ViewExperimentPlot}) % Inclusion of ?Experiment gives access to its subclasses
+    properties (Dependent, Access = {?Experiment, ?ViewExperimentPlot, ?ViewExperimentRunControl}) % Inclusion of ?Experiment gives access to its subclasses
         totalNumberOfParams
     end
     
     % For plotting
-    properties (Hidden, Access = {?Experiment, ?ViewExperimentPlot}) % Inclusion of ?Experiment gives access to its subclasses
+    properties (Hidden, Access = {?Experiment, ?ViewExperimentPlot, ?ViewExperimentRunControl}) % Inclusion of ?Experiment gives access to its subclasses
         gAxes
         isPlotAlternate = false;
         isPlotAlternateAvailable = false;
@@ -140,7 +140,11 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
     end
     
     properties (Constant)
-        PATH_ALL_EXPERIMENTS = 'C:\lab\NV_LAB\src\Experiment\Experiments\';
+        % Resolved from the location of the source tree this code is running
+        % from, so that experiment discovery works in any checkout. It used
+        % to be hardcoded to 'C:\lab\NV_LAB\src\...', which silently made
+        % getExperimentNames() return nothing anywhere else.
+        PATH_ALL_EXPERIMENTS = PathHelper.getSourceSubfolder('Experiment', 'Experiments');
         PATH_CALIBRATIONS = [Experiment.PATH_ALL_EXPERIMENTS, 'Calibrations\']
         
         EVENT_DATA_UPDATED = 'dataUpdated'                  % when something changed regarding the plot (new data, change in x\y axis, change in x\y labels)
@@ -153,6 +157,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         % Exception handling
         EXCEPTION_ID_NO_EXPERIMENT = 'getExp:noExp';
         EXCEPTION_ID_NOT_CURRENT = 'getExp:notCurrExp';
+        EXCEPTION_ID_NO_SEQUENCE_PREVIEW = 'exp:noSequencePreview';
     end
     
     %% General
@@ -205,6 +210,52 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             obj.MWChannel = {fgCell{1}.pgChannelName}; % this is temp, it should be chosen based on the default fg in signalGenerator
         end
         
+        function S = buildSequence(obj)
+            % Build this Experiment's pulse Sequence, WITHOUT touching any
+            % hardware.
+            %
+            % This exists so that a GUI can show what the sequence looks
+            % like while the user edits parameters, which it cannot do by
+            % calling prepare(): prepare() configures the frequency
+            % generator, pulse generator and SPCM as a side effect.
+            %
+            % An Experiment opts in by moving the sequence construction out
+            % of prepare() into here, and having prepare() call it:
+            %
+            %   function prepare(obj)
+            %       ... set up hardware ...
+            %       S = obj.buildSequence();
+            %       pg.setSequence(S);
+            %       ...
+            %   end
+            %
+            % The default implementation declines, and the GUI falls back to
+            % offering an explicit (hardware-touching) preview instead.
+            error(Experiment.EXCEPTION_ID_NO_SEQUENCE_PREVIEW, ...
+                '%s does not support building its sequence without hardware.', class(obj));
+        end
+
+        function tf = hasSequencePreview(obj)
+            % True when buildSequence() is implemented by this Experiment,
+            % and so a live (hardware-free) sequence preview is available.
+            mc = metaclass(obj);
+            idx = strcmp({mc.MethodList.Name}, 'buildSequence');
+            tf = any(idx) && ~strcmp(mc.MethodList(find(idx, 1)).DefiningClass.Name, 'Experiment');
+        end
+
+        function spec = guiParameterSpec(obj)
+            % Which properties the experiment sidebar should offer for
+            % editing, and how to present them.
+            %
+            % The default is built by reflection over the public properties,
+            % which works for every Experiment without any per-class effort.
+            % Override this to curate the list - order, labels, units and
+            % closed sets of values - for an Experiment people use often.
+            %
+            % See also EXPGUIPARAM
+            spec = ExpGuiParam.fromReflection(obj);
+        end
+
         function cellOfStrings = getAllExpParameterProperties(obj)
             % Get all the property-names of properties from the
             % Experiment object that are from type "ExpParameter"
@@ -537,11 +588,8 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 obj.changeFlag = false;
                 
                 % Dialog box
-                % strQuestion = sprintf('Critical parameters have been changed!\n Do you want to restart the Experiment?');
-                % strTitle = 'Parameters changed';
-                % if QuestionUserYesNo(strTitle, strQuestion)
-                %     obj.restartFlag = true;
-                % end
+                strQuestion = sprintf('Critical parameters have been changed!\n Do you want to restart the Experiment?');
+                strTitle = 'Parameters changed';
                 if QuestionUserYesNo(strTitle, strQuestion)
                     obj.restartFlag = true;
                 end
@@ -2217,17 +2265,14 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             
             persistent expNames expClassNames
             if isempty(expNames)
-                % Get 'regular' Experiments
-                path = Experiment.PATH_ALL_EXPERIMENTS;
-                [~, expFileNames] = PathHelper.getAllFilesInFolder(path, 'm');
-                % Get Callibration Experiments
-                path2 = Experiment.PATH_CALIBRATIONS;
-                [~, calibFileNames] = PathHelper.getAllFilesInFolder(path2, 'm');
-                % Get Trackables
-                path3 = Trackable.PATH_ALL_TRACKABLES;
-                [~, trckblFileNames] = PathHelper.getAllFilesInFolder(path3, 'm');
-                % Join
-                expFileNames = [expFileNames, calibFileNames, trckblFileNames];
+                % Each folder is scanned independently: one unreachable
+                % folder (e.g. Trackables, which resolves against the Google
+                % Drive "NV Lab" folder and errors when it is not mounted)
+                % must not take the whole experiment list down with it.
+                expFileNames = [ ...
+                    Experiment.filesInFolderOrEmpty(Experiment.PATH_ALL_EXPERIMENTS, 'Experiments'), ...
+                    Experiment.filesInFolderOrEmpty(Experiment.PATH_CALIBRATIONS, 'Calibrations'), ...
+                    Experiment.trackableFilesOrEmpty()];
                 
                 % Extract names
                 expClassNames = PathHelper.removeDotSuffix(expFileNames);
@@ -2241,13 +2286,48 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                         warning(err.message)
                     end
                 end
+                % Both lists are appended to, so that index i always refers
+                % to the same experiment in each. Previously only expNames
+                % grew here, which left the two lists a different length and
+                % made getExpByName index past the end of expClassNames.
                 expNames{end+1} = SpcmCounter.NAME;     % todo: think about this
+                expClassNames{end+1} = 'SpcmCounter';
             end
-            
+
             expNamesCell = expNames;
             expClassNamesCell = expClassNames;
         end
-        
+
+        function fileNames = filesInFolderOrEmpty(folder, description)
+            % All .m files in a folder, or {} (with a warning) if the folder
+            % cannot be read. Used so that experiment discovery degrades
+            % gracefully instead of failing outright.
+            fileNames = {};
+            try
+                if ~PathHelper.isFolderExists(folder)
+                    warning('Could not find the %s folder at "%s". Skipping it.', description, folder);
+                    return
+                end
+                [~, fileNames] = PathHelper.getAllFilesInFolder(folder, 'm');
+            catch err
+                warning('Could not read the %s folder at "%s": %s', description, folder, err.message);
+            end
+        end
+
+        function fileNames = trackableFilesOrEmpty()
+            % Trackable.PATH_ALL_TRACKABLES resolves against the Google Drive
+            % "NV Lab" folder, and errors outright when that is not mounted.
+            % Reading the constant is therefore wrapped as well.
+            fileNames = {};
+            try
+                folder = Trackable.PATH_ALL_TRACKABLES;
+            catch err
+                warning('Could not resolve the Trackables folder: %s', err.message);
+                return
+            end
+            fileNames = Experiment.filesInFolderOrEmpty(folder, 'Trackables');
+        end
+
         function expName = current()
             % Public getter to private static property
             expName = Experiment.getSetCurrentExp();

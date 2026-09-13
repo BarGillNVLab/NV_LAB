@@ -13,7 +13,10 @@ end
 
 % We look for the experiment, in order to create it
 [expNamesCell, expClassNamesCell] = Experiment.getExperimentNames();
-ind = strcmp(searchedName, expNamesCell); % index of searchedName in list
+% @strcmp returns a logical array, which is never empty when the list is not
+% empty, so the "not found" branch below was unreachable and an unknown name
+% produced a confusing indexing error instead. @find gives us a real answer.
+ind = find(strcmp(searchedName, expNamesCell), 1); % index of searchedName in list
 
 if isempty(ind)
     ME = MException(Experiment.EXCEPTION_ID_NO_EXPERIMENT, msgNoExp, searchedName);
