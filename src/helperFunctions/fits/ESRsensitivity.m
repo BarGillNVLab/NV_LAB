@@ -25,6 +25,11 @@ function out = ESRsensitivity(filePath, answers)
 %   .ndTransmission  double in (0,1]   collection-path ND transmission (1 = no ND / ND0.0)
 %   .bg              double            DC background subtracted from the signal (0 = none)
 %   .nDips           1 or 2            number of Lorentzians to fit
+%   .zfs             double [MHz]      NV zero-field splitting D used to convert the fitted
+%                                      line position(s) into a magnetic field (default 2870).
+%   .zfsErr          double [MHz]      how well D is known (default 0). Folded into the
+%                                      field error bars -- see nvFieldFromLines on why the
+%                                      angle is far more sensitive to it than B_par is.
 %   .tMeas           double [s]        single-measurement time (overrides the value from the file)
 %   .freq            vector [MHz]      frequency axis, for files whose saved frequencyInternal
 %                                      no longer matches the data. Full vector, or
@@ -34,7 +39,13 @@ function out = ESRsensitivity(filePath, answers)
 %                                      'all' (default) / 'none', a cellstr of keys, a
 %                                      logical vector in catalog order, or a struct of
 %                                      logicals. Keys: see plotCatalog() below --
-%                                      noise, spectrum, sensitivity, snr, fitparams, counts.
+%                                      noise, spectrum, sensitivity, snr, fitparams, counts, bfield.
+%
+% MAGNETIC FIELD.  The same Lorentzian fit that feeds the sensitivity also locates the
+% resonance(s), so the field at the NV comes for free -- see nvFieldFromLines() for the
+% inversion. out.field holds |B|, the on-axis projection B_par, the angle to the NV axis,
+% their 1-sigma bars (propagated from the fit's 68% confidence interval on the line
+% centres) and the per-averaging-level curves; the 'bfield' figure shows the convergence.
 
 % --- calibration knobs (the physical world needs tuning a minimal model can't see) ---
 GAMMA_HZ_PER_T = 28.025e9;    % NV gyromagnetic ratio g*muB/h (g=2.0028), Hz per Tesla.
@@ -45,6 +56,9 @@ GAMMA_HZ_PER_T = 28.025e9;    % NV gyromagnetic ratio g*muB/h (g=2.0028), Hz per
 % (Sequence.duration is the plain sum of event durations; the leading 10 us green
 % pulse is hardcoded in ExpESR.) The PDF body's "t_meas = 2 ns" is a typo.
 ESR_CW_LEAD_US = 10;          % ExpESR.prepare: S.addEvent(10, 'greenLaser')
+GAMMA_MHZ_PER_G = GAMMA_HZ_PER_T * 1e-10;   % 28.025 GHz/T -> 2.8025 MHz/Gauss, for the
+% magnetic-field readout below. The zero-field splitting D it is paired with is an INPUT
+% (NV_ZFS_MHZ_DEFAULT / answers.zfs), not a constant: D shifts with temperature and strain.
 
 if nargin >= 1 && ischar(filePath) && strcmp(filePath, 'selftest')
     out = selftest(); return
@@ -66,7 +80,7 @@ if ~(isfield(answers,'ndTransmission') && isfield(answers,'bg') && isfield(answe
 end
 
 % ---- the questions + the figure V-markers (single window) ----
-[nd, bg, nDips, plots] = askAll(answers);
+[nd, bg, nDips, zfs, plots] = askAll(answers);
 if ~isempty(previewFig) && ishandle(previewFig); close(previewFig); end
 
 % ---- assemble per-average normalized data (use only completed averages) ----
@@ -126,7 +140,7 @@ R = nrep;
 % the point Eq 4 of the PDF assumes. Take it from the FULL-average fit (best SNR, so the most
 % reliable line position) and snap to the nearest measured bin, instead of hardcoding an index
 % that is only valid for one particular sweep length. fitObj/fdip are reused for the spectrum plot.
-[fitObj, ~, ~, fdip] = fitLorentzians(freq, cumMean(:,end), cumSterr(:,end), nDips);
+[fitObj, ~, ~, fdip, centersFull] = fitLorentzians(freq, cumMean(:,end), cumSterr(:,end), nDips);
 [~, div_max] = min(abs(freq - fdip));
 fprintf('working point: bin %d of %d (%.4g MHz, steepest slope of the full-average fit)\n', ...
     div_max, numel(freq), freq(div_max));
@@ -135,9 +149,13 @@ sigma_shot = @(n1,n2) (n1/n2)*sqrt(1/n1 + 1/n2);
 r = E.counts; % [reads x nFreq x averages] kcps, row 1 = signal, row 2 = reference
 [deltaBmin, etaMeas, SNRk, Cn, FWHMn, Sx, Sx_shot,Sx_shot_corrected, SNRk_shot, SNRk_shot_corr] = deal(nan(1, N));
 ideal_ = nan(1, N); norm_end = nan(1, N);
+[BtotN, BparN, thetaN] = deal(nan(1, N));   % field vs #averages (from the per-average refit)
 [etaShot, etaShotCorr] = deal([]);
 for k = 1:N
-    [~, Ck, fwhmk] = fitLorentzians(freq, cumMean(:,k), cumSterr(:,k), nDips);
+    [~, Ck, fwhmk, ~, centersK] = fitLorentzians(freq, cumMean(:,k), cumSterr(:,k), nDips);
+    % Field from THIS averaging level's line position(s) -- same refit, no extra cost.
+    Bk = nvFieldFromLines(centersK, zfs, GAMMA_MHZ_PER_G);
+    BtotN(k) = Bk.B_G; BparN(k) = Bk.Bpar_G; thetaN(k) = Bk.theta_deg;
     n = R*(k-1);
     if k == 1 
         Sx(k) = serr(div_max, k);
@@ -235,9 +253,22 @@ etaTheory       = etaIdeal * ones(1, N);                          % flat eta_B^D
 etaTheoryCorr   = etaTheory * sqrt(nd);                           % ND-corrected flat line (Eq 16)
 deltaBminTheory = etaIdeal ./ sqrt(tMeas * nAvg * R);            % ideal 1/sqrt(n) field resolution
 
+% ---- magnetic field at the NV (from the converged, full-average fit) ----
+% The line position(s) carry the field; the 1-sigma bars come from the fit's own 68%
+% confidence interval on the centre(s), pushed through the (nonlinear) inversion.
+field = fieldFromFit(fitObj, nDips, centersFull, zfs, GAMMA_MHZ_PER_G, ...
+    getfielddef(answers, 'zfsErr', 0));
+field.B_G_vsAverages     = BtotN;
+field.Bpar_G_vsAverages  = BparN;
+field.theta_deg_vsAverages = thetaN;
+field.nAverages          = nAvg;
+
 % ---- plots (each gated by its V-marker from the input dialog) ----
 if plots.spectrum
-    plotSpectrum(freq, cumMean(:,end), cumSterr(:,end), fitObj, fdip);
+    plotSpectrum(freq, cumMean(:,end), cumSterr(:,end), fitObj, fdip, field);
+end
+if plots.bfield
+    plotField(nAvg, BtotN, BparN, thetaN, field);
 end
 if plots.sensitivity
     plotSensitivity(nAvg, etaMeas, etaCorr, etaFit, A, b, deltaBmin, etaShot, etaShotCorr, ...
@@ -272,7 +303,10 @@ out = struct('eta_meas_TrtHz', etaMeas, 'eta_corrected_TrtHz', etaCorr, ...
     'eta_theory_TrtHz', etaTheory, 'eta_theory_corrected_TrtHz', etaTheoryCorr, 'deltaBmin_theory_T', deltaBminTheory, ...
     'SNR', SNRk, 'contrast', Cn, 'FWHM_MHz', FWHMn, 'fitObj', fitObj, ...
     'ND', nd, 'BG', bg, 'nDips', nDips, 'plots', plots, 'tMeas_s', tMeas, 'repeats', nrep, 'K', K, ...
-    'workPointBin', div_max, 'workPointFreq_MHz', freq(div_max));
+    'workPointBin', div_max, 'workPointFreq_MHz', freq(div_max), ...
+    'field', field, 'B_G', field.B_G, 'B_err_G', field.B_err_G, 'Bpar_G', field.Bpar_G, ...
+    'theta_deg', field.theta_deg, 'zfs_MHz', zfs);
+fprintf('%s\n', fieldReport(field));
 fprintf(['t_meas = %.3g s (K = %.3g) | last avg: SNR = %.3f, ', ...
     'eta_meas = %.3g nT/sqrt(Hz), eta_corrected = %.3g nT/sqrt(Hz)\n'], ...
     tMeas, K, SNRk(end), etaMeas(end)*1e9, etaCorr(end)*1e9);
@@ -370,10 +404,11 @@ end
 end
 
 % ======================================================================
-function [fitObj, C, fwhmMHz, fdip] = fitLorentzians(freq, S, Serr, nDips)
+function [fitObj, C, fwhmMHz, fdip, centers] = fitLorentzians(freq, S, Serr, nDips)
 % Reuse ESRfit's start-point heuristic and Lorentzian shape (FWHM = 2g).
-% Returns the contrast C and FWHM (MHz) of the steepest dip (max C/g), and the
-% steepest-slope frequency. PDF Eq 3 lineshape S = 1 - C/(1+4((nu-nu0)/dNu)^2)
+% Returns the contrast C and FWHM (MHz) of the steepest dip (max C/g), the
+% steepest-slope frequency, and `centers` -- every fitted line position [MHz],
+% which is what the magnetic-field readout (nvFieldFromLines) runs on. PDF Eq 3 lineshape S = 1 - C/(1+4((nu-nu0)/dNu)^2)
 % is identical to this c - a*g^2/((x-f0)^2+g^2) with a=C, g=dNu/2 (FWHM=2g).
 w = 1 ./ max(Serr, eps).^2;
 cont = max(S) - min(S);
@@ -421,13 +456,22 @@ fdip = centers(k) + sgn * gg(k)/sqrt(3);      % outer steepest-slope frequency
 end
 
 % ======================================================================
-function plotSpectrum(freq, S, Serr, fitObj, fdip)
+function plotSpectrum(freq, S, Serr, fitObj, fdip, field)
+% `field` (optional): the nvFieldFromLines result, drawn onto the spectrum -- the
+% resonance positions ARE the field measurement, so they belong on the same axes.
 figure('Name', 'ESR fit');
 hold on; box on; grid on
 fi = linspace(freq(1), freq(end), 1000);
 errorbar(freq, S, Serr, '.', 'MarkerSize', 9, 'Color', [0 0.2 0.7], 'DisplayName', 'data');
 plot(fi, fitObj(fi), 'LineWidth', 2, 'Color', [0.85 0.33 0.1], 'DisplayName', 'Lorentzian fit');
 xline(fdip, '--', 'steepest slope', 'HandleVisibility', 'off');
+if nargin >= 6 && ~isempty(field) && all(isfinite(field.lines_MHz))
+    for i = 1:numel(field.lines_MHz)
+        xline(field.lines_MHz(i), ':', sprintf('%.4g MHz', field.lines_MHz(i)), ...
+            'Color', [0.4 0.4 0.4], 'LabelVerticalAlignment', 'bottom', 'HandleVisibility', 'off');
+    end
+    title(fieldTitle(field));
+end
 xlabel('Frequency (MHz)'); ylabel('Normalized signal'); legend('Location', 'best');
 set(gca, 'FontSize', 12);
 end
@@ -538,43 +582,285 @@ linkaxes([ax1 ax2], 'x');
 end
 
 % ======================================================================
+function B = nvFieldFromLines(nu, D, gam)
+%NVFIELDFROMLINES  Magnetic field at the NV from its ESR resonance position(s).
+%   nu  [MHz] one resonance (single dip) or both (order irrelevant -- sorted here)
+%   D   [MHz] ground-state zero-field splitting
+%   gam [MHz/Gauss] NV gyromagnetic ratio
+%
+% Ground-state spin-1 Hamiltonian, zero strain (E = 0):  H/h = D*Sz^2 + gam*(B.S).
+% Its three eigenvalues obey the invariants below, so with BOTH resonances nu1 < nu2
+% measured from the |0> level the inversion is EXACT -- no small-field and no
+% aligned-field assumption (E0/E1/E2 are the eigenvalues, E1 = E0+nu1, E2 = E0+nu2):
+%
+%   tr(H)   = 2D                          ->  E0 = (2D - nu1 - nu2)/3
+%   tr(H^2) = 2D^2 + 2(gam*B)^2           ->  (gam*B)^2 = (nu1^2 + nu2^2 - nu1*nu2 - D^2)/3
+%   det(H)  = -D*(gam*B)^2*sin^2(theta)   ->  sin^2(theta) = -E0*E1*E2/(D*(gam*B)^2)
+%
+% theta is the angle between B and the NV symmetry axis, so B_par = B*cos(theta) is the
+% projection the NV actually senses. The familiar first-order reading (nu2-nu1)/(2*gam)
+% is returned too (Bpar_split_G): the two agree for a near-axial field and diverge as
+% theta grows -- exactly the regime where mixing also eats the contrast.
+%
+% With ONE dip the problem is underdetermined: a single line cannot separate |B| from
+% theta, so the only defensible reading is the on-axis projection |nu - D|/gam. Its sign
+% is unknowable as well (nu = D +/- gam*B_par gives the same |detuning| either way), and
+% any transverse component is invisible -- hence |B| is reported as a lower bound.
+%
+% CONDITIONING -- which of the three numbers to trust.  theta is carried ONLY by the
+% second-order push of (nu1+nu2)/2 above D, so the whole angle rests on a difference of
+% two nearly equal large numbers and gets less certain the closer B is to the NV axis.
+% An error in D feeds straight into it: with B = 60 G, D wrong by 1 MHz turns a true
+% theta = 5 deg into 15 deg (and 15 into 21), while |B| moves ~2 G. B_par, by contrast,
+% is set by the SPLITTING and barely notices -- 57.96 -> 57.97 G in that same example.
+% So: B_par is the robust number, |B| is good to about (dD/D)*|B|, and theta is only
+% meaningful when it is well clear of the `theta_resolved` threshold below. Pass
+% answers.zfsErr to have your own uncertainty on D folded into all three error bars.
+nu = sort(nu(:)).';
+B = struct('B_G', NaN, 'B_err_G', NaN, 'Bpar_G', NaN, 'Bpar_err_G', NaN, ...
+    'theta_deg', NaN, 'theta_err_deg', NaN, 'Bpar_split_G', NaN, ...
+    'splitting_MHz', NaN, 'D_apparent_MHz', NaN, 'lines_MHz', nu, ...
+    'line_err_MHz', nan(size(nu)), 'D_MHz', D, 'D_err_MHz', 0, 'D_excess_MHz', NaN, ...
+    'theta_resolved', false, 'method', '');
+if isempty(nu) || any(~isfinite(nu)); return; end
+
+if isscalar(nu)
+    B.Bpar_G = abs(nu - D) / gam;     % on-axis projection; sign not observable
+    B.B_G = B.Bpar_G;                 % lower bound on |B| (transverse part is invisible)
+    B.theta_deg = 0;
+    B.D_apparent_MHz = D;
+    B.splitting_MHz = 0;
+    B.Bpar_split_G = B.Bpar_G;
+    B.method = 'single line: on-axis projection |nu-D|/gamma (|B| is a lower bound)';
+    return
+end
+
+nu1 = nu(1); nu2 = nu(2);
+B.splitting_MHz  = nu2 - nu1;
+B.D_apparent_MHz = (nu1 + nu2)/2;            % equals D only for an axial field
+B.Bpar_split_G   = B.splitting_MHz / (2*gam);
+
+b2 = (nu1^2 + nu2^2 - nu1*nu2 - D^2) / 3;    % (gam*B)^2 [MHz^2]
+if ~(b2 > 0)
+    % Splitting too small for the quoted D (D mis-set, or these two dips are not a
+    % 0->+-1 pair). Fall back to the first-order reading instead of returning junk.
+    B.B_G = B.Bpar_split_G; B.Bpar_G = B.Bpar_split_G; B.theta_deg = 0;
+    B.method = 'two lines: splitting only (exact inversion ill-posed for this D)';
+    return
+end
+E0   = (2*D - (nu1 + nu2)) / 3;
+sin2 = -E0*(E0 + nu1)*(E0 + nu2) / (D * b2);
+sin2 = min(max(sin2, 0), 1);                 % clip numerical overshoot near theta = 0/90
+B.B_G        = sqrt(b2) / gam;
+B.theta_deg  = asind(sqrt(sin2));
+B.Bpar_G     = B.B_G * cosd(B.theta_deg);
+B.D_excess_MHz = B.D_apparent_MHz - D;   % the second-order push that CARRIES theta
+B.method     = 'two lines: exact S=1 inversion (E=0)';
+end
+
+% ======================================================================
+function B = fieldFromFit(fitObj, nDips, centers, D, gam, dD)
+%FIELDFROMFIT  nvFieldFromLines + 1-sigma bars propagated from the Lorentzian fit.
+% The centre uncertainties come from the fit's own 68% confidence interval. They are
+% pushed through the (nonlinear) inversion by re-evaluating it with each centre shifted
+% by exactly its 1-sigma -- linear propagation, but written without differentiating the
+% cubic by hand, and automatically right for both the 1-dip and 2-dip branches. dD is the
+% (optional, default 0) systematic uncertainty on D and rides along as one more shift, so
+% the quoted bars answer "including the fact that I do not know D exactly".
+if nargin < 6 || isempty(dD); dD = 0; end
+B = nvFieldFromLines(centers, D, gam);
+B.D_err_MHz = dD;
+sig = lineSigmas(fitObj, nDips);
+[nu, ord] = sort(centers(:).');
+sig = sig(ord);                    % keep each sigma attached to its (now sorted) centre
+B.line_err_MHz = sig;
+if any(~isfinite(sig)) || any(~isfinite(nu)); return; end
+[vB, vP, vT] = deal(0);
+for i = 1:numel(nu) + 1
+    if i <= numel(nu)
+        nuP = nu; nuP(i) = nuP(i) + sig(i); DP = D;      % statistical: one line centre
+    else
+        nuP = nu; DP = D + dD;                           % systematic: the assumed D
+    end
+    Bp = nvFieldFromLines(nuP, DP, gam);
+    vB = vB + (Bp.B_G       - B.B_G)^2;
+    vP = vP + (Bp.Bpar_G    - B.Bpar_G)^2;
+    vT = vT + (Bp.theta_deg - B.theta_deg)^2;
+end
+B.B_err_G = sqrt(vB); B.Bpar_err_G = sqrt(vP); B.theta_err_deg = sqrt(vT);
+% theta lives entirely in D_apparent - D, so it only means something once that excess is
+% bigger than the uncertainty on the excess itself (line centres + the assumed D).
+excessErr = sqrt(sum(sig.^2))/2 + abs(dD);
+B.theta_resolved = isfinite(B.D_excess_MHz) && B.D_excess_MHz > 3*excessErr;
+end
+
+% ======================================================================
+function s = lineSigmas(fitObj, nDips)
+%LINESIGMAS  1-sigma uncertainty of each Lorentzian centre, from the fit's 68% CI.
+% Coefficient order is fixed by fitLorentzians: {a,f0,g,c} / {a1,f1,g1,a2,f2,g2,c}.
+if nDips == 1; idx = 2; else; idx = [2 5]; end
+s = nan(1, numel(idx));
+try
+    ci = confint(fitObj, 0.6827);     % rank-deficient fits throw or return NaN
+    s  = (ci(2, idx) - ci(1, idx)) / 2;
+catch
+end
+end
+
+% ======================================================================
+function txt = fieldReport(B)
+%FIELDREPORT  One-line human summary of the field measurement.
+if ~isfinite(B.B_G)
+    txt = 'magnetic field: not determined (line fit failed)'; return
+end
+pm = @(v, e) sprintf('%.4g%s', v, errstr(e));
+if isfinite(B.theta_deg) && B.splitting_MHz > 0
+    if B.theta_resolved; flag = ''; else; flag = ' (NOT resolved: D_apparent sits within noise of D -- treat theta and |B| as an upper/lower pair and trust B_par)'; end
+    txt = sprintf(['magnetic field: |B| = %s G (%.4g mT) | B_par = %s G | theta = %s deg%s ' ...
+        '| lines %.6g / %.6g MHz, splitting %.4g MHz | D_apparent = %.6g (D used %.6g) MHz'], ...
+        pm(B.B_G, B.B_err_G), B.B_G*0.1, pm(B.Bpar_G, B.Bpar_err_G), ...
+        pm(B.theta_deg, B.theta_err_deg), flag, B.lines_MHz(1), B.lines_MHz(2), ...
+        B.splitting_MHz, B.D_apparent_MHz, B.D_MHz);
+else
+    txt = sprintf(['magnetic field: B_par = %s G (%.4g mT) from a single line at %.6g MHz ' ...
+        '(D = %.6g MHz); |B| >= B_par, sign not observable'], ...
+        pm(B.Bpar_G, B.Bpar_err_G), B.Bpar_G*0.1, B.lines_MHz(1), B.D_MHz);
+end
+end
+
+function s = errstr(e)
+if isfinite(e) && e > 0; s = sprintf(' +/- %.2g', e); else; s = ''; end
+end
+
+% ======================================================================
+function plotField(n, Btot, Bpar, theta, field)
+%PLOTFIELD  Field read from the per-average refit: does the value settle with averaging?
+% A reading still walking at the last average means the fit (or the magnet) has not
+% converged, and the sensitivity numbers next to it inherit that drift.
+figure('Name', 'Magnetic field vs #averages');
+twoLine = isfinite(field.theta_deg) && field.splitting_MHz > 0;
+if twoLine; ax1 = subplot(2, 1, 1); else; ax1 = axes(gcf); end
+hold(ax1, 'on'); box(ax1, 'on'); grid(ax1, 'on')
+if twoLine
+    plot(ax1, n, Btot, 'o-', 'MarkerSize', 5, 'LineWidth', 1.2, 'Color', [0 0.2 0.7], ...
+        'DisplayName', '|B|');
+    plot(ax1, n, Bpar, 's-', 'MarkerSize', 5, 'LineWidth', 1.2, 'Color', [0.85 0.33 0.1], ...
+        'DisplayName', 'B_{||} = |B| cos\theta');
+else
+    plot(ax1, n, Bpar, 'o-', 'MarkerSize', 5, 'LineWidth', 1.2, 'Color', [0 0.2 0.7], ...
+        'DisplayName', 'B_{||} (single line)');
+end
+if isfinite(field.B_err_G) && field.B_err_G > 0
+    yline(ax1, field.B_G + field.B_err_G, ':', 'Color', [0.5 0.5 0.5], 'HandleVisibility', 'off');
+    yline(ax1, field.B_G - field.B_err_G, ':', 'Color', [0.5 0.5 0.5], 'HandleVisibility', 'off');
+end
+ylabel(ax1, 'B (Gauss)'); legend(ax1, 'Location', 'best'); set(ax1, 'FontSize', 12);
+title(ax1, fieldTitle(field));
+if ~twoLine; xlabel(ax1, '# averages'); return; end
+
+ax2 = subplot(2, 1, 2);
+plot(ax2, n, theta, 'd-', 'MarkerSize', 5, 'LineWidth', 1.2, 'Color', [0.2 0.6 0.2]);
+box(ax2, 'on'); grid(ax2, 'on')
+ylabel(ax2, '\theta to NV axis (deg)'); xlabel(ax2, '# averages'); set(ax2, 'FontSize', 12);
+linkaxes([ax1 ax2], 'x');
+end
+
+function t = fieldTitle(B)
+%FIELDTITLE  Compact title string carrying the field result onto a figure.
+if ~isfinite(B.B_G); t = 'field: not determined'; return; end
+if isfinite(B.theta_deg) && B.splitting_MHz > 0
+    if B.theta_resolved; flag = ''; else; flag = ' [\theta unresolved]'; end
+    t = sprintf('|B| = %.4g%s G   B_{||} = %.4g G   \\theta = %.3g%s\\circ%s   (\\Delta = %.4g MHz)', ...
+        B.B_G, errstr(B.B_err_G), B.Bpar_G, B.theta_deg, errstr(B.theta_err_deg), flag, B.splitting_MHz);
+else
+    t = sprintf('B_{||} = %.4g%s G   (single line, on-axis)', B.Bpar_G, errstr(B.Bpar_err_G));
+end
+end
+
+% ======================================================================
 function [c1, c2] = twoMinima(freq, S)
 [~, i1] = min(S);
-mask = abs(freq - freq(i1)) > (freq(end)-freq(1))/10;   % exclude near the 1st dip
+mask = abs(freq - freq(i1)) > (freq(end)-freq(1))/100;   % exclude near the 1st dip
 Sm = S; Sm(~mask) = max(S);
 [~, i2] = min(Sm);
 c1 = freq(i1); c2 = freq(i2);
 end
 
-function [nd, bg, nDips, plots] = askAll(answers)
-% All inputs in ONE window: the three numbers plus a V-marker (checkbox) per output
+function [nd, bg, nDips, zfs, plots] = askAll(answers)
+% All inputs in ONE window: the four numbers plus a V-marker (checkbox) per output
 % figure. answers fields (if present) override and pre-fill the corresponding default;
-% an answers struct that specifies the three numbers skips the dialog entirely.
+% an answers struct that specifies the three required numbers skips the dialog entirely.
 %   ND: enter optical density OD (0 = no ND); transmission nd = 10^(-OD).
 %   BG: DC background to subtract (normalized-signal units; 0 = none).
 %   nDips: 1 or 2 Lorentzians to fit.
+%   D (ZFS): zero-field splitting [MHz] used to read the field off the line position(s).
 %   plots: struct of logicals, one field per plotCatalog key -- which figures to draw.
 pc = plotCatalog();
 plots = plotSelection(getfielddef(answers, 'plots', []), pc);
+zfs = getfielddef(answers, 'zfs', NV_ZFS_MHZ_DEFAULT());
 if isfield(answers,'ndTransmission') && isfield(answers,'bg') && isfield(answers,'nDips')
     nd = answers.ndTransmission; bg = answers.bg; nDips = answers.nDips; return
 end
-ndDef   = '0'; bgDef = '0'; dipsDef = '1';
+ndDef   = '0'; bgDef = '0'; dipsDef = '1'; zfsDef = num2str(zfs);
 if isfield(answers,'ndTransmission'); ndDef   = num2str(-log10(answers.ndTransmission)); end
 if isfield(answers,'bg');             bgDef   = num2str(answers.bg); end
 if isfield(answers,'nDips');          dipsDef = num2str(answers.nDips); end
 prompts = {'ND optical density OD (0 = no ND; transmission = 10^-OD):', ...
            'DC background to subtract (normalized-signal units; 0 = none):', ...
-           'Number of dips (1 or 2):'};
-[a, plots] = inputsAndPlotsDlg(prompts, {ndDef, bgDef, dipsDef}, pc, plots);
-assert(~isempty(a), 'Inputs required.');
-od = str2double(a{1}); assert(od >= 0, 'OD must be >= 0.');
-nd = 10^(-od); bg = str2double(a{2}); nDips = str2double(a{3});
-assert(nDips == 1 || nDips == 2, 'nDips must be 1 or 2.');
+           'Number of dips (1 or 2):', ...
+           'Zero-field splitting D (MHz), for the magnetic-field readout:'};
+% Re-ASK on a bad entry instead of throwing: getting here cost a file dialog, a preview
+% and four answers, and a typo in one box should not make the user pay for all of it
+% again. The dialog comes back with what was typed still in the boxes, the figure
+% V-markers as they were left, and the complaint in red at the top. Cancel still aborts.
+defs = {ndDef, bgDef, dipsDef, zfsDef};
+errMsg = '';
+while true
+    [a, plots] = inputsAndPlotsDlg(prompts, defs, pc, plots, errMsg);
+    assert(~isempty(a), 'Inputs required.');     % Cancel / closed window
+    defs = a;                                     % keep the entries for the next round
+    [v, errMsg] = validateInputs(a);
+    if isempty(errMsg); break; end
+end
+nd = 10^(-v(1)); bg = v(2); nDips = v(3); zfs = v(4);
 % headless partial override
 if isfield(answers,'ndTransmission'); nd = answers.ndTransmission; end
 if isfield(answers,'bg');             bg = answers.bg; end
 if isfield(answers,'nDips');          nDips = answers.nDips; end
+if isfield(answers,'zfs');            zfs = answers.zfs; end
+end
+
+function [v, errMsg] = validateInputs(a)
+%VALIDATEINPUTS  Check the four dialog numbers, RETURNING a complaint instead of throwing
+% so askAll can re-open the dialog with the entries intact. Reports every problem at once
+% -- fixing one box only to be told about the next one is the same trap one level down.
+labels = {'ND optical density OD', 'DC background', 'Number of dips', 'Zero-field splitting D'};
+v = str2double(a(:)).';
+bad = {};
+for i = 1:numel(labels)
+    if ~isfinite(v(i))
+        bad{end+1} = sprintf('%s: "%s" is not a number.', labels{i}, strtrim(a{i})); %#ok<AGROW>
+    end
+end
+% Range checks are per box, on whatever parsed: a blank D must not hide a bad dip count,
+% or the user fixes one box only to be sent back for the next -- the very trap above.
+if isfinite(v(1)) && v(1) < 0
+    bad{end+1} = sprintf('ND optical density OD must be >= 0 (got %g; 0 = no ND).', v(1));
+end
+if isfinite(v(3)) && ~(v(3) == 1 || v(3) == 2)
+    bad{end+1} = sprintf('Number of dips must be 1 or 2 (got %g).', v(3));
+end
+if isfinite(v(4)) && v(4) <= 0
+    bad{end+1} = sprintf('Zero-field splitting D must be positive MHz (got %g).', v(4));
+end
+errMsg = strjoin(bad, '   ');
+end
+
+function D = NV_ZFS_MHZ_DEFAULT()
+%NV_ZFS_MHZ_DEFAULT  Room-temperature NV ground-state zero-field splitting [MHz].
+% Only the FIELD readout uses it (the sensitivity does not), which is why it is an
+% input rather than a constant: D shifts with temperature (~-74 kHz/K) and strain.
+D = 2870;
 end
 
 function pc = plotCatalog()
@@ -589,6 +875,7 @@ pc = { ...
     'snr',         'SNR & noise vs #averages'
     'fitparams',   'Fit parameters vs #averages (contrast, FWHM)'
     'counts',      'Signal & reference counts vs frequency'
+    'bfield',      'Magnetic field vs #averages (|B|, B_par, angle to NV axis)'
     };
 end
 
@@ -630,16 +917,23 @@ assert(isempty(bad), 'Unknown answers.plots key(s): %s', strjoin(bad, ', '));
 for i = 1:numel(keys); p.(keys{i}) = ismember(keys{i}, sel); end
 end
 
-function [a, plots] = inputsAndPlotsDlg(prompts, defaults, pc, plots)
+function [a, plots] = inputsAndPlotsDlg(prompts, defaults, pc, plots, errMsg)
 %INPUTSANDPLOTSDLG  inputdlg-style modal window that also carries one V-marker
 % (checkbox) per output figure, so the user picks which figures to get BEFORE the
 % analysis runs. Returns a = {} (and the incoming `plots` untouched) if cancelled.
+% errMsg (optional): a complaint about the PREVIOUS attempt, shown in red above the
+% boxes -- this is how askAll re-asks without losing what the user already typed.
+if nargin < 5; errMsg = ''; end
 keys  = pc(:,1);
 nBox  = numel(keys);
 W     = 580; padL = 14; lblH = 18; rowH = 24; gap = 8; btnH = 26;
 panelH  = 20 + nBox*22 + 8 + btnH + 8;              % title strip + boxes + All/None row
 inputsH = numel(prompts)*(lblH + rowH + gap);
-H       = 12 + inputsH + 6 + panelH + 14 + btnH + 12;
+errH    = 0;
+if ~isempty(errMsg)                                 % grow to fit every complaint
+    errH = min(max(ceil(numel(errMsg)/82), 1), 5) * 18 + 6;
+end
+H       = 12 + errH + inputsH + 6 + panelH + 14 + btnH + 12;
 
 ok  = false;
 fig = figure('Name', 'ESR sensitivity inputs', 'NumberTitle', 'off', ...
@@ -649,6 +943,12 @@ fig = figure('Name', 'ESR sensitivity inputs', 'NumberTitle', 'off', ...
 movegui(fig, 'center');
 
 y  = H - 12;
+if ~isempty(errMsg)
+    y = y - errH;
+    uicontrol(fig, 'Style', 'text', 'String', ['Please fix: ' errMsg], ...
+        'ForegroundColor', [0.7 0 0], 'FontWeight', 'bold', ...
+        'HorizontalAlignment', 'left', 'Position', [padL y W-2*padL errH-4]);
+end
 ed = gobjects(1, numel(prompts));
 for i = 1:numel(prompts)
     y = y - lblH;
@@ -874,8 +1174,75 @@ myStruct = struct('ESR', ESR); %#ok<NASGU>
 tmp = [tempname '.mat'];
 save(tmp, 'myStruct');
 nd = 0.01;   % ND2.0 -> corrected should be measured/10
-out = ESRsensitivity(tmp, struct('ndTransmission', nd, 'bg', 0, 'nDips', 1));
+zfs1 = 2850;    % deliberately off the dip: B_par = (2870-2850)/2.8025 = 7.136 G
+out = ESRsensitivity(tmp, struct('ndTransmission', nd, 'bg', 0, 'nDips', 1, 'zfs', zfs1));
 delete(tmp);
+% Single line -> on-axis projection |nu-D|/gamma, and |B| reported equal to it.
+assert(abs(out.Bpar_G - (f0 - zfs1)/2.8025) < 0.15, ...
+    'selftest: single-line B_par wrong (got %.4g G, want %.4g G).', out.Bpar_G, (f0-zfs1)/2.8025);
+assert(out.B_G == out.Bpar_G, 'selftest: single line must report |B| = B_par.');
+
+% ---- magnetic-field readout ----------------------------------------------------
+% Round-trip the EXACT inversion against a forward diagonalization of D*Sz^2 + gam*B.S
+% for a deliberately OFF-AXIS field, where the first-order splitting/2gam reading is
+% visibly wrong and only the full inversion recovers the truth.
+Dz = 2870; gam = 2.8025; Btrue = 50; thTrue = 25;      % G, deg from the NV axis
+[nus, ~] = nvLinesForward(Dz, gam, Btrue, thTrue);
+Bexact = nvFieldFromLines(nus, Dz, gam);
+assert(abs(Bexact.B_G - Btrue) < 1e-6*Btrue, ...
+    'selftest: |B| round-trip failed (got %.6g G, want %.6g G).', Bexact.B_G, Btrue);
+assert(abs(Bexact.theta_deg - thTrue) < 1e-6*thTrue, ...
+    'selftest: theta round-trip failed (got %.6g deg, want %.6g deg).', Bexact.theta_deg, thTrue);
+% The naive reading must be BELOW the truth here -- that gap is why the inversion exists.
+assert(Bexact.Bpar_split_G < Btrue, 'selftest: off-axis splitting/2gamma should underread |B|.');
+% Zero-field limit and a purely axial field: both must come out exactly.
+assert(abs(nvFieldFromLines(nvLinesForward(Dz, gam, 30, 0), Dz, gam).B_G - 30) < 1e-6, ...
+    'selftest: axial-field inversion failed.');
+
+% End-to-end through the file path, with two dips and realistic noise.
+freq2 = (2650:3:3100)';
+clean2 = c - a*g^2./((freq2-nus(1)).^2 + g^2) - a*g^2./((freq2-nus(2)).^2 + g^2);
+normSig2 = clean2 + noise1*randn(numel(freq2), nAvg);
+ESR2 = ESR;
+ESR2.normSig = normSig2; ESR2.normSterr = noise1*ones(numel(freq2), nAvg);
+ESR2.frequency = freq2'; ESR2.frequencyInternal = freq2';
+ESR2.signal = 1e5*ones(2, numel(freq2), nAvg);
+myStruct = struct('ESR', ESR2); %#ok<NASGU>
+tmp2b = [tempname '.mat']; save(tmp2b, 'myStruct');
+out2 = ESRsensitivity(tmp2b, struct('ndTransmission', 1, 'bg', 0, 'nDips', 2, ...
+    'zfs', Dz, 'plots', 'none'));
+assert(abs(out2.B_G - Btrue) < 1.0, ...
+    'selftest: end-to-end |B| off (got %.4g G, want %.4g G).', out2.B_G, Btrue);
+assert(abs(out2.field.theta_deg - thTrue) < 3, ...
+    'selftest: end-to-end theta off (got %.4g deg, want %.4g deg).', out2.field.theta_deg, thTrue);
+assert(isfinite(out2.B_err_G) && out2.B_err_G > 0, 'selftest: no error bar on |B|.');
+assert(numel(out2.field.B_G_vsAverages) == nAvg, 'selftest: missing B-vs-averages curve.');
+assert(out2.field.theta_resolved, 'selftest: theta should be resolved at 25 deg.');
+% A stated uncertainty on D must WIDEN every bar, and hit the angle hardest of all
+% (theta rides on D_apparent - D, B_par rides on the splitting and barely moves).
+outD = ESRsensitivity(tmp2b, struct('ndTransmission', 1, 'bg', 0, 'nDips', 2, ...
+    'zfs', Dz, 'zfsErr', 1, 'plots', 'none'));
+assert(outD.B_err_G > out2.B_err_G && outD.field.theta_err_deg > out2.field.theta_err_deg, ...
+    'selftest: answers.zfsErr did not widen the field error bars.');
+assert(outD.field.theta_err_deg / out2.field.theta_err_deg > ...
+       outD.field.Bpar_err_G  / out2.field.Bpar_err_G, ...
+    'selftest: a D error should hurt theta more than B_par.');
+% An ON-AXIS field has no second-order excess, so theta must come back UNRESOLVED
+% rather than being quoted as a confident zero.
+[nusAx, ~] = nvLinesForward(Dz, gam, Btrue, 0);
+ESR3 = ESR2;
+ESR3.normSig = c - a*g^2./((freq2-nusAx(1)).^2 + g^2) - a*g^2./((freq2-nusAx(2)).^2 + g^2) ...
+    + noise1*randn(numel(freq2), nAvg);
+myStruct = struct('ESR', ESR3); %#ok<NASGU>
+tmp3 = [tempname '.mat']; save(tmp3, 'myStruct');
+out3 = ESRsensitivity(tmp3, struct('ndTransmission', 1, 'bg', 0, 'nDips', 2, ...
+    'zfs', Dz, 'plots', 'none'));
+delete(tmp3);
+assert(~out3.field.theta_resolved, 'selftest: an axial field must report theta unresolved.');
+assert(abs(out3.field.Bpar_G - Btrue) < 0.5, ...
+    'selftest: axial B_par off (got %.4g G, want %.4g G).', out3.field.Bpar_G, Btrue);
+delete(tmp2b);
+
 assert(abs(out.tMeas_s - tMeasExpected) < 1e-12, 'selftest: full CW t_meas not reconstructed.');
 % Ideal stationary noise => sigma_single constant => eta is an STE ~1/sqrt(k) => b~-0.5.
 assert(abs(out.fit_b + 0.5) < 0.12, 'selftest: expected ~1/sqrt(n) decay (b~-0.5), got b=%.3f', out.fit_b);
@@ -907,4 +1274,18 @@ assert(outd.fit_b > out.fit_b + 0.05, ...
     outd.fit_b, out.fit_b);
 fprintf('selftest passed: b=%.3f (ideal ~-0.5), SNR=%.3f, eta_meas=%.3g nT/sqrt(Hz)\n', ...
     out.fit_b, out.SNR(end), out.eta_meas_TrtHz(end)*1e9);
+fprintf('selftest passed: field |B| = %.4g G (true %.4g), theta = %.3g deg (true %.3g)\n', ...
+    out2.B_G, Btrue, out2.field.theta_deg, thTrue);
+end
+
+% ======================================================================
+function [nus, ev] = nvLinesForward(D, gam, B_G, theta_deg)
+%NVLINESFORWARD  Forward model for the selftest: the two ESR lines of D*Sz^2 + gam*(B.S).
+% Independent of nvFieldFromLines (direct diagonalization), so the round-trip is a real
+% check of the closed-form inversion rather than the same algebra written twice.
+bz = gam*B_G*cosd(theta_deg); bx = gam*B_G*sind(theta_deg);   % MHz
+Sz = diag([1 0 -1]);
+Sx = [0 1 0; 1 0 1; 0 1 0] / sqrt(2);
+ev  = sort(eig(D*Sz^2 + bz*Sz + bx*Sx));
+nus = (ev(2:3) - ev(1)).';     % transitions from the lowest level
 end
