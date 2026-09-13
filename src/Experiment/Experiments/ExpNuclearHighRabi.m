@@ -13,7 +13,7 @@ classdef ExpNuclearHighRabi < Experiment
         % running);
         frequency           % in MHz
         amplitude           % in dBm
-        phase               % in deg - phase of 'MW', assuming it is phase locked with 'MW2'
+        % phase is inherited from Experiment
         
         tau_0               % in us
         tau_1               % in us
@@ -93,14 +93,7 @@ classdef ExpNuclearHighRabi < Experiment
             obj.amplitude = newVal;
             obj.changeFlag = true;
         end
-        
-        function set.phase(obj, newVal) % newVal is in dBm
-            checkAmplitude(obj, newVal)
-            % If we got here, then newVal is OK.
-            obj.phase = newVal;
-            obj.changeFlag = true;
-        end
-        
+
         function set.tau_0(obj, newVal)	% newVal in microsec
             checkTimeVector(obj, newVal)
             % If we got here, then newVal is OK.
@@ -147,16 +140,14 @@ classdef ExpNuclearHighRabi < Experiment
             obj.changeFlag = true;
         end
         
-        
-        
+
         function set.piTime_up(obj, newVal)
             checkTimeScalar(obj, newVal)
             % If we got here, then newVal is OK.
             obj.piTime_up = newVal;
             obj.changeFlag = true;
         end
-        
-  
+
         function set.piTime_down(obj, newVal)
             checkTimeScalar(obj, newVal)
             % If we got here, then newVal is OK.

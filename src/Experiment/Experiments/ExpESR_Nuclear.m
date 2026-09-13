@@ -15,7 +15,7 @@ classdef ExpESR_Nuclear < Experiment
         frequency           % double. in MHz
         mirrorSweepAround   % double. in MHz
         amplitude           % double. in dBm
-        phase               % double. in degrees
+        % phase is inherited from Experiment
         piTime_Electron              % in us. For pulsed ESR.
          tau_0               % in us
         Pi_frequency                   % ('pulsed is to be implemented in the future, if needed)
@@ -124,12 +124,6 @@ classdef ExpESR_Nuclear < Experiment
             obj.tau_0 = newVal;
             obj.changeFlag = true;
         end
-        function set.phase(obj, newVal) % newVal is in degrees
-            checkPhase(obj, newVal)
-            % If we got here, then newVal is OK.
-            obj.phase = newVal;
-            obj.changeFlag = true;
-        end
 
         function set.nChannels(obj, newVal)
             checkNumberOfChannels(obj, newVal)
@@ -137,8 +131,7 @@ classdef ExpESR_Nuclear < Experiment
             obj.nChannels = newVal;
             obj.changeFlag = true;
         end
-        
-        
+
         function set.mirrorSweepAround(obj, newVal)
             if ~isempty(newVal)
                 % If it is empty, no further checking is needed

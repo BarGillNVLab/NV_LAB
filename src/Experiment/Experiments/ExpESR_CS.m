@@ -16,7 +16,7 @@ classdef ExpESR_CS < Experiment
         frequency           % double. in MHz
         mirrorSweepAround   % double. in MHz
         amplitude           % double. in dBm
-        phase               % double. in degrees
+        % phase is inherited from Experiment
         
         mode                % string. Either 'CW' or 'pulsed'
                             % ('pulsed is to be implemented in the future, if needed)
@@ -106,13 +106,6 @@ classdef ExpESR_CS < Experiment
             checkAmplitudeVector(obj, newVal)
             % If we got here, then newVal is OK.
             obj.amplitude = newVal;
-            obj.changeFlag = true;
-        end
-
-        function set.phase(obj, newVal) % newVal is in degrees
-            checkPhase(obj, newVal)
-            % If we got here, then newVal is OK.
-            obj.phase = newVal;
             obj.changeFlag = true;
         end
 
