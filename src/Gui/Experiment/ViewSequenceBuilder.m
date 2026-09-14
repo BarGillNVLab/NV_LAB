@@ -47,6 +47,8 @@ classdef ViewSequenceBuilder < ViewVBox
         spec
         selectedPulse = []
         selectedPoint = []
+
+        drag = []           % struct while a block edge is being dragged
     end
 
     methods
@@ -132,7 +134,9 @@ classdef ViewSequenceBuilder < ViewVBox
             hPointBtns.Widths = [80, 70, 90, 50, 170, -1];
 
             %%% Preview
-            uicontrol(obj.PROP_TEXT_NO_BG{:}, 'Parent', box, 'String', 'Preview of the first point');
+            uicontrol(obj.PROP_TEXT_NO_BG{:}, 'Parent', box, ...
+                'String', ['Preview of the first point   -   drag a block''s right edge to ', ...
+                    'change its duration (numeric durations only)']);
             obj.vAxes = axes('Parent', uicontainer('Parent', box), ...
                 'NextPlot', 'replacechildren', 'FontSize', 8, 'UserData', 'builderPreview');
 
@@ -328,8 +332,14 @@ classdef ViewSequenceBuilder < ViewVBox
                     t0 = channelsStruct(i).pulsesStartTime(j);
                     t1 = channelsStruct(i).pulsesEndTime(j);
                     if t1 <= t0; continue; end
+                    % Tagged by the pulse that *ends* here, not the one that
+                    % starts: contiguous pulses sharing a channel render as
+                    % one bar, and it is the right-hand edge being dragged.
+                    pulseIndex = obj.pulseEndingAt(t1);
                     patch(ax, [t0 t1 t1 t0], [y y y+0.62 y+0.62], laneColour, ...
-                        'EdgeColor', laneColour * 0.6);
+                        'EdgeColor', laneColour * 0.6, ...
+                        'UserData', pulseIndex, ...
+                        'ButtonDownFcn', @obj.blockDownCallback);
                 end
             end
 
@@ -362,6 +372,95 @@ classdef ViewSequenceBuilder < ViewVBox
 
     %% Callbacks
     methods (Access = private)
+        function index = pulseEndingAt(obj, endTime)
+            % Which pulse finishes at this time, or [] if none does
+            index = [];
+            durations = obj.spec.resolveDurations(1);
+            edges = [0 cumsum(durations)];
+            tolerance = max(edges(end) * 1e-9, eps);
+            hit = find(abs(edges(2:end) - endTime) <= tolerance, 1, 'last');
+            if ~isempty(hit); index = hit; end
+        end
+
+        function blockDownCallback(obj, src, ~)
+            % Grab the right-hand edge of a block to change its duration
+            pulseIndex = src.UserData;
+            if isempty(pulseIndex) || pulseIndex < 1 || pulseIndex > numel(obj.spec.pulses)
+                return
+            end
+
+            pulse = obj.spec.pulses(pulseIndex);
+            if isnan(str2double(pulse.duration))
+                % Driven by an expression - dragging would overwrite it with a
+                % number and quietly drop the pulse out of the sweep.
+                obj.setStatus(sprintf(['"%s" has the duration %s, which is an expression. ', ...
+                    'Edit it in the table - dragging would replace it with a number.'], ...
+                    pulse.nickname, pulse.duration));
+                return
+            end
+
+            durations = obj.spec.resolveDurations(1);
+            edges = [0 cumsum(durations)];
+            total = edges(end);
+            rightEdge = edges(pulseIndex + 1);
+
+            clickX = obj.vAxes.CurrentPoint(1, 1);
+            grabWidth = max(total * 0.02, durations(pulseIndex) * 0.5);
+            if abs(clickX - rightEdge) > grabWidth
+                obj.setStatus(sprintf(['Grab the right-hand edge of "%s" to resize it ', ...
+                    '(within %s us of it).'], pulse.nickname, StringHelper.formatNumber(grabWidth, 3)));
+                return
+            end
+
+            fig = ancestor(obj.component, 'figure');
+            if isempty(fig); return; end
+
+            obj.drag = struct( ...
+                'pulseIndex', pulseIndex, ...
+                'startTime',  edges(pulseIndex), ...
+                'figure',     fig, ...
+                'oldMotion',  fig.WindowButtonMotionFcn, ...
+                'oldUp',      fig.WindowButtonUpFcn, ...
+                'oldPointer', fig.Pointer);
+
+            fig.Pointer = 'left';
+            fig.WindowButtonMotionFcn = @obj.dragMotionCallback;
+            fig.WindowButtonUpFcn = @obj.dragUpCallback;
+        end
+
+        function dragMotionCallback(obj, ~, ~)
+            if isempty(obj.drag); return; end
+            index = obj.drag.pulseIndex;
+
+            newDuration = obj.vAxes.CurrentPoint(1, 1) - obj.drag.startTime;
+            minimum = PulseGenerator.MINIMAL_TIME;
+            if ~isfinite(newDuration) || newDuration < minimum
+                newDuration = minimum;
+            end
+
+            % Round to something a person would have typed, and skip the
+            % redraw when nothing has actually changed.
+            newText = StringHelper.formatNumber(newDuration, 4);
+            if strcmp(newText, obj.spec.pulses(index).duration); return; end
+
+            obj.spec.pulses(index).duration = newText;
+            obj.refreshPreview();
+            obj.setStatus(sprintf('%s = %s us', obj.spec.pulses(index).nickname, newText));
+        end
+
+        function dragUpCallback(obj, ~, ~)
+            if isempty(obj.drag); return; end
+            fig = obj.drag.figure;
+            if ~isempty(fig) && isvalid(fig)
+                fig.WindowButtonMotionFcn = obj.drag.oldMotion;
+                fig.WindowButtonUpFcn = obj.drag.oldUp;
+                fig.Pointer = obj.drag.oldPointer;
+            end
+            obj.drag = [];
+            obj.refreshPulses();    % the table has to catch up with the drag
+            obj.refreshPreview();
+        end
+
         function nameCallback(obj, ~, ~)
             obj.spec.name = strtrim(obj.edtName.String);
             obj.refreshPreview();

@@ -21,7 +21,7 @@ classdef ViewExperimentColumn < ViewVBox
         HEIGHT_MODE = 26
         HEIGHT_SELECTOR = 170
         HEIGHT_PARAMS = 260
-        HEIGHT_SEQUENCE = 220
+        HEIGHT_SEQUENCE = 250       % the tabbed sequence/results panel
         HEIGHT_RUN = 190
 
         MODE_EXPERIMENT = 1
@@ -41,6 +41,8 @@ classdef ViewExperimentColumn < ViewVBox
         viewSelector
         viewParams
         viewSequence
+        viewResult
+        tabsSequenceResult
         viewRun
         viewHelpers
 
@@ -85,8 +87,17 @@ classdef ViewExperimentColumn < ViewVBox
             obj.panelParams = ViewExpandablePanel(cardExperiment, controller, 'Parameters');
             obj.viewParams = ViewExperimentParams(obj.panelParams, controller, @obj.onParameterChanged);
 
-            panelSequence = ViewExpandablePanel(cardExperiment, controller, 'Sequence');
-            obj.viewSequence = ViewExperimentSequence(panelSequence, controller);
+            % Sequence preview and results share one panel as tabs: the
+            % column is already full height, so a fifth panel would be
+            % clipped rather than shown.
+            panelSequence = ViewExpandablePanel(cardExperiment, controller, 'Sequence & results');
+            tabs = uix.TabPanel('Parent', panelSequence.component, 'Padding', 2, 'FontSize', 8);
+            tabParent.component = tabs;
+            obj.viewSequence = ViewExperimentSequence(tabParent, controller);
+            obj.viewResult = ViewExperimentResult(tabParent, controller);
+            tabs.TabTitles = {'Sequence', 'Results'};
+            tabs.Selection = 1;
+            obj.tabsSequenceResult = tabs;
 
             panelRun = ViewExpandablePanel(cardExperiment, controller, 'Run');
             obj.viewRun = ViewExperimentRunControl(panelRun, controller);
@@ -146,6 +157,17 @@ classdef ViewExperimentColumn < ViewVBox
         end
     end
 
+    methods (Static)
+        function name = workspaceNameFor(expName)
+            % 'ESR' -> 'esr', 'ESR_CS' -> 'esr_cs', and anything that is not
+            % a usable identifier is made into one.
+            name = lower(expName);
+            if ~isvarname(name)
+                name = matlab.lang.makeValidName(name);
+            end
+        end
+    end
+
     methods (Access = private)
         function restoreState(obj)
             state = GuiSessionState.load();
@@ -197,12 +219,41 @@ classdef ViewExperimentColumn < ViewVBox
 
             obj.viewParams.showExperiment(expName);
             obj.viewSequence.showExperiment(expName);
+            obj.viewResult.showExperiment(expName);
             obj.viewRun.showExperiment(expName);
 
             % So that a helper argument named exp resolves to this one
             obj.viewHelpers.showExperiment(expName);
 
             obj.applyRememberedParameters(expName);
+            obj.publishToWorkspace(expName);
+        end
+
+        function publishToWorkspace(obj, expName)
+            % Put the experiment in the base workspace, the way it would be
+            % if it had been constructed at the prompt.
+            %
+            % Experiment is a handle class, so this is the same object the
+            % GUI is showing - not a copy. Changing esr.averages at the
+            % prompt shows up in the parameter table, and an edit in the
+            % table is visible from the prompt.
+            exp = getObjByName(expName);
+            if isempty(exp) || ~isvalid(exp); return; end
+
+            variableName = ViewExperimentColumn.workspaceNameFor(expName);
+            try
+                assignin('base', variableName, exp);
+            catch err
+                EventStation.anonymousWarning('Could not put %s in the workspace: %s', ...
+                    expName, err.message);
+                return
+            end
+
+            % Said out loud, because a variable appearing unannounced is
+            % worse than no variable at all
+            fprintf('%s is in the workspace as "%s" (the same object the GUI shows).\n', ...
+                expName, variableName);
+            obj.viewParams.showNotice(sprintf('In the workspace as "%s".', variableName));
         end
 
         function applyRememberedParameters(obj, expName)
