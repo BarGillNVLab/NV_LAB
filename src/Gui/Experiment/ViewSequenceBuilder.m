@@ -123,7 +123,8 @@ classdef ViewSequenceBuilder < ViewVBox
             uicontrol(obj.PROP_TEXT_NO_BG{:}, 'Parent', hPointBtns, 'String', 'x axis');
             obj.popXAxis = uicontrol(obj.PROP_POPUP{:}, 'Parent', hPointBtns, ...
                 'String', {'Point number'}, 'Callback', @obj.xAxisCallback);
-            hPointBtns.Widths = [80, 70, 90, 50, -1];
+            uix.Empty('Parent', hPointBtns);
+            hPointBtns.Widths = [80, 70, 90, 50, 170, -1];
 
             %%% Preview
             uicontrol(obj.PROP_TEXT_NO_BG{:}, 'Parent', box, 'String', 'Preview of the first point');
@@ -313,7 +314,10 @@ classdef ViewSequenceBuilder < ViewVBox
             for i = 1 : nLanes
                 y = nLanes - i;     % first channel at the top
                 % lane background
-                patch(ax, [0 total total 0], [y y+0.62 y+0.62 y], [0.94 0.94 0.94], ...
+                % Vertex order matters: x and y are walked in step, so the
+                % second corner must stay on the baseline or the patch comes
+                % out as a bowtie with a diagonal across the lane.
+                patch(ax, [0 total total 0], [y y y+0.62 y+0.62], [0.94 0.94 0.94], ...
                     'EdgeColor', [0.85 0.85 0.85]);
                 for j = 1 : channelsStruct(i).numOfPulses
                     t0 = channelsStruct(i).pulsesStartTime(j);
@@ -336,11 +340,13 @@ classdef ViewSequenceBuilder < ViewVBox
                 if centre - lastRight < minGap; continue; end
                 text(ax, centre, nLanes + 0.15, label, 'Parent', ax, ...
                     'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', ...
-                    'FontSize', 7, 'Color', [0.25 0.25 0.25]);
+                    'FontSize', 7, 'Color', [0.25 0.25 0.25], ...
+                    'Interpreter', 'none');
                 lastRight = centre;
             end
 
             set(ax, 'YTick', (0 : nLanes-1) + 0.31, 'YTickLabel', fliplr(names), ...
+                'TickLabelInterpreter', 'none', ...
                 'FontSize', 8, 'Box', 'on', 'Layer', 'top', 'TickDir', 'out');
             xlim(ax, [0 total]);
             ylim(ax, [-0.1 nLanes + 0.75]);

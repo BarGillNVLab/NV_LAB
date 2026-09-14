@@ -39,7 +39,9 @@ classdef UserSequenceSpec < handle
         BIND_PHASE = 'mwPhase'
 
         BINDINGS = {'duration', 'mwFrequency', 'mwAmplitude', 'mwPhase'}
-        BINDING_UNITS = {'\mus', 'MHz', 'dBm', 'deg'}
+        % Plain text, not TeX: these are used in uitable headers and in
+        % generated comments, neither of which renders an escape.
+        BINDING_UNITS = {'us', 'MHz', 'dBm', 'deg'}
     end
 
     properties
