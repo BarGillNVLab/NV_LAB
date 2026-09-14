@@ -189,6 +189,50 @@ classdef UserSequenceSpec < handle
             obj.combinations(end+1, :) = row;
         end
 
+        function fillGrid(obj, ranges)
+            % Replace the points with every combination of one range per
+            % swept variable. The ranges are independent: 20 values of tau
+            % against 3 frequencies is 60 points, and neither list has to
+            % match the other's length.
+            %
+            % The first column varies slowest, so the table reads the way a
+            % pair of nested loops would be written.
+            if isempty(obj.sweptNames); return; end
+            if ~iscell(ranges) || numel(ranges) ~= numel(obj.sweptNames)
+                error('UserSequenceSpec:badRanges', ...
+                    'Expected one range per swept variable (%d).', numel(obj.sweptNames));
+            end
+
+            counts = cellfun(@numel, ranges);
+            if any(counts == 0)
+                error('UserSequenceSpec:emptyRange', 'Every swept variable needs at least one value.');
+            end
+            total = prod(counts);
+
+            % How many times each value of a column repeats consecutively:
+            % the product of the counts of every column to its right.
+            repeatEach = ones(1, numel(counts));
+            for c = 1 : numel(counts) - 1
+                repeatEach(c) = prod(counts(c+1 : end));
+            end
+
+            rows = zeros(total, numel(ranges));
+            for c = 1 : numel(ranges)
+                values = reshape(double(ranges{c}), [], 1);
+                block = repelem(values, repeatEach(c));
+                rows(:, c) = repmat(block, total / numel(block), 1);
+            end
+            obj.combinations = rows;
+        end
+
+        function values = columnValues(obj, name)
+            % The distinct values a swept variable currently takes, in order
+            values = [];
+            c = find(strcmp(obj.sweptNames, name), 1);
+            if isempty(c) || isempty(obj.combinations); return; end
+            values = unique(obj.combinations(:, c)', 'stable');
+        end
+
         function removeCombination(obj, index)
             if index < 1 || index > size(obj.combinations, 1); return; end
             obj.combinations(index, :) = [];

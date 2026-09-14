@@ -27,6 +27,10 @@ classdef ViewSequenceBuilder < ViewVBox
         VAR_NAME = 1, VAR_VALUE = 2, VAR_BINDING = 3, VAR_CHANNEL = 4, VAR_SWEPT = 5
 
         LANE_HEIGHT = 26        % px per channel lane in the preview
+
+        % Past this many points, generating the grid is worth confirming:
+        % each point is its own sequence upload and measurement, per average.
+        MAX_POINTS = 400
     end
 
     properties (Access = private)
@@ -117,9 +121,10 @@ classdef ViewSequenceBuilder < ViewVBox
             hPointBtns = uix.HBox('Parent', box, 'Spacing', 4);
             uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hPointBtns, 'String', 'Add point', 'Callback', @obj.addPointCallback);
             uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hPointBtns, 'String', 'Remove', 'Callback', @obj.removePointCallback);
-            uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hPointBtns, 'String', 'Fill range...', ...
-                'TooltipString', 'Replace the points with a range swept over one variable', ...
-                'Callback', @obj.fillRangeCallback);
+            uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hPointBtns, 'String', 'Fill grid...', ...
+                'TooltipString', ['Give each swept variable its own range - lengths may ', ...
+                    'differ - and generate every combination'], ...
+                'Callback', @obj.fillGridCallback);
             uicontrol(obj.PROP_TEXT_NO_BG{:}, 'Parent', hPointBtns, 'String', 'x axis');
             obj.popXAxis = uicontrol(obj.PROP_POPUP{:}, 'Parent', hPointBtns, ...
                 'String', {'Point number'}, 'Callback', @obj.xAxisCallback);
@@ -492,46 +497,70 @@ classdef ViewSequenceBuilder < ViewVBox
             obj.refreshPoints(); obj.refreshPreview();
         end
 
-        function fillRangeCallback(obj, ~, ~)
-            % Convenience for the common case: sweep one variable over a
-            % range, leaving the others at the values in the first row.
+        function fillGridCallback(obj, ~, ~)
+            % One range per swept variable, then every combination of them.
+            % Lengths are independent, so 20 taus against 3 frequencies gives
+            % 60 points.
             swept = obj.spec.sweptNames;
             if isempty(swept)
-                obj.setStatus('Tick a variable as swept first.');
+                obj.setStatus('Tick a variable as swept first - points need a column.');
                 return
             end
-            answer = inputdlg( ...
-                {sprintf('Variable (%s):', strjoin(swept, ', ')), 'Range, e.g. 0.1 : 0.1 : 2'}, ...
-                'Fill range', 1, {swept{1}, '0.1 : 0.1 : 2'});
+
+            prompts = cell(1, numel(swept));
+            defaults = cell(1, numel(swept));
+            for i = 1 : numel(swept)
+                idx = obj.spec.variableIndex(swept{i});
+                units = UserSequenceSpec.unitsFor(obj.spec.variables(idx).binding);
+                prompts{i} = sprintf('%s [%s]', swept{i}, units);
+
+                existing = obj.spec.columnValues(swept{i});
+                if numel(existing) > 1
+                    defaults{i} = ExpGuiParam.valueToString(existing);
+                else
+                    defaults{i} = ExpGuiParam.valueToString(obj.spec.variables(idx).value);
+                end
+            end
+
+            answer = inputdlg(prompts, 'Fill grid - one range per variable', 1, defaults);
             if isempty(answer); return; end
 
-            column = find(strcmp(swept, strtrim(answer{1})), 1);
-            if isempty(column)
-                obj.setStatus(sprintf('"%s" is not one of the swept variables.', answer{1}));
+            ranges = cell(1, numel(swept));
+            for i = 1 : numel(swept)
+                [values, isOk] = ExpGuiParam.parseVector(answer{i});
+                if ~isOk || isempty(values)
+                    obj.setStatus(sprintf(['Could not read the range for %s. Try ', ...
+                        '"0.1 : 0.1 : 2" or "[1 2 5]".'], swept{i}));
+                    return
+                end
+                ranges{i} = values;
+            end
+
+            counts = cellfun(@numel, ranges);
+            total = prod(counts);
+            if total > obj.MAX_POINTS
+                shape = strjoin(arrayfun(@(n) sprintf('%d', n), counts, ...
+                    'UniformOutput', false), ' x ');
+                if ~QuestionUserYesNo('Rather a lot of points', sprintf( ...
+                        ['%s would make %d measurement points. Every point is a ', ...
+                        'separate sequence upload and measurement, repeated for ', ...
+                        'each average. Go ahead?'], shape, total))
+                    return
+                end
+            end
+
+            try
+                obj.spec.fillGrid(ranges);
+            catch err
+                obj.setStatus(sprintf('Could not fill the table: %s', err.message));
                 return
             end
-            [values, isOk] = ExpGuiParam.parseVector(answer{2});
-            if ~isOk || isempty(values)
-                obj.setStatus('That range could not be read. Try "0.1 : 0.1 : 2" or "[1 2 5]".');
-                return
-            end
 
-            if isempty(obj.spec.combinations)
-                base = cellfun(@(n) obj.spec.variables(obj.spec.variableIndex(n)).value, swept);
-            else
-                base = obj.spec.combinations(1, :);
-            end
-            rows = repmat(base, numel(values), 1);
-            rows(:, column) = values(:);
-            obj.spec.combinations = rows;
-
-            obj.refreshPoints(); obj.refreshPreview();
-        end
-
-        function windowCallback(obj, ~, ~)
-            obj.spec.signalWindow = obj.popSignal.Value;
-            obj.spec.referenceWindow = obj.popReference.Value;
+            obj.refreshPoints();
             obj.refreshPreview();
+            obj.setStatus(sprintf('%s = %d point(s).', ...
+                strjoin(arrayfun(@(n) sprintf('%d', n), counts, ...
+                    'UniformOutput', false), ' x '), total));
         end
 
         function xAxisCallback(obj, ~, ~)
@@ -634,9 +663,13 @@ classdef ViewSequenceBuilder < ViewVBox
         end
 
         function str = asText(obj, value) %#ok<INUSL>
-            if ischar(value); str = strtrim(value);
-            elseif isempty(value); str = '';
-            else; str = strtrim(char(string(value))); end
+            if ischar(value)
+                str = strtrim(value);
+            elseif isempty(value)
+                str = '';
+            else
+                str = strtrim(char(string(value)));
+            end
         end
 
         function clearAxes(obj, message)
