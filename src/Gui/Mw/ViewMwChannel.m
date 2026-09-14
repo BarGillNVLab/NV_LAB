@@ -15,6 +15,14 @@ classdef ViewMwChannel < ViewVBox & EventListener
     %   See also VIEWMWCONTAINER, SIGNALGENERATOR, SWITCHPGCONTROLLED
 
     properties (Constant)
+        GATE_MODES = {'Off', 'CW', 'Pulsed'}
+        GATE_OFF = 1
+        GATE_CW = 2
+        GATE_PULSED = 3
+
+        DEFAULT_ON_TIME = 1     % us
+        DEFAULT_DUTY = 1        % percent - two orders of magnitude below CW
+
         ROW_HEIGHT = 24
         LABEL_WIDTH = 66
         UNITS_WIDTH = 34
@@ -26,11 +34,17 @@ classdef ViewMwChannel < ViewVBox & EventListener
         edtAmplitude
         edtPhase
         cbxOutput
-        cbxGate
+        popGate
+        edtOnTime
+        edtDuty
+        lblPulse
         lblHeader
 
         channel         % the FGchannel struct from SignalGenerator
         channelIndex    % its position in SignalGenerator.FGchannels
+
+        heldChannels = {}   % PG channels held on before we took the PG over
+        isStreaming = false % whether we are currently looping a sequence
     end
 
     methods
@@ -61,20 +75,42 @@ classdef ViewMwChannel < ViewVBox & EventListener
                 'String', 'Output', ...
                 'TooltipString', 'Enable the frequency generator output for this channel', ...
                 'Callback', @obj.outputCallback);
-            obj.cbxGate = uicontrol(obj.PROP_CHECKBOX{:}, 'Parent', hToggles, ...
-                'String', 'Gate', ...
-                'TooltipString', sprintf('Pulse-generator fast switch "%s"', switchName), ...
+            uicontrol(obj.PROP_TEXT_NO_BG{:}, 'Parent', hToggles, 'String', 'Gate');
+            obj.popGate = uicontrol(obj.PROP_POPUP{:}, 'Parent', hToggles, ...
+                'String', obj.GATE_MODES, ...
+                'Value', obj.GATE_OFF, ...
+                'TooltipString', sprintf(['Fast switch "%s":  Off, CW (held open), or ', ...
+                    'Pulsed (looped on the pulse generator)'], switchName), ...
                 'Callback', @obj.gateCallback);
             uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hToggles, ...
                 'String', 'Read', ...
                 'TooltipString', 'Query the instrument for its current values', ...
                 'Callback', @obj.readCallback);
-            hToggles.Widths = [-1, -1, 52];
+            hToggles.Widths = [-1, 32, 90, 52];
 
-            box.Heights = obj.ROW_HEIGHT * ones(1, 5);
+            % Pulsed-mode settings. Duty cycle is the knob that matters:
+            % average power, and so heating, scales with it directly.
+            hPulse = uix.HBox('Parent', box, 'Spacing', 3);
+            uicontrol(obj.PROP_TEXT_NO_BG{:}, 'Parent', hPulse, 'String', 'On');
+            obj.edtOnTime = uicontrol(obj.PROP_EDIT{:}, 'Parent', hPulse, ...
+                'String', num2str(obj.DEFAULT_ON_TIME), ...
+                'TooltipString', 'MW on-time per cycle, in microseconds', ...
+                'Callback', @obj.pulseCallback);
+            uicontrol(obj.PROP_TEXT_UNITS{:}, 'Parent', hPulse, 'String', 'us');
+            uicontrol(obj.PROP_TEXT_NO_BG{:}, 'Parent', hPulse, 'String', 'Duty');
+            obj.edtDuty = uicontrol(obj.PROP_EDIT{:}, 'Parent', hPulse, ...
+                'String', num2str(obj.DEFAULT_DUTY), ...
+                'TooltipString', 'Percent of each cycle the MW is on. Lower means less heating.', ...
+                'Callback', @obj.pulseCallback);
+            uicontrol(obj.PROP_TEXT_UNITS{:}, 'Parent', hPulse, 'String', '%');
+            hPulse.Widths = [22, -1, 24, 32, -1, 18];
+
+            obj.lblPulse = uicontrol(obj.PROP_TEXT_NO_BG{:}, 'Parent', box, 'String', '');
+
+            box.Heights = obj.ROW_HEIGHT * ones(1, 7);
 
             obj.width = obj.TOTAL_WIDTH;
-            obj.height = obj.ROW_HEIGHT * 5 + 12;
+            obj.height = obj.ROW_HEIGHT * 7 + 12;
 
             obj.refresh();
         end
@@ -98,11 +134,18 @@ classdef ViewMwChannel < ViewVBox & EventListener
 
             sw = getObjByName(obj.channel.pgChannelName);
             if isempty(sw) || ~isvalid(sw)
-                obj.cbxGate.Enable = 'off';
+                obj.popGate.Enable = 'off';
             else
-                obj.cbxGate.Enable = 'on';
-                obj.cbxGate.Value = logical(sw.isEnabled);
+                obj.popGate.Enable = 'on';
+                % Only Off and CW can be read back from the switch. Pulsed is
+                % our own state - the switch has no idea it is being looped -
+                % so it is never overwritten from hardware here.
+                if obj.popGate.Value ~= obj.GATE_PULSED
+                    obj.popGate.Value = BooleanHelper.ifTrueElse( ...
+                        logical(sw.isEnabled), obj.GATE_CW, obj.GATE_OFF);
+                end
             end
+            obj.updatePulseLabel();
         end
     end
 
@@ -243,12 +286,190 @@ classdef ViewMwChannel < ViewVBox & EventListener
                 EventStation.anonymousWarning('No fast switch called "%s".', obj.channel.pgChannelName);
                 return
             end
+
+            mode = obj.popGate.Value;
+
+            % Leaving Pulsed means giving the pulse generator back
+            if obj.wasPulsing && mode ~= obj.GATE_PULSED
+                obj.stopPulsed();
+            end
+
             try
-                sw.isEnabled = logical(obj.cbxGate.Value);
+                switch mode
+                    case obj.GATE_OFF
+                        sw.isEnabled = false;
+                    case obj.GATE_CW
+                        sw.isEnabled = true;
+                    case obj.GATE_PULSED
+                        obj.startPulsed();
+                end
             catch err
                 EventStation.anonymousWarning('Could not switch the gate: %s', err.message);
             end
             obj.refresh();
+        end
+
+        function pulseCallback(obj, ~, ~)
+            % Re-apply the timings if we are already pulsing; otherwise just
+            % show what they would mean.
+            if obj.wasPulsing
+                obj.startPulsed();
+            end
+            obj.updatePulseLabel();
+        end
+
+        function tf = wasPulsing(obj)
+            % True when we have taken the pulse generator over
+            tf = ~isempty(obj.heldChannels) || obj.isStreaming;
+        end
+
+        function [onTime, offTime, period, isOk] = pulseTimings(obj)
+            % On-time and duty cycle in, the three derived numbers out
+            onTime = str2double(obj.edtOnTime.String);
+            duty = str2double(obj.edtDuty.String);
+            offTime = NaN;
+            period = NaN;
+            isOk = false;
+
+            if isnan(onTime) || onTime <= 0
+                EventStation.anonymousWarning('MW on-time must be a positive number of microseconds.');
+                return
+            end
+            if isnan(duty) || duty <= 0 || duty >= 100
+                EventStation.anonymousWarning('Duty cycle must be between 0 and 100 percent (100 would be CW).');
+                return
+            end
+
+            period = onTime * 100 / duty;
+            offTime = period - onTime;
+
+            minimum = PulseGenerator.MINIMAL_TIME;
+            if onTime < minimum || offTime < minimum
+                EventStation.anonymousWarning(['With on = %g us at %g percent, the off-time is ', ...
+                    '%g us, and the pulse generator cannot resolve anything below %g us. ', ...
+                    'Raise the on-time or lower the duty cycle.'], onTime, duty, offTime, minimum);
+                return
+            end
+            isOk = true;
+        end
+
+        function startPulsed(obj)
+            % Loop the MW channel on the pulse generator, so the average
+            % power - and the heating with it - falls with the duty cycle.
+            [onTime, offTime, period, isOk] = obj.pulseTimings();
+            if ~isOk
+                obj.popGate.Value = obj.GATE_OFF;
+                return
+            end
+
+            % The pulse generator is shared with the experiments
+            runningExp = Experiment.current();
+            if ~isempty(runningExp)
+                exp = getObjByName(runningExp);
+                if ~isempty(exp) && isvalid(exp) && exp.isRunning
+                    EventStation.anonymousWarning(['"%s" is running and owns the pulse ', ...
+                        'generator. Pause it before pulsing the MW from here.'], runningExp);
+                    obj.popGate.Value = obj.GATE_OFF;
+                    return
+                end
+            end
+
+            pg = getObjByName(PulseGenerator.NAME);
+            if isempty(pg) || ~isvalid(pg)
+                EventStation.anonymousWarning('No pulse generator, so the MW cannot be pulsed.');
+                obj.popGate.Value = obj.GATE_OFF;
+                return
+            end
+
+            % Uploading a sequence replaces every held channel state, so
+            % whatever is currently on - the green laser above all - has to be
+            % carried through both halves of the cycle, or the counts go to
+            % zero the moment we start.
+            held = obj.currentlyOnChannels(pg);
+            mwChannel = obj.channel.pgChannelName;
+            withMw = [held, {mwChannel}];
+            withoutMw = held;
+            if isempty(withoutMw)
+                withoutMw = '';
+            end
+
+            S = Sequence;
+            S.addEvent(onTime, withMw, 'mwOn');
+            S.addEvent(offTime, withoutMw, 'mwOff');
+
+            try
+                pg.streamContinuously(S);
+            catch err
+                EventStation.anonymousWarning('Could not pulse the MW: %s', err.message);
+                obj.popGate.Value = obj.GATE_OFF;
+                return
+            end
+
+            obj.heldChannels = held;
+            obj.isStreaming = true;
+            obj.updatePulseLabel(onTime, offTime, period);
+        end
+
+        function stopPulsed(obj)
+            % Hand the pulse generator back, restoring the channels that were
+            % held on before we took it over.
+            pg = getObjByName(PulseGenerator.NAME);
+            if ~isempty(pg) && isvalid(pg)
+                try
+                    if isempty(obj.heldChannels)
+                        pg.off([]);
+                    else
+                        % Re-asserting a constant output is what ends the stream
+                        pg.on(obj.heldChannels);
+                    end
+                catch err
+                    EventStation.anonymousWarning('Could not restore the pulse generator: %s', err.message);
+                end
+            end
+            obj.heldChannels = {};
+            obj.isStreaming = false;
+        end
+
+        function names = currentlyOnChannels(obj, pg)
+            % Channels the pulse generator is holding on, excluding ours
+            names = {};
+            try
+                allNames = pg.channelNames();
+            catch
+                return
+            end
+            for i = 1 : numel(allNames)
+                if strcmp(allNames{i}, obj.channel.pgChannelName)
+                    continue
+                end
+                try
+                    if pg.isOn(allNames{i})
+                        names{end+1} = allNames{i}; %#ok<AGROW>
+                    end
+                catch
+                    % A channel we cannot query is one we leave alone
+                end
+            end
+        end
+
+        function updatePulseLabel(obj, onTime, offTime, period)
+            if ~isvalid(obj.lblPulse)
+                return
+            end
+            if obj.popGate.Value ~= obj.GATE_PULSED
+                obj.lblPulse.String = '';
+                return
+            end
+            if nargin < 4
+                [onTime, offTime, period, isOk] = obj.pulseTimings();
+                if ~isOk
+                    obj.lblPulse.String = 'Pulse timings are not usable.';
+                    return
+                end
+            end
+            obj.lblPulse.String = sprintf( ...
+                'on %g / off %g us, period %g us - %.3g x less average power than CW', ...
+                onTime, offTime, period, period / onTime);
         end
 
         function readCallback(obj, ~, ~)
@@ -309,7 +530,9 @@ classdef ViewMwChannel < ViewVBox & EventListener
             obj.edtAmplitude.Enable = onOff;
             obj.edtPhase.Enable = onOff;
             obj.cbxOutput.Enable = onOff;
-            obj.cbxGate.Enable = onOff;
+            obj.popGate.Enable = onOff;
+            obj.edtOnTime.Enable = onOff;
+            obj.edtDuty.Enable = onOff;
         end
     end
 

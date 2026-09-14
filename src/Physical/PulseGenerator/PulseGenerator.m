@@ -219,6 +219,18 @@ classdef (Abstract) PulseGenerator < EventSender
             time = obj.sequence.duration();
         end
         
+        function streamContinuously(obj, S) %#ok<INUSD>
+            % Output S on a loop, for ever, returning immediately.
+            %
+            % run() cannot do this: it busy-waits until the sequence has
+            % finished, which never happens for an endless loop. Backends
+            % that can free-run override this; the rest say so plainly.
+            %
+            % Stop it by setting a constant output again - on() or off().
+            obj.sendError(sprintf( ...
+                '%s cannot stream a sequence continuously.', class(obj)))
+        end
+        
         function axisHandle = plotSequence(obj, varargin)
             % Plots the sequence, can input an optional axis handle
             axisHandle = obj.sequence.plotSequence(varargin{:});

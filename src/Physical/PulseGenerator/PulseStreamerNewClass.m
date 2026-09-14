@@ -88,6 +88,34 @@ classdef (Sealed) PulseStreamerNewClass < PulseGenerator
             end
         end
 
+        function streamContinuously(obj, S)
+            % Stream S on an endless loop, without blocking.
+            % The PulseStreamer takes nRuns < 0 to mean "repeat until told
+            % otherwise"; PulseGenerator.repeats cannot carry that, since it
+            % validates as a positive integer.
+            obj.setSequence(S);
+
+            % The conversion below is deliberately a copy of the one in
+            % sendToHardware rather than a shared helper: that method is on
+            % the path every experiment takes, and this feature is not worth
+            % any risk to it.
+            seq = BooleanHelper.ifTrueElse(obj.delayFixed, obj.delayFixedSequence, obj.sequence);
+            pulses = seq.getPulses();
+            sequences = [];
+            for i = 1:length(pulses)
+                p = pulses(i);
+                onChannels = obj.channelName2Address(p.getOnChannels);
+                sequences = sequences + P(p.duration * 1e3, onChannels, 0, 0);
+            end
+            psSequence = convert_PPH_to_PSSequence(sequences);
+
+            obj.ps.stream(psSequence, -1, OutputState.Zero());
+            if obj.trigger == PSTriggerStart.Software
+                obj.ps.startNow;
+            end
+            obj.sequenceInMemory = true;
+        end
+        
         function sendToHardware(obj)
             % Creates sequence in form legible to hardware
             finalOutputState = OutputState(0,0,0);
