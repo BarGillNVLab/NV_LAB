@@ -1,133 +1,148 @@
 classdef ViewSequenceBuilder < ViewVBox
-    %VIEWSEQUENCEBUILDER Build and run a pulse sequence by hand
-    %   Pulses are rows in a table: a nickname, a duration, and the channels
-    %   that are on. Durations are expressions over named variables, so one
-    %   variable can drive several pulses at once - write 'tau' in two gaps
-    %   and both follow the sweep.
+    %VIEWSEQUENCEBUILDER Build, preview and run a pulse sequence by hand
+    %   Four panes, top to bottom: the pulses, the variables, the
+    %   measurement points, and a preview drawn as one lane per channel.
     %
-    %   Exactly one variable is marked as swept; its values are the x axis.
-    %   Two detection windows are nominated as signal and reference.
+    %   Pulses are time slices - a duration and the set of channels on
+    %   during it - which is exactly what Sequence runs. Durations are
+    %   expressions over the variables, so one variable can drive several
+    %   pulses at once.
     %
-    %   The preview redraws on every edit and never touches hardware.
+    %   A variable drives either a pulse duration or an MW setting
+    %   (frequency, amplitude or phase on a channel). Any number of them can
+    %   be swept; the points table then has one column per swept variable
+    %   and one row per measurement, so a scan over MW frequency and a delay
+    %   together is just a four-row table.
+    %
+    %   The preview never touches hardware.
     %
     %   See also USERSEQUENCESPEC, EXPUSERSEQUENCE, USERSEQUENCEEXPORTER
 
     properties (Constant)
         PULSE_COLUMNS = {'Nickname', 'Duration', 'Channels'}
-        PULSE_WIDTHS = {90, 90, 170}
+        PULSE_WIDTHS = {110, 110, 240}
 
-        VARIABLE_COLUMNS = {'Variable', 'Value', 'Swept'}
-        VARIABLE_WIDTHS = {110, 90, 50}
-        COL_SWEPT = 3
+        VARIABLE_COLUMNS = {'Variable', 'Value', 'Drives', 'Channel', 'Swept'}
+        VARIABLE_WIDTHS = {110, 80, 100, 80, 50}
+        VAR_NAME = 1, VAR_VALUE = 2, VAR_BINDING = 3, VAR_CHANNEL = 4, VAR_SWEPT = 5
+
+        LANE_HEIGHT = 26        % px per channel lane in the preview
     end
 
     properties (Access = private)
         edtName
         tblPulses
         tblVariables
-        edtSweepValues
+        tblPoints
+        popXAxis
         popSignal
         popReference
         vAxes
         lblStatus
 
-        spec                % UserSequenceSpec being edited
-        selectedRow = []    % row highlighted in the pulse table
+        spec
+        selectedPulse = []
+        selectedPoint = []
     end
 
     methods
-        function obj = ViewSequenceBuilder(parent, controller)
-            padding = 5;
-            spacing = 3;
-            obj@ViewVBox(parent, controller, padding, spacing);
+        function obj = ViewSequenceBuilder(parent, controller, spec)
+            obj@ViewVBox(parent, controller, 5, 4);
 
-            obj.spec = ViewSequenceBuilder.exampleSpec();
+            if exist('spec', 'var') && isa(spec, 'UserSequenceSpec')
+                obj.spec = spec;
+            else
+                obj.spec = ViewSequenceBuilder.exampleSpec();
+            end
 
             box = obj.component;
 
-            %%% Name, load, save
-            hName = uix.HBox('Parent', box, 'Spacing', 4);
-            uicontrol(obj.PROP_TEXT_NO_BG{:}, 'Parent', hName, 'String', 'Name');
-            obj.edtName = uicontrol(obj.PROP_EDIT_SMALL{:}, 'Parent', hName, ...
+            %%% Name and files
+            hTop = uix.HBox('Parent', box, 'Spacing', 4);
+            uicontrol(obj.PROP_TEXT_NO_BG{:}, 'Parent', hTop, 'String', 'Name');
+            obj.edtName = uicontrol(obj.PROP_EDIT_SMALL{:}, 'Parent', hTop, ...
                 'String', obj.spec.name, 'Callback', @obj.nameCallback);
-            uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hName, 'String', 'Load', ...
-                'Callback', @obj.loadCallback);
-            uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hName, 'String', 'Save', ...
-                'Callback', @obj.saveCallback);
-            hName.Widths = [35, -1, 50, 50];
+            uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hTop, 'String', 'Load', 'Callback', @obj.loadCallback);
+            uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hTop, 'String', 'Save', 'Callback', @obj.saveCallback);
+            hTop.Widths = [40, -1, 60, 60];
 
             %%% Pulses
             uicontrol(obj.PROP_TEXT_NO_BG{:}, 'Parent', box, ...
-                'String', 'Pulses   (duration may use the variables below)');
+                'String', 'Pulses   -   a duration and the channels on during it. Durations may use the variables below.');
             obj.tblPulses = uitable('Parent', box, ...
-                'ColumnName', obj.PULSE_COLUMNS, ...
-                'ColumnEditable', [true true true], ...
-                'ColumnWidth', obj.PULSE_WIDTHS, ...
-                'RowName', [], 'FontSize', 8, ...
+                'ColumnName', obj.PULSE_COLUMNS, 'ColumnEditable', [true true true], ...
+                'ColumnWidth', obj.PULSE_WIDTHS, 'RowName', [], 'FontSize', 9, ...
                 'CellEditCallback', @obj.pulseEditCallback, ...
-                'CellSelectionCallback', @obj.pulseSelectCallback);
-
-            hPulseButtons = uix.HBox('Parent', box, 'Spacing', 4);
-            uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hPulseButtons, 'String', 'Add', ...
-                'Callback', @obj.addPulseCallback);
-            uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hPulseButtons, 'String', 'Remove', ...
-                'Callback', @obj.removePulseCallback);
-            uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hPulseButtons, 'String', 'Up', ...
-                'Callback', @(h,e) obj.movePulseCallback(-1));
-            uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hPulseButtons, 'String', 'Down', ...
-                'Callback', @(h,e) obj.movePulseCallback(+1));
+                'CellSelectionCallback', @(h,e) obj.selectCallback('pulse', e));
+            hPulseBtns = uix.HBox('Parent', box, 'Spacing', 4);
+            uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hPulseBtns, 'String', 'Add pulse', 'Callback', @obj.addPulseCallback);
+            uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hPulseBtns, 'String', 'Remove', 'Callback', @obj.removePulseCallback);
+            uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hPulseBtns, 'String', 'Move up', 'Callback', @(h,e) obj.movePulseCallback(-1));
+            uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hPulseBtns, 'String', 'Move down', 'Callback', @(h,e) obj.movePulseCallback(+1));
+            uicontrol(obj.PROP_TEXT_NO_BG{:}, 'Parent', hPulseBtns, 'String', 'Signal');
+            obj.popSignal = uicontrol(obj.PROP_POPUP{:}, 'Parent', hPulseBtns, ...
+                'String', {'-'}, ...
+                'TooltipString', 'Which detection window is the signal', ...
+                'Callback', @obj.windowCallback);
+            uicontrol(obj.PROP_TEXT_NO_BG{:}, 'Parent', hPulseBtns, 'String', 'Reference');
+            obj.popReference = uicontrol(obj.PROP_POPUP{:}, 'Parent', hPulseBtns, ...
+                'String', {'-'}, ...
+                'TooltipString', 'Which detection window is the reference', ...
+                'Callback', @obj.windowCallback);
+            uix.Empty('Parent', hPulseBtns);
+            hPulseBtns.Widths = [80, 70, 70, 80, 45, 120, 65, 120, -1];
 
             %%% Variables
             uicontrol(obj.PROP_TEXT_NO_BG{:}, 'Parent', box, ...
-                'String', 'Variables   (tick one to sweep it)');
+                'String', 'Variables   -   tick every one you want to sweep. "Drives" says what it changes.');
             obj.tblVariables = uitable('Parent', box, ...
-                'ColumnName', obj.VARIABLE_COLUMNS, ...
-                'ColumnEditable', [true true true], ...
-                'ColumnFormat', {'char', 'numeric', 'logical'}, ...
-                'ColumnWidth', obj.VARIABLE_WIDTHS, ...
-                'RowName', [], 'FontSize', 8, ...
+                'ColumnName', obj.VARIABLE_COLUMNS, 'ColumnEditable', [true true true true true], ...
+                'ColumnFormat', {'char', 'numeric', UserSequenceSpec.BINDINGS, 'char', 'logical'}, ...
+                'ColumnWidth', obj.VARIABLE_WIDTHS, 'RowName', [], 'FontSize', 9, ...
                 'CellEditCallback', @obj.variableEditCallback);
+            hVarBtns = uix.HBox('Parent', box, 'Spacing', 4);
+            uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hVarBtns, 'String', 'Add variable', 'Callback', @obj.addVariableCallback);
+            uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hVarBtns, 'String', 'Remove', 'Callback', @obj.removeVariableCallback);
+            uix.Empty('Parent', hVarBtns);
+            hVarBtns.Widths = [90, 70, -1];
 
-            hVarButtons = uix.HBox('Parent', box, 'Spacing', 4);
-            uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hVarButtons, 'String', 'Add variable', ...
-                'Callback', @obj.addVariableCallback);
-            uicontrol(obj.PROP_TEXT_NO_BG{:}, 'Parent', hVarButtons, 'String', 'Sweep values');
-            obj.edtSweepValues = uicontrol(obj.PROP_EDIT_SMALL{:}, 'Parent', hVarButtons, ...
-                'TooltipString', 'e.g. 0.1 : 0.1 : 5   or   [1 2 5 10]', ...
-                'Callback', @obj.sweepValuesCallback);
-            hVarButtons.Widths = [80, 70, -1];
-
-            %%% Detection windows
-            hWindows = uix.HBox('Parent', box, 'Spacing', 4);
-            uicontrol(obj.PROP_TEXT_NO_BG{:}, 'Parent', hWindows, 'String', 'Signal');
-            obj.popSignal = uicontrol(obj.PROP_POPUP{:}, 'Parent', hWindows, ...
-                'String', {'-'}, 'Callback', @obj.windowCallback);
-            uicontrol(obj.PROP_TEXT_NO_BG{:}, 'Parent', hWindows, 'String', 'Reference');
-            obj.popReference = uicontrol(obj.PROP_POPUP{:}, 'Parent', hWindows, ...
-                'String', {'-'}, 'Callback', @obj.windowCallback);
-            hWindows.Widths = [45, -1, 60, -1];
+            %%% Measurement points
+            uicontrol(obj.PROP_TEXT_NO_BG{:}, 'Parent', box, ...
+                'String', 'Measurement points   -   one row per point, one column per swept variable.');
+            obj.tblPoints = uitable('Parent', box, ...
+                'ColumnName', {'(no variables swept)'}, 'ColumnEditable', true, ...
+                'RowName', [], 'FontSize', 9, 'Data', cell(0, 1), ...
+                'CellEditCallback', @obj.pointEditCallback, ...
+                'CellSelectionCallback', @(h,e) obj.selectCallback('point', e));
+            hPointBtns = uix.HBox('Parent', box, 'Spacing', 4);
+            uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hPointBtns, 'String', 'Add point', 'Callback', @obj.addPointCallback);
+            uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hPointBtns, 'String', 'Remove', 'Callback', @obj.removePointCallback);
+            uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hPointBtns, 'String', 'Fill range...', ...
+                'TooltipString', 'Replace the points with a range swept over one variable', ...
+                'Callback', @obj.fillRangeCallback);
+            uicontrol(obj.PROP_TEXT_NO_BG{:}, 'Parent', hPointBtns, 'String', 'x axis');
+            obj.popXAxis = uicontrol(obj.PROP_POPUP{:}, 'Parent', hPointBtns, ...
+                'String', {'Point number'}, 'Callback', @obj.xAxisCallback);
+            hPointBtns.Widths = [80, 70, 90, 50, -1];
 
             %%% Preview
+            uicontrol(obj.PROP_TEXT_NO_BG{:}, 'Parent', box, 'String', 'Preview of the first point');
             obj.vAxes = axes('Parent', uicontainer('Parent', box), ...
-                'NextPlot', 'replacechildren', 'FontSize', 7, ...
-                'UserData', 'builderPreview');
+                'NextPlot', 'replacechildren', 'FontSize', 8, 'UserData', 'builderPreview');
 
             %%% Actions
             hActions = uix.HBox('Parent', box, 'Spacing', 4);
-            uicontrol(obj.PROP_BUTTON{:}, 'Parent', hActions, 'String', 'Run this sequence', ...
-                'Callback', @obj.runCallback);
-            uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hActions, 'String', 'Export as Exp*.m', ...
-                'Callback', @obj.exportCallback);
-            hActions.Widths = [-1, 120];
+            uicontrol(obj.PROP_BUTTON{:}, 'Parent', hActions, 'String', 'Run this sequence', 'Callback', @obj.runCallback);
+            uicontrol(obj.PROP_BUTTON_SMALL{:}, 'Parent', hActions, 'String', 'Export as Exp*.m', 'Callback', @obj.exportCallback);
+            hActions.Widths = [-1, 140];
 
             obj.lblStatus = uicontrol(obj.PROP_TEXT_NO_BG{:}, 'Parent', box, 'String', '');
 
-            box.Heights = [26, 16, -1, 24, 16, 90, 24, 24, 130, 28, 16];
+            box.Heights = [26, 16, -3, 26, 16, 110, 26, 16, -2, 26, 16, -3, 30, 18];
 
             obj.refreshAll();
-
-            obj.width = 400;
-            obj.height = 620;
+            obj.width = 720;
+            obj.height = 820;
         end
 
         function s = currentSpec(obj)
@@ -135,21 +150,22 @@ classdef ViewSequenceBuilder < ViewVBox
         end
 
         function setSpec(obj, spec)
-            % Replace what is being edited, e.g. when restoring a session
             if ~isa(spec, 'UserSequenceSpec'); return; end
             obj.spec = spec;
-            obj.selectedRow = [];
+            obj.selectedPulse = [];
+            obj.selectedPoint = [];
             obj.refreshAll();
         end
     end
 
-    %% Refreshing the widgets from the spec
+    %% Refresh
     methods (Access = private)
         function refreshAll(obj)
             obj.edtName.String = obj.spec.name;
             obj.refreshPulses();
-            obj.refreshVariables();
             obj.refreshWindows();
+            obj.refreshVariables();
+            obj.refreshPoints();
             obj.refreshPreview();
         end
 
@@ -167,14 +183,45 @@ classdef ViewSequenceBuilder < ViewVBox
 
         function refreshVariables(obj)
             n = numel(obj.spec.variables);
-            data = cell(n, 3);
+            data = cell(n, 5);
             for i = 1 : n
-                data{i, 1} = obj.spec.variables(i).name;
-                data{i, 2} = obj.spec.variables(i).value;
-                data{i, 3} = strcmp(obj.spec.variables(i).name, obj.spec.sweepName);
+                v = obj.spec.variables(i);
+                data{i, obj.VAR_NAME} = v.name;
+                data{i, obj.VAR_VALUE} = v.value;
+                data{i, obj.VAR_BINDING} = v.binding;
+                data{i, obj.VAR_CHANNEL} = v.channel;
+                data{i, obj.VAR_SWEPT} = any(strcmp(obj.spec.sweptNames, v.name));
             end
             obj.tblVariables.Data = data;
-            obj.edtSweepValues.String = ExpGuiParam.valueToString(obj.spec.sweepValues);
+        end
+
+        function refreshPoints(obj)
+            swept = obj.spec.sweptNames;
+            if isempty(swept)
+                obj.tblPoints.ColumnName = {'(no variables swept)'};
+                obj.tblPoints.ColumnEditable = false;
+                obj.tblPoints.Data = cell(0, 1);
+            else
+                headers = cell(1, numel(swept));
+                for i = 1 : numel(swept)
+                    idx = obj.spec.variableIndex(swept{i});
+                    units = UserSequenceSpec.unitsFor(obj.spec.variables(idx).binding);
+                    headers{i} = sprintf('%s [%s]', swept{i}, units);
+                end
+                obj.tblPoints.ColumnName = headers;
+                obj.tblPoints.ColumnEditable = true(1, numel(swept));
+                obj.tblPoints.Data = obj.spec.combinations;
+            end
+
+            % x-axis picker follows the swept set
+            labels = [{'Point number'}, swept];
+            obj.popXAxis.String = labels;
+            chosen = find(strcmp(swept, obj.spec.xAxisName), 1);
+            if isempty(chosen)
+                obj.popXAxis.Value = 1;
+            else
+                obj.popXAxis.Value = chosen + 1;
+            end
         end
 
         function refreshWindows(obj)
@@ -185,62 +232,120 @@ classdef ViewSequenceBuilder < ViewVBox
                 obj.popReference.String = labels; obj.popReference.Value = 1;
                 return
             end
+
             labels = cell(1, numel(detectors));
             for i = 1 : numel(detectors)
                 labels{i} = sprintf('%d: %s', i, obj.spec.pulses(detectors(i)).nickname);
             end
+
             signalIdx = min(max(1, obj.spec.signalWindow), numel(labels));
             referenceIdx = min(max(1, obj.spec.referenceWindow), numel(labels));
-
-            % Clamping can collapse both onto the same window - it does
-            % whenever the count drops to one and then grows again. Push
-            % them apart, otherwise the pair stays invalid with no way for
-            % the user to see why.
+            % Clamping can collapse both onto the same window whenever the
+            % count drops to one and grows again. Push them apart, or the
+            % pair stays invalid with no way for the user to see why.
             if signalIdx == referenceIdx && numel(labels) >= 2
                 candidates = 1 : numel(labels);
                 referenceIdx = candidates(find(candidates ~= signalIdx, 1));
             end
 
-            obj.popSignal.String = labels;
-            obj.popSignal.Value = signalIdx;
-            obj.popReference.String = labels;
-            obj.popReference.Value = referenceIdx;
-            % Keep the spec in step, in case a window disappeared
+            obj.popSignal.String = labels;    obj.popSignal.Value = signalIdx;
+            obj.popReference.String = labels; obj.popReference.Value = referenceIdx;
             obj.spec.signalWindow = signalIdx;
             obj.spec.referenceWindow = referenceIdx;
         end
 
         function refreshPreview(obj)
-            % Redraw the sequence. Never touches hardware, so this is safe
-            % to call on every keystroke-commit.
             [isOk, message] = obj.spec.validate();
-
             try
-                S = obj.spec.buildSequence(obj.spec.sweepValueAt(1));
+                S = obj.spec.buildSequence(1);
             catch err
                 obj.clearAxes(err.message);
                 return
             end
-
             if isempty(S) || S.duration == 0
                 obj.clearAxes('Sequence is empty.');
                 return
             end
 
             try
-                cla(obj.vAxes);
-                S.plotSequence(obj.vAxes);
+                obj.drawLanes(S);
             catch err
-                obj.clearAxes(sprintf('Cannot plot: %s', err.message));
+                obj.clearAxes(sprintf('Cannot draw: %s', err.message));
                 return
             end
 
             if isOk
-                obj.setStatus(sprintf('%s us at the first sweep point, %d points. Ready.', ...
-                    StringHelper.formatNumber(S.duration, 3), obj.spec.numberOfParams()));
+                obj.setStatus(sprintf('%s us at the first point, %d point(s), %d pulse(s). Ready.', ...
+                    StringHelper.formatNumber(S.duration, 3), obj.spec.numberOfParams(), ...
+                    numel(obj.spec.pulses)));
             else
                 obj.setStatus(message);
             end
+        end
+
+        function drawLanes(obj, S)
+            % One lane per channel, blocks drawn as filled rectangles, with
+            % nicknames along the top.
+            %
+            % Sequence.plotSequence stacks everything on one axes and writes
+            % every nickname at the middle of its pulse rotated 270 degrees,
+            % which for a sequence of short pulses turns into an unreadable
+            % pile. Here each nickname is placed once, horizontally, and one
+            % is skipped whenever it would collide with the last one drawn.
+            ax = obj.vAxes;
+            cla(ax, 'reset');
+            hold(ax, 'on');
+
+            channelsStruct = S.perChannelEdgeTimes();
+            names = {channelsStruct.name};
+            keep = ~cellfun(@isempty, names);       % last entry marks empty pulses
+            channelsStruct = channelsStruct(keep);
+            names = names(keep);
+            nLanes = numel(names);
+            if nLanes == 0
+                obj.clearAxes('No channels are used by this sequence.');
+                return
+            end
+
+            total = S.duration;
+            laneColour = [0.20 0.45 0.75];
+
+            for i = 1 : nLanes
+                y = nLanes - i;     % first channel at the top
+                % lane background
+                patch(ax, [0 total total 0], [y y+0.62 y+0.62 y], [0.94 0.94 0.94], ...
+                    'EdgeColor', [0.85 0.85 0.85]);
+                for j = 1 : channelsStruct(i).numOfPulses
+                    t0 = channelsStruct(i).pulsesStartTime(j);
+                    t1 = channelsStruct(i).pulsesEndTime(j);
+                    if t1 <= t0; continue; end
+                    patch(ax, [t0 t1 t1 t0], [y y y+0.62 y+0.62], laneColour, ...
+                        'EdgeColor', laneColour * 0.6);
+                end
+            end
+
+            % Nicknames across the top, skipping any that would overlap
+            edges = S.edgeTimes();
+            pulses = S.getPulses();
+            lastRight = -inf;
+            minGap = total / 28;    % about 28 labels fit across the axes
+            for j = 1 : numel(pulses)
+                label = pulses(j).nickname;
+                if isempty(label); continue; end
+                centre = (edges(j) + edges(j+1)) / 2;
+                if centre - lastRight < minGap; continue; end
+                text(ax, centre, nLanes + 0.15, label, 'Parent', ax, ...
+                    'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', ...
+                    'FontSize', 7, 'Color', [0.25 0.25 0.25]);
+                lastRight = centre;
+            end
+
+            set(ax, 'YTick', (0 : nLanes-1) + 0.31, 'YTickLabel', fliplr(names), ...
+                'FontSize', 8, 'Box', 'on', 'Layer', 'top', 'TickDir', 'out');
+            xlim(ax, [0 total]);
+            ylim(ax, [-0.1 nLanes + 0.75]);
+            xlabel(ax, 't [\mus]');
+            hold(ax, 'off');
         end
     end
 
@@ -251,120 +356,170 @@ classdef ViewSequenceBuilder < ViewVBox
             obj.refreshPreview();
         end
 
+        function selectCallback(obj, which, event)
+            row = [];
+            if ~isempty(event.Indices); row = event.Indices(1); end
+            switch which
+                case 'pulse'; obj.selectedPulse = row;
+                case 'point'; obj.selectedPoint = row;
+            end
+        end
+
+        %% Pulses
         function pulseEditCallback(obj, ~, event)
             if isempty(event.Indices); return; end
-            row = event.Indices(1);
-            col = event.Indices(2);
+            row = event.Indices(1); col = event.Indices(2);
             if row < 1 || row > numel(obj.spec.pulses); return; end
-
             text = obj.asText(event.NewData);
             switch col
-                case 1
-                    obj.spec.pulses(row).nickname = text;
-                case 2
-                    obj.spec.pulses(row).duration = text;
+                case 1; obj.spec.pulses(row).nickname = text;
+                case 2; obj.spec.pulses(row).duration = text;
                 case 3
                     parts = strtrim(strsplit(text, ','));
                     obj.spec.pulses(row).channels = parts(~cellfun(@isempty, parts));
             end
-
-            obj.refreshWindows();   % channels may have added or removed a window
+            obj.refreshWindows();
             obj.refreshPreview();
-        end
-
-        function pulseSelectCallback(obj, ~, event)
-            % Remember which row is highlighted, so Remove/Up/Down act on it
-            if isempty(event.Indices)
-                obj.selectedRow = [];
-            else
-                obj.selectedRow = event.Indices(1);
-            end
         end
 
         function addPulseCallback(obj, ~, ~)
             obj.spec.addPulse(sprintf('pulse%d', numel(obj.spec.pulses)+1), '1', {});
-            obj.refreshPulses();
-            obj.refreshWindows();
-            obj.refreshPreview();
+            obj.refreshPulses(); obj.refreshWindows(); obj.refreshPreview();
         end
 
         function removePulseCallback(obj, ~, ~)
-            row = obj.selectedPulseRow();
+            row = obj.rowOr(obj.selectedPulse, numel(obj.spec.pulses));
             if isempty(row); return; end
             obj.spec.removePulse(row);
-            obj.refreshPulses();
-            obj.refreshWindows();
-            obj.refreshPreview();
+            obj.selectedPulse = [];
+            obj.refreshPulses(); obj.refreshWindows(); obj.refreshPreview();
         end
 
         function movePulseCallback(obj, offset)
-            row = obj.selectedPulseRow();
+            row = obj.rowOr(obj.selectedPulse, numel(obj.spec.pulses));
             if isempty(row); return; end
-            obj.spec.movePulse(row, offset);
-            obj.refreshPulses();
-            obj.refreshWindows();
-            obj.refreshPreview();
+            obj.selectedPulse = obj.spec.movePulse(row, offset);
+            obj.refreshPulses(); obj.refreshWindows(); obj.refreshPreview();
         end
 
+        %% Variables
         function variableEditCallback(obj, ~, event)
             if isempty(event.Indices); return; end
-            row = event.Indices(1);
-            col = event.Indices(2);
+            row = event.Indices(1); col = event.Indices(2);
             if row < 1 || row > numel(obj.spec.variables); return; end
+            v = obj.spec.variables(row);
 
             switch col
-                case 1
+                case obj.VAR_NAME
                     newName = obj.asText(event.NewData);
                     if ~SequenceExpression.isValidName(newName)
                         obj.setStatus(sprintf('"%s" is not a usable variable name.', newName));
-                        obj.refreshVariables();
-                        return
+                        obj.refreshVariables(); return
                     end
-                    oldName = obj.spec.variables(row).name;
-                    obj.spec.variables(row).name = newName;
-                    if strcmp(obj.spec.sweepName, oldName)
-                        obj.spec.sweepName = newName;
-                    end
-                case 2
-                    value = event.NewData;
-                    if ~isnumeric(value) || ~isscalar(value)
+                    obj.spec.renameVariable(v.name, newName);
+                case obj.VAR_VALUE
+                    if ~isnumeric(event.NewData) || ~isscalar(event.NewData)
                         obj.setStatus('A variable value must be a single number.');
-                        obj.refreshVariables();
-                        return
+                        obj.refreshVariables(); return
                     end
-                    obj.spec.variables(row).value = value;
-                case obj.COL_SWEPT
+                    obj.spec.variables(row).value = event.NewData;
+                case obj.VAR_BINDING
+                    obj.spec.variables(row).binding = obj.asText(event.NewData);
+                case obj.VAR_CHANNEL
+                    obj.spec.variables(row).channel = obj.asText(event.NewData);
+                case obj.VAR_SWEPT
+                    names = obj.spec.sweptNames;
                     if logical(event.NewData)
-                        % Only one variable can be swept
-                        obj.spec.sweepName = obj.spec.variables(row).name;
+                        if ~any(strcmp(names, v.name)); names{end+1} = v.name; end
                     else
-                        obj.spec.sweepName = '';
+                        names = names(~strcmp(names, v.name));
                     end
-                    obj.refreshVariables();
+                    obj.spec.setSwept(names);
+                    if isempty(obj.spec.combinations) && ~isempty(obj.spec.sweptNames)
+                        obj.spec.addCombination();  % start the table off with one row
+                    end
             end
 
-            obj.refreshPreview();
+            obj.refreshVariables(); obj.refreshPoints(); obj.refreshPreview();
         end
 
         function addVariableCallback(obj, ~, ~)
-            base = 'var';
             n = 1;
-            while any(strcmp({obj.spec.variables.name}, sprintf('%s%d', base, n)))
-                n = n + 1;
+            while ~isempty(obj.spec.variableIndex(sprintf('var%d', n))); n = n + 1; end
+            obj.spec.setVariable(sprintf('var%d', n), 1);
+            obj.refreshVariables(); obj.refreshPreview();
+        end
+
+        function removeVariableCallback(obj, ~, ~)
+            if isempty(obj.spec.variables); return; end
+            obj.spec.removeVariable(obj.spec.variables(end).name);
+            obj.refreshVariables(); obj.refreshPoints(); obj.refreshPreview();
+        end
+
+        %% Points
+        function pointEditCallback(obj, ~, event)
+            if isempty(event.Indices); return; end
+            row = event.Indices(1); col = event.Indices(2);
+            if row < 1 || row > size(obj.spec.combinations, 1); return; end
+            if ~isnumeric(event.NewData) || ~isscalar(event.NewData) || ~isfinite(event.NewData)
+                obj.setStatus('A measurement point must be a finite number.');
+                obj.refreshPoints(); return
             end
-            obj.spec.setVariable(sprintf('%s%d', base, n), 1);
-            obj.refreshVariables();
+            obj.spec.combinations(row, col) = event.NewData;
             obj.refreshPreview();
         end
 
-        function sweepValuesCallback(obj, ~, ~)
-            [values, isOk] = ExpGuiParam.parseVector(obj.edtSweepValues.String);
-            if ~isOk
-                obj.setStatus('Sweep values must look like "0.1 : 0.1 : 5" or "[1 2 5]".');
+        function addPointCallback(obj, ~, ~)
+            if isempty(obj.spec.sweptNames)
+                obj.setStatus('Tick a variable as swept first - points need a column.');
                 return
             end
-            obj.spec.sweepValues = values;
-            obj.refreshPreview();
+            obj.spec.addCombination();
+            obj.refreshPoints(); obj.refreshPreview();
+        end
+
+        function removePointCallback(obj, ~, ~)
+            row = obj.rowOr(obj.selectedPoint, size(obj.spec.combinations, 1));
+            if isempty(row); return; end
+            obj.spec.removeCombination(row);
+            obj.selectedPoint = [];
+            obj.refreshPoints(); obj.refreshPreview();
+        end
+
+        function fillRangeCallback(obj, ~, ~)
+            % Convenience for the common case: sweep one variable over a
+            % range, leaving the others at the values in the first row.
+            swept = obj.spec.sweptNames;
+            if isempty(swept)
+                obj.setStatus('Tick a variable as swept first.');
+                return
+            end
+            answer = inputdlg( ...
+                {sprintf('Variable (%s):', strjoin(swept, ', ')), 'Range, e.g. 0.1 : 0.1 : 2'}, ...
+                'Fill range', 1, {swept{1}, '0.1 : 0.1 : 2'});
+            if isempty(answer); return; end
+
+            column = find(strcmp(swept, strtrim(answer{1})), 1);
+            if isempty(column)
+                obj.setStatus(sprintf('"%s" is not one of the swept variables.', answer{1}));
+                return
+            end
+            [values, isOk] = ExpGuiParam.parseVector(answer{2});
+            if ~isOk || isempty(values)
+                obj.setStatus('That range could not be read. Try "0.1 : 0.1 : 2" or "[1 2 5]".');
+                return
+            end
+
+            if isempty(obj.spec.combinations)
+                base = cellfun(@(n) obj.spec.variables(obj.spec.variableIndex(n)).value, swept);
+            else
+                base = obj.spec.combinations(1, :);
+            end
+            rows = repmat(base, numel(values), 1);
+            rows(:, column) = values(:);
+            obj.spec.combinations = rows;
+
+            obj.refreshPoints(); obj.refreshPreview();
         end
 
         function windowCallback(obj, ~, ~)
@@ -373,12 +528,20 @@ classdef ViewSequenceBuilder < ViewVBox
             obj.refreshPreview();
         end
 
+        function xAxisCallback(obj, ~, ~)
+            value = obj.popXAxis.Value;
+            if value <= 1
+                obj.spec.xAxisName = '';
+            else
+                swept = obj.spec.sweptNames;
+                obj.spec.xAxisName = swept{value - 1};
+            end
+        end
+
+        %% Actions
         function runCallback(obj, ~, ~)
             [isOk, message] = obj.spec.validate();
-            if ~isOk
-                obj.setStatus(message);
-                return
-            end
+            if ~isOk; obj.setStatus(message); return; end
 
             exp = getObjByName(ExpUserSequence.NAME);
             if isempty(exp) || ~isvalid(exp)
@@ -387,7 +550,8 @@ classdef ViewSequenceBuilder < ViewVBox
                 exp.setSpec(obj.spec);
             end
 
-            obj.setStatus(sprintf('Running "%s" as %s ...', obj.spec.name, ExpUserSequence.NAME));
+            obj.setStatus(sprintf('Running "%s" over %d point(s) ...', ...
+                obj.spec.name, obj.spec.numberOfParams()));
             drawnow limitrate
             try
                 exp.run();
@@ -399,25 +563,16 @@ classdef ViewSequenceBuilder < ViewVBox
 
         function exportCallback(obj, ~, ~)
             [isOk, message] = obj.spec.validate();
-            if ~isOk
-                obj.setStatus(message);
-                return
-            end
-
+            if ~isOk; obj.setStatus(message); return; end
             target = UserSequenceExporter.defaultPathFor(obj.spec);
             if ~QuestionUserYesNo('Export experiment', sprintf( ...
                     ['Write a new experiment class?\n\n%s\n\n', ...
-                    'It will appear in the experiment list as "%s".'], ...
-                    target, obj.spec.name))
+                    'It will appear in the experiment list as "%s".'], target, obj.spec.name))
                 return
             end
-
             [written, ok, why] = UserSequenceExporter.export(obj.spec, target);
-            if ok
-                obj.setStatus(sprintf('Exported to %s', written));
-            else
-                obj.setStatus(why);
-            end
+            if ok; obj.setStatus(sprintf('Exported to %s', written));
+            else;  obj.setStatus(why); end
         end
 
         function saveCallback(obj, ~, ~)
@@ -432,13 +587,11 @@ classdef ViewSequenceBuilder < ViewVBox
         end
 
         function loadCallback(obj, ~, ~)
-            folder = UserSequenceSpec.defaultFolder();
-            [fileName, chosenFolder] = uigetfile( ...
-                ['*', UserSequenceSpec.FILE_SUFFIX], 'Load sequence', folder);
+            [fileName, chosenFolder] = uigetfile(['*', UserSequenceSpec.FILE_SUFFIX], ...
+                'Load sequence', UserSequenceSpec.defaultFolder());
             if isequal(fileName, 0); return; end
             try
-                obj.spec = UserSequenceSpec.load(fullfile(chosenFolder, fileName));
-                obj.refreshAll();
+                obj.setSpec(UserSequenceSpec.load(fullfile(chosenFolder, fileName)));
                 obj.setStatus(sprintf('Loaded %s', fileName));
             catch err
                 obj.setStatus(sprintf('Could not load: %s', err.message));
@@ -446,24 +599,20 @@ classdef ViewSequenceBuilder < ViewVBox
         end
     end
 
-    %% Small helpers
+    %% Helpers
     methods (Access = private)
-        function row = selectedPulseRow(obj)
-            % Which pulse the row buttons act on: whatever is highlighted,
-            % or the last one if nothing is.
+        function row = rowOr(obj, selected, fallback) %#ok<INUSL>
+            % Act on the highlighted row, or the last one if none is
             row = [];
-            n = numel(obj.spec.pulses);
-            if n == 0; return; end
-            if ~isempty(obj.selectedRow) && obj.selectedRow >= 1 && obj.selectedRow <= n
-                row = obj.selectedRow;
+            if fallback < 1; return; end
+            if ~isempty(selected) && selected >= 1 && selected <= fallback
+                row = selected;
             else
-                row = n;    % nothing highlighted - act on the last pulse
+                row = fallback;
             end
         end
 
         function str = channelHint(obj) %#ok<MANU>
-            % List the channels the pulse generator actually knows about,
-            % when there is one to ask.
             str = 'Comma separated, e.g. greenLaser, detector';
             try
                 pg = getObjByName(PulseGenerator.NAME);
@@ -479,36 +628,28 @@ classdef ViewSequenceBuilder < ViewVBox
         end
 
         function str = asText(obj, value) %#ok<INUSL>
-            if ischar(value)
-                str = strtrim(value);
-            elseif isempty(value)
-                str = '';
-            else
-                str = strtrim(char(string(value)));
-            end
+            if ischar(value); str = strtrim(value);
+            elseif isempty(value); str = '';
+            else; str = strtrim(char(string(value))); end
         end
 
         function clearAxes(obj, message)
-            if isvalid(obj.vAxes); cla(obj.vAxes); end
+            if isvalid(obj.vAxes); cla(obj.vAxes, 'reset'); end
             obj.setStatus(message);
         end
 
         function setStatus(obj, message)
-            if isvalid(obj.lblStatus)
-                obj.lblStatus.String = message;
-            end
+            if isvalid(obj.lblStatus); obj.lblStatus.String = message; end
         end
     end
 
-    methods (Static, Access = private)
+    methods (Static)
         function spec = exampleSpec()
             % Something runnable to start from, rather than a blank table
             spec = UserSequenceSpec();
             spec.name = 'MySequence';
             spec.setVariable('tau', 1);
             spec.setVariable('piTime', 0.05);
-            spec.sweepName = 'tau';
-            spec.sweepValues = 0.1 : 0.1 : 2;
 
             spec.addPulse('pi_half', 'piTime/2', {'MW'});
             spec.addPulse('tau1',    'tau',      {});
@@ -519,6 +660,9 @@ classdef ViewSequenceBuilder < ViewVBox
             spec.addPulse('init',    '2',        {'greenLaser'});
             spec.addPulse('ref',     '0.3',      {'greenLaser', 'detector'});
 
+            spec.setSwept({'tau'});
+            spec.combinations = (0.1 : 0.1 : 2)';
+            spec.xAxisName = 'tau';
             spec.signalWindow = 1;
             spec.referenceWindow = 2;
         end

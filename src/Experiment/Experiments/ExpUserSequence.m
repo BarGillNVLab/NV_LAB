@@ -4,9 +4,12 @@ classdef ExpUserSequence < Experiment
     %   run loop, tracking, plotting and saving - except that its sequence
     %   comes from a UserSequenceSpec rather than from hardcoded MATLAB.
     %
-    %   The swept variable of the spec is the x axis. For each of its
-    %   values the sequence is rebuilt and reloaded into the pulse
-    %   generator, then measured like any other pulsed experiment.
+    %   The spec carries an explicit table of measurement points. Each row
+    %   sets its swept variables, which may drive pulse durations, MW
+    %   settings, or both; the sequence is rebuilt and the signal generator
+    %   updated for every row. The run loop therefore stays one-dimensional
+    %   however many variables are swept, and resultsTable gives the counts
+    %   back alongside the variable values.
     %
     %   Signal and reference are whichever detection windows the user
     %   picked, not the first and second by convention.
@@ -37,10 +40,10 @@ classdef ExpUserSequence < Experiment
             obj.referenceDetectionDuration = 0.3;
             obj.laserInitializationDuration = 20;
 
-            obj.parameterName = 'sweep points';
+            obj.parameterName = 'points';
             obj.isPlotAlternateAvailable = false;
 
-            obj.mCurrentXAxisParam = ExpParamDoubleVector('Sweep', [], [], '\mus', obj.NAME);
+            obj.mCurrentXAxisParam = ExpParamDoubleVector('Point', [], [], '', obj.NAME);
             obj.signalParam = ExpResultDoubleVector('FL', [], [], 'Normalized', obj.NAME, 'Signal / Reference');
         end
 
@@ -55,28 +58,49 @@ classdef ExpUserSequence < Experiment
 
         function [totalParamNum, paramList] = getTotalNumberOfParams(obj)
             totalParamNum = obj.spec.numberOfParams();
-            paramList = obj.sweepAxis();
+            paramList = obj.spec.xAxisValues();
         end
 
-        function values = sweepAxis(obj)
-            % The x axis: the swept variable's values, or a single point
-            if isempty(obj.spec.sweepName) || isempty(obj.spec.sweepValues)
-                values = 1;
-            else
-                values = obj.spec.sweepValues;
+        function [values, headers] = resultsTable(obj)
+            % The measurement as a table: one row per point, one column per
+            % swept variable, then signal, reference and their ratio.
+            %
+            % This is the natural way to read a multi-variable scan - counts
+            % against frequency against tau - which a single plotted line
+            % cannot show.
+            headers = [obj.spec.sweptNames, {'signal_kcps', 'reference_kcps', 'ratio'}];
+            nPoints = obj.spec.numberOfParams();
+            nDone = obj.currIter;
+
+            values = nan(nPoints, numel(headers));
+            if ~isempty(obj.spec.combinations)
+                values(:, 1:numel(obj.spec.sweptNames)) = obj.spec.combinations;
             end
+            if nDone < 1 || isempty(obj.signal); return; end
+
+            iSignal = obj.spec.signalWindow;
+            iReference = obj.spec.referenceWindow;
+            nVars = numel(obj.spec.sweptNames);
+
+            sig = mean(obj.signal(iSignal, :, 1:nDone), 3, 'omitnan');
+            ref = mean(obj.signal(iReference, :, 1:nDone), 3, 'omitnan');
+            n = min(nPoints, numel(sig));
+
+            values(1:n, nVars+1) = sig(1:n)';
+            values(1:n, nVars+2) = ref(1:n)';
+            values(1:n, nVars+3) = (sig(1:n) ./ ref(1:n))';
         end
     end
 
     %% Overridden from Experiment
     methods
-        function S = buildSequence(obj, sweepValue)
+        function S = buildSequence(obj, pointIndex)
             % The sequence, without touching hardware. With no argument it
-            % uses the first sweep point, which is what the GUI previews.
-            if ~exist('sweepValue', 'var')
-                sweepValue = obj.spec.sweepValueAt(1);
+            % uses the first point, which is what the GUI previews.
+            if ~exist('pointIndex', 'var')
+                pointIndex = 1;
             end
-            S = obj.spec.buildSequence(sweepValue);
+            S = obj.spec.buildSequence(pointIndex);
         end
     end
 
@@ -95,16 +119,20 @@ classdef ExpUserSequence < Experiment
 
             % processData converts counts to kcps using these two, so they
             % must describe the windows the user actually picked.
-            [signalDuration, referenceDuration] = obj.spec.windowDurations(obj.spec.sweepValueAt(1));
+            [signalDuration, referenceDuration] = obj.spec.windowDurations(1);
             obj.detectionDuration = signalDuration;
             obj.referenceDetectionDuration = referenceDuration;
 
-            S = obj.buildSequence();
+            obj.applyMwSettings(1);
+            S = obj.buildSequence(1);
             obj.prepareInternal(S)
 
             % Set parameter, for saving and for the x axis
-            obj.mCurrentXAxisParam.name = obj.axisName();
-            obj.mCurrentXAxisParam.value = obj.sweepAxis();
+            obj.mCurrentXAxisParam.name = obj.spec.xAxisLabel();
+            obj.mCurrentXAxisParam.value = obj.spec.xAxisValues();
+            obj.parameterName = BooleanHelper.ifTrueElse( ...
+                isempty(obj.spec.sweptNames), 'points', ...
+                sprintf('%s points', strjoin(obj.spec.sweptNames, '/')));
         end
 
         function perform(obj)
@@ -113,11 +141,11 @@ classdef ExpUserSequence < Experiment
             tracker = getObjByName(Tracker.NAME);
                 if isempty(tracker); throwBaseObjException(Tracker.Name); end
 
-            sweepValues = obj.sweepAxis();
+            nPoints = obj.spec.numberOfParams();
             iSignal = obj.spec.signalWindow;
             iReference = obj.spec.referenceWindow;
 
-            for t = 1 : numel(sweepValues)
+            for t = 1 : nPoints
                 if obj.currIter <= size(obj.signal, 3) && ...
                         sum(obj.signal(:, t, obj.currIter)) ~= 0
                     continue    % Already measured in this average
@@ -127,10 +155,12 @@ classdef ExpUserSequence < Experiment
                 for trial = 1 : 10
                     if obj.checkEmergencyStop(); return; end
                     try
-                        % Rebuild for this sweep point. The whole sequence is
+                        % A point can move pulse durations, MW settings, or
+                        % both, so both are re-applied. The whole sequence is
                         % reloaded rather than patched pulse by pulse, since
-                        % one variable can appear in any number of durations.
-                        pg.setSequence(obj.buildSequence(sweepValues(t)));
+                        % one variable may appear in any number of durations.
+                        obj.applyMwSettings(t);
+                        pg.setSequence(obj.buildSequence(t));
                         pg.repeats = obj.repeats;
 
                         data = obj.getRawData(pg, spcm);
@@ -164,8 +194,8 @@ classdef ExpUserSequence < Experiment
                 end
 
                 if ~success
-                    obj.sendError(sprintf('Could not measure sweep point %d (%g) after 10 tries.', ...
-                        t, sweepValues(t)));
+                    obj.sendError(sprintf('Could not measure point %d of %d after 10 tries.', ...
+                        t, nPoints));
                 end
             end
 
@@ -194,11 +224,26 @@ classdef ExpUserSequence < Experiment
     end
 
     methods (Access = private)
-        function name = axisName(obj)
-            if isempty(obj.spec.sweepName)
-                name = 'Single point';
-            else
-                name = obj.spec.sweepName;
+        function applyMwSettings(obj, pointIndex)
+            % Push this point's MW-bound variables to the signal generator.
+            % Nothing to do for a sequence whose variables are all durations.
+            settings = obj.spec.mwSettings(pointIndex);
+            if isempty(settings); return; end
+
+            sg = getObjByName(SignalGenerator.NAME);
+            if isempty(sg) || ~isvalid(sg)
+                obj.sendError('The sequence sets an MW parameter, but there is no signal generator.')
+            end
+
+            for i = 1 : numel(settings)
+                s = settings(i);
+                try
+                    channelNumber = sg.FGchannelMap(s.channel);
+                catch
+                    obj.sendError(sprintf('"%s" is not a known MW channel.', s.channel))
+                end
+                % The [value, channel] form addresses one channel alone
+                sg.(s.what) = [s.value, channelNumber];
             end
         end
     end

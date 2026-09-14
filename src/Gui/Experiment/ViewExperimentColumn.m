@@ -42,7 +42,6 @@ classdef ViewExperimentColumn < ViewVBox
         viewParams
         viewSequence
         viewRun
-        viewBuilder
         viewHelpers
 
         panelParams         % ViewExpandablePanel, so we can retitle it
@@ -52,6 +51,10 @@ classdef ViewExperimentColumn < ViewVBox
         % actually loads it - see GuiSessionState for why.
         rememberedExpName = ''
         rememberedParams = struct()
+
+        % The sequence being edited. Held here rather than in the builder
+        % window so that closing that window does not discard the work.
+        builderSpec = []
     end
 
     methods
@@ -91,10 +94,22 @@ classdef ViewExperimentColumn < ViewVBox
             cardExperiment.setHeights([ ...
                 obj.HEIGHT_SELECTOR, obj.HEIGHT_PARAMS, obj.HEIGHT_SEQUENCE, obj.HEIGHT_RUN]);
 
-            %%% Card 2 - sequence builder
+            %%% Card 2 - sequence builder launcher
+            % The builder itself lives in its own resizable window: three
+            % tables and a channel-lane preview do not fit in this column.
             cardBuilder = ViewVBox(cardParent, controller, 0, spacing);
             panelBuilder = ViewExpandablePanel(cardBuilder, controller, 'Sequence builder');
-            obj.viewBuilder = ViewSequenceBuilder(panelBuilder, controller);
+            launcher = ViewVBox(panelBuilder, controller, 8, 6);
+            uicontrol(obj.PROP_TEXT_NO_BG{:}, 'Parent', launcher.component, ...
+                'Max', 2, 'Min', 0, ...
+                'String', ['Build a sequence by hand: pulses as time slices, ', ...
+                    'durations written over named variables, and any number of ', ...
+                    'those variables swept over an explicit table of points.']);
+            uicontrol(obj.PROP_BUTTON{:}, 'Parent', launcher.component, ...
+                'String', 'Open sequence builder', ...
+                'Callback', @obj.openBuilderCallback);
+            uix.Empty('Parent', launcher.component);
+            launcher.setHeights([70, 36, -1]);
             cardBuilder.setHeights(-1);
 
             %%% Card 3 - helper functions
@@ -122,7 +137,9 @@ classdef ViewExperimentColumn < ViewVBox
             state.expName = obj.expName;
             state.expParams = GuiSessionState.captureParameters(getObjByName(obj.expName));
             try
-                state.builderSpec = obj.viewBuilder.currentSpec().toStruct();
+                if ~isempty(obj.builderSpec) && isvalid(obj.builderSpec)
+                    state.builderSpec = obj.builderSpec.toStruct();
+                end
             catch
                 % A half-built sequence is not worth failing the save over
             end
@@ -136,9 +153,10 @@ classdef ViewExperimentColumn < ViewVBox
 
             if isfield(state, 'builderSpec')
                 try
-                    obj.viewBuilder.setSpec(UserSequenceSpec.fromStruct(state.builderSpec));
+                    obj.builderSpec = UserSequenceSpec.fromStruct(state.builderSpec);
                 catch
-                    % Keep the example sequence if the saved one is unusable
+                    % Start from the example sequence if the saved one is unusable
+                    obj.builderSpec = [];
                 end
             end
 
@@ -154,6 +172,16 @@ classdef ViewExperimentColumn < ViewVBox
                 mode = min(max(1, state.mode), numel(obj.MODE_NAMES));
                 obj.popMode.Value = mode;
                 obj.cards.Selection = mode;
+            end
+        end
+
+        function openBuilderCallback(obj, ~, ~)
+            controller = GuiControllerSequenceBuilder(obj.builderSpec);
+            controller.start;
+            % Keep hold of whatever it is editing, so the session state and
+            % the next open both pick up from here
+            if ~isempty(controller.spec)
+                obj.builderSpec = controller.spec;
             end
         end
 

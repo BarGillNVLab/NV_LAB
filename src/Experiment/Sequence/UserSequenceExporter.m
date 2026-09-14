@@ -64,8 +64,20 @@ classdef UserSequenceExporter
         function code = generate(spec)
             % The full text of the generated class
             className = UserSequenceExporter.classNameFor(spec);
-            sweep = spec.sweepName;
-            hasSweep = ~isempty(sweep);
+            swept = spec.sweptNames;
+            hasSweep = ~isempty(swept);
+
+            % An applyMwSettings() is emitted only when a variable drives
+            % the signal generator, so a purely time-domain sequence exports
+            % a class with no MW code in it at all.
+            mwIdx = [];
+            for i = 1 : numel(spec.variables)
+                if ~isempty(UserSequenceSpec.mwPropertyFor(spec.variables(i).binding))
+                    mwIdx(end+1) = i; %#ok<AGROW>
+                end
+            end
+            hasMw = ~isempty(mwIdx);
+
 
             L = {};     % lines
 
@@ -81,11 +93,15 @@ classdef UserSequenceExporter
             L{end+1} = '    properties';
             for i = 1 : numel(spec.variables)
                 v = spec.variables(i);
-                if hasSweep && strcmp(v.name, sweep)
-                    L{end+1} = sprintf('        %-16s %% swept - this is the x axis', v.name); %#ok<AGROW>
+                units = UserSequenceSpec.unitsFor(v.binding);
+                if any(strcmp(swept, v.name))
+                    L{end+1} = sprintf('        %-16s %% swept, in %s', v.name, units); %#ok<AGROW>
                 else
-                    L{end+1} = sprintf('        %-16s %% in \\mus', v.name); %#ok<AGROW>
+                    L{end+1} = sprintf('        %-16s %% in %s', v.name, units); %#ok<AGROW>
                 end
+            end
+            if hasSweep
+                L{end+1} = '        combinations     % one row per measurement point';
             end
             L{end+1} = '    end';
             L{end+1} = '';
@@ -99,25 +115,25 @@ classdef UserSequenceExporter
             L{end+1} = '            obj.averages = 500;';
             for i = 1 : numel(spec.variables)
                 v = spec.variables(i);
-                if hasSweep && strcmp(v.name, sweep)
-                    L{end+1} = sprintf('            obj.%s = %s;', v.name, ...
-                        UserSequenceExporter.vectorLiteral(spec.sweepValues)); %#ok<AGROW>
-                else
-                    L{end+1} = sprintf('            obj.%s = %s;', v.name, ...
-                        UserSequenceExporter.numberLiteral(v.value)); %#ok<AGROW>
-                end
+                L{end+1} = sprintf('            obj.%s = %s;', v.name, ...
+                    UserSequenceExporter.numberLiteral(v.value)); %#ok<AGROW>
             end
-            [signalDuration, referenceDuration] = spec.windowDurations(spec.sweepValueAt(1));
+            if hasSweep
+                L{end+1} = sprintf('            %% Columns: %s', strjoin(swept, ', '));
+                L{end+1} = sprintf('            obj.combinations = %s;', ...
+                    UserSequenceExporter.matrixLiteral(spec.combinations));
+            end
+            [signalDuration, referenceDuration] = spec.windowDurations(1);
             L{end+1} = sprintf('            obj.detectionDuration = %s;', UserSequenceExporter.numberLiteral(signalDuration));
             L{end+1} = sprintf('            obj.referenceDetectionDuration = %s;', UserSequenceExporter.numberLiteral(referenceDuration));
             L{end+1} = '';
             if hasSweep
-                L{end+1} = sprintf('            obj.parameterName = ''%s'';', sweep);
-                axisName = sweep;
+                L{end+1} = sprintf('            obj.parameterName = ''%s points'';', strjoin(swept, '/'));
             else
                 L{end+1} = '            obj.parameterName = ''points'';';
-                axisName = 'Point';
             end
+            axisName = spec.xAxisLabel();
+            xColumn = find(strcmp(swept, spec.xAxisName), 1);
             L{end+1} = sprintf('            obj.mCurrentXAxisParam = ExpParamDoubleVector(''%s'', [], [], ''\\mus'', obj.NAME);', axisName);
             L{end+1} = '            obj.signalParam = ExpResultDoubleVector(''FL'', [], [], ''Normalized'', obj.NAME, ''Signal / Reference'');';
             L{end+1} = '        end';
@@ -126,8 +142,12 @@ classdef UserSequenceExporter
             %% getTotalNumberOfParams
             L{end+1} = '        function [totalParamNum, paramList] = getTotalNumberOfParams(obj)';
             if hasSweep
-                L{end+1} = sprintf('            totalParamNum = length(obj.%s);', sweep);
-                L{end+1} = sprintf('            paramList = obj.%s;', sweep);
+                L{end+1} = '            totalParamNum = size(obj.combinations, 1);';
+                if isempty(xColumn)
+                    L{end+1} = '            paramList = 1 : totalParamNum;';
+                else
+                    L{end+1} = sprintf('            paramList = obj.combinations(:, %d)'';', xColumn);
+                end
             else
                 L{end+1} = '            totalParamNum = 1;';
                 L{end+1} = '            paramList = 1;';
@@ -146,10 +166,15 @@ classdef UserSequenceExporter
             L{end+1} = '';
             for i = 1 : numel(spec.variables)
                 v = spec.variables(i);
-                if hasSweep && strcmp(v.name, sweep)
-                    L{end+1} = sprintf('            %s = obj.%s(idx);', v.name, v.name); %#ok<AGROW>
-                else
+                if ~strcmp(v.binding, UserSequenceSpec.BIND_DURATION)
+                    continue    % MW settings are applied in prepare/perform
+                end
+                column = find(strcmp(swept, v.name), 1);
+                if isempty(column)
                     L{end+1} = sprintf('            %s = obj.%s;', v.name, v.name); %#ok<AGROW>
+                else
+                    L{end+1} = sprintf('            %s = obj.combinations(idx, %d);', ...
+                        v.name, column); %#ok<AGROW>
                 end
             end
             L{end+1} = '';
@@ -172,16 +197,40 @@ classdef UserSequenceExporter
             L{end+1} = sprintf('            obj.detectionPeriodsPerRepeat = %d;', numel(detectors));
             L{end+1} = '            obj.runsPerPerform = 1;';
             L{end+1} = '';
+            if hasMw
+                L{end+1} = '            obj.applyMwSettings(1);';
+            end
             L{end+1} = '            S = obj.buildSequence(1);';
             L{end+1} = '            obj.prepareInternal(S)';
             L{end+1} = '';
             if hasSweep
-                L{end+1} = sprintf('            obj.mCurrentXAxisParam.value = obj.%s;', sweep);
+                L{end+1} = '            [~, paramList] = obj.getTotalNumberOfParams;';
+                L{end+1} = '            obj.mCurrentXAxisParam.value = paramList;';
             else
                 L{end+1} = '            obj.mCurrentXAxisParam.value = 1;';
             end
             L{end+1} = '        end';
             L{end+1} = '';
+
+            if hasMw
+                L{end+1} = '        function applyMwSettings(obj, idx) %#ok<INUSD>';
+                L{end+1} = '            sg = getObjByName(SignalGenerator.NAME);';
+                L{end+1} = '            if isempty(sg); throwBaseObjException(SignalGenerator.NAME); end';
+                for k = mwIdx
+                    v = spec.variables(k);
+                    what = UserSequenceSpec.mwPropertyFor(v.binding);
+                    column = find(strcmp(swept, v.name), 1);
+                    if isempty(column)
+                        valueExpr = sprintf('obj.%s', v.name);
+                    else
+                        valueExpr = sprintf('obj.combinations(idx, %d)', column);
+                    end
+                    L{end+1} = sprintf('            sg.%s = [%s, sg.FGchannelMap(''%s'')];', ...
+                        what, valueExpr, v.channel); %#ok<AGROW>
+                end
+                L{end+1} = '        end';
+                L{end+1} = '';
+            end
 
             L{end+1} = '        function perform(obj)';
             L{end+1} = '            pg = getObjByName(PulseGenerator.NAME);';
@@ -202,6 +251,9 @@ classdef UserSequenceExporter
             L{end+1} = '                for trial = 1 : 10';
             L{end+1} = '                    if obj.checkEmergencyStop(); return; end';
             L{end+1} = '                    try';
+            if hasMw
+                L{end+1} = '                        obj.applyMwSettings(t);';
+            end
             L{end+1} = '                        pg.setSequence(obj.buildSequence(t));';
             L{end+1} = '                        pg.repeats = obj.repeats;';
             L{end+1} = '';
@@ -292,6 +344,22 @@ classdef UserSequenceExporter
             end
             parts = arrayfun(@UserSequenceExporter.numberLiteral, values, 'UniformOutput', false);
             str = sprintf('[%s]', strjoin(parts, ' '));
+        end
+
+        function str = matrixLiteral(values)
+            % A combinations table, one row per line so it stays readable
+            if isempty(values)
+                str = '[]';
+                return
+            end
+            rows = cell(1, size(values, 1));
+            for r = 1 : size(values, 1)
+                parts = arrayfun(@UserSequenceExporter.numberLiteral, values(r, :), ...
+                    'UniformOutput', false);
+                rows{r} = strjoin(parts, ' ');
+            end
+            str = sprintf('[ ...\n                %s]', ...
+                strjoin(rows, sprintf('; ...\n                ')));
         end
 
         function str = channelsLiteral(channels)
