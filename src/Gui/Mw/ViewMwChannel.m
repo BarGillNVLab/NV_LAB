@@ -23,6 +23,12 @@ classdef ViewMwChannel < ViewVBox & EventListener
         DEFAULT_ON_TIME = 1     % us
         DEFAULT_DUTY = 1        % percent - two orders of magnitude below CW
 
+        %% Indicator colours: the state of MW at the sample, at a glance
+        COLOUR_OFF = [0.75 0.75 0.75]    % nothing reaching the sample
+        COLOUR_ARMED = [0.95 0.75 0.20]  % generator live, switch closed
+        COLOUR_CW = [0.80 0.15 0.15]     % continuous - the one that heats
+        COLOUR_PULSED = [0.15 0.55 0.25] % duty-cycled
+
         ROW_HEIGHT = 24
         LABEL_WIDTH = 66
         UNITS_WIDTH = 34
@@ -39,6 +45,7 @@ classdef ViewMwChannel < ViewVBox & EventListener
         edtDuty
         lblPulse
         lblHeader
+        lblState
 
         channel         % the FGchannel struct from SignalGenerator
         channelIndex    % its position in SignalGenerator.FGchannels
@@ -59,9 +66,22 @@ classdef ViewMwChannel < ViewVBox & EventListener
 
             box = obj.component;
 
-            obj.lblHeader = uicontrol(obj.PROP_LABEL{:}, 'Parent', box, ...
+            % Name and live-state indicator share the header row, so the
+            % indicator costs no extra height.
+            hHeader = uix.HBox('Parent', box, 'Spacing', 3);
+            obj.lblHeader = uicontrol(obj.PROP_LABEL{:}, 'Parent', hHeader, ...
                 'String', obj.headerText(), ...
                 'TooltipString', obj.detailText());
+            obj.lblState = uicontrol(...
+                'Parent', hHeader, ...
+                'Style', 'edit', ...
+                'Enable', 'inactive', ...
+                'FontSize', 9, 'FontWeight', 'bold', ...
+                'HorizontalAlignment', 'center', ...
+                'ForegroundColor', 'white', ...
+                'BackgroundColor', obj.COLOUR_OFF, ...
+                'String', '');
+            hHeader.Widths = [70, -1];
 
             obj.edtFrequency = obj.addValueRow(box, 'Frequency', 'MHz', @obj.frequencyCallback, ...
                 obj.limitText('frequency'));
@@ -122,6 +142,8 @@ classdef ViewMwChannel < ViewVBox & EventListener
             sg = obj.signalGeneratorOrEmpty();
             if isempty(sg)
                 obj.setEnable(false);
+                obj.showState('no generator', obj.COLOUR_OFF, ...
+                    'There is no signal generator on this setup.');
                 return
             end
             obj.setEnable(true);
@@ -146,6 +168,7 @@ classdef ViewMwChannel < ViewVBox & EventListener
                 end
             end
             obj.updatePulseLabel();
+            obj.refreshIndicator();
         end
     end
 
@@ -158,6 +181,37 @@ classdef ViewMwChannel < ViewVBox & EventListener
                 'TooltipString', tooltip, 'Callback', callback);
             uicontrol(obj.PROP_TEXT_UNITS{:}, 'Parent', row, 'String', unitsText);
             row.Widths = [obj.LABEL_WIDTH, -1, obj.UNITS_WIDTH];
+        end
+
+        function refreshIndicator(obj)
+            % Whether MW is reaching the sample on this channel.
+            %
+            % Two things have to be true: the generator output is enabled and
+            % the fast switch is passing. Either one alone means no MW, which
+            % is why this is worth stating in one place rather than leaving it
+            % to be inferred from two separate controls.
+            %
+            % The decision itself is in stateFor, which needs no hardware.
+            if ~isvalid(obj.lblState); return; end
+
+            sg = obj.signalGeneratorOrEmpty();
+            if isempty(sg)
+                obj.showState('no generator', obj.COLOUR_OFF, ...
+                    'There is no signal generator on this setup.');
+                return
+            end
+
+            [text, colour, tooltip] = ViewMwChannel.stateFor( ...
+                obj.cachedLogical(sg, 'output'), ...
+                obj.popGate.Value, ...
+                str2double(obj.edtDuty.String));
+            obj.showState(text, colour, tooltip);
+        end
+
+        function showState(obj, text, colour, tooltip)
+            obj.lblState.String = text;
+            obj.lblState.BackgroundColor = colour;
+            obj.lblState.TooltipString = tooltip;
         end
 
         function str = headerText(obj)
@@ -316,6 +370,7 @@ classdef ViewMwChannel < ViewVBox & EventListener
                 obj.startPulsed();
             end
             obj.updatePulseLabel();
+            obj.refreshIndicator();
         end
 
         function tf = wasPulsing(obj)
@@ -478,6 +533,19 @@ classdef ViewMwChannel < ViewVBox & EventListener
             if isempty(sg); return; end
 
             channelNumber = obj.channel.pgChannelNumber;
+
+            % The output state too, so the indicator reflects the instrument
+            % rather than whatever was last sent to it.
+            try
+                value = sg.queryValue('enableOutput', channelNumber);
+                if ~isempty(value) && isfinite(value(1))
+                    obj.cbxOutput.Value = logical(value(1));
+                end
+            catch err
+                EventStation.anonymousWarning('Could not read the output state of %s: %s', ...
+                    obj.channel.pgChannelName, err.message);
+            end
+
             pairs = {'frequency', obj.edtFrequency; 'amplitude', obj.edtAmplitude; 'phase', obj.edtPhase};
             for i = 1 : size(pairs, 1)
                 try
@@ -490,6 +558,7 @@ classdef ViewMwChannel < ViewVBox & EventListener
                         pairs{i, 1}, obj.channel.pgChannelName, err.message);
                 end
             end
+            obj.refreshIndicator();
         end
     end
 
@@ -547,4 +616,52 @@ classdef ViewMwChannel < ViewVBox & EventListener
             end
         end
     end
+    methods (Static)
+        function [text, colour, tooltip] = stateFor(outputOn, gateMode, duty)
+            % What the indicator should say, given the generator output, the
+            % gate mode, and the duty cycle. No hardware, no handles - so
+            % every state can be checked on its own.
+            if ~outputOn
+                text = 'OFF';
+                colour = ViewMwChannel.COLOUR_OFF;
+                tooltip = ['The generator output is disabled, so no MW reaches ', ...
+                    'the sample whatever the gate is doing.'];
+                return
+            end
+
+            switch gateMode
+                case ViewMwChannel.GATE_OFF
+                    text = 'ARMED';
+                    colour = ViewMwChannel.COLOUR_ARMED;
+                    tooltip = ['The generator is putting out MW, but the fast switch ', ...
+                        'is closed, so nothing reaches the sample. Set the gate to ', ...
+                        'CW or Pulsed to let it through.'];
+
+                case ViewMwChannel.GATE_CW
+                    text = 'ON - CW';
+                    colour = ViewMwChannel.COLOUR_CW;
+                    tooltip = ['MW is reaching the sample continuously. This is the ', ...
+                        'mode that heats the sample - watch the counts, and prefer ', ...
+                        'Pulsed for anything long.'];
+
+                case ViewMwChannel.GATE_PULSED
+                    colour = ViewMwChannel.COLOUR_PULSED;
+                    if isnan(duty) || duty <= 0 || duty >= 100
+                        text = 'ON - pulsed';
+                        tooltip = 'MW is pulsed, but the duty cycle is not usable yet.';
+                    else
+                        text = sprintf('ON - pulsed %g%%', duty);
+                        tooltip = sprintf(['MW is reaching the sample at a %g percent ', ...
+                            'duty cycle, so about %.3g times less average power ', ...
+                            'than CW.'], duty, 100 / duty);
+                    end
+
+                otherwise
+                    text = '';
+                    colour = ViewMwChannel.COLOUR_OFF;
+                    tooltip = '';
+            end
+        end
+    end
+
 end
