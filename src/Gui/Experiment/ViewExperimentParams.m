@@ -171,15 +171,6 @@ classdef ViewExperimentParams < ViewVBox & EventListener
                 return
             end
 
-            if isnumeric(value) && ~isempty(value)
-                if any(value < spec.minimum) || any(value > spec.maximum)
-                    EventStation.anonymousWarning('%s must be between %g and %g.', ...
-                        spec.label, spec.minimum, spec.maximum);
-                    obj.revert(row, event.PreviousData);
-                    return
-                end
-            end
-
             % Hand it to the Experiment, which gets the final say
             obj.isApplyingEdit = true;
             try

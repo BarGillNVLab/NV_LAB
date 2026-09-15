@@ -374,8 +374,9 @@ classdef ViewMwChannel < ViewVBox & EventListener
         end
 
         function tf = wasPulsing(obj)
-            % True when we have taken the pulse generator over
-            tf = ~isempty(obj.heldChannels) || obj.isStreaming;
+            % True when we have taken the pulse generator over. heldChannels
+            % and isStreaming are set and cleared together, so one suffices.
+            tf = obj.isStreaming;
         end
 
         function [onTime, offTime, period, isOk] = pulseTimings(obj)

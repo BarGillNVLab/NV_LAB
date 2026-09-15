@@ -131,16 +131,6 @@ classdef UserSequenceSpec < handle
             idx = find(strcmp({obj.variables.name}, name), 1);
         end
 
-        function names = durationVariableNames(obj)
-            % Variables an expression is allowed to refer to
-            names = {};
-            for i = 1 : numel(obj.variables)
-                if strcmp(obj.variables(i).binding, UserSequenceSpec.BIND_DURATION)
-                    names{end+1} = obj.variables(i).name; %#ok<AGROW>
-                end
-            end
-        end
-
         %% Sweeping
         function setSwept(obj, names)
             % Choose which variables are swept, keeping any combination
@@ -383,7 +373,7 @@ classdef UserSequenceSpec < handle
         function [isOk, message] = validate(obj)
             isOk = false;
 
-            if ~SequenceExpression.isValidName(obj.name)
+            if ~isvarname(obj.name)
                 message = sprintf(['"%s" is not a usable name. Use letters, digits and ', ...
                     'underscores, starting with a letter.'], obj.name);
                 return
@@ -395,7 +385,7 @@ classdef UserSequenceSpec < handle
 
             for i = 1 : numel(obj.variables)
                 v = obj.variables(i);
-                if ~SequenceExpression.isValidName(v.name)
+                if ~isvarname(v.name)
                     message = sprintf('"%s" is not a usable variable name.', v.name);
                     return
                 end
@@ -613,14 +603,6 @@ classdef UserSequenceSpec < handle
             folder = PathHelper.appendBackslashIfNeeded(folder);
         end
 
-        function list = available()
-            % Sequence files in the default folder
-            list = {};
-            folder = UserSequenceSpec.defaultFolder();
-            if ~PathHelper.isFolderExists(folder); return; end
-            found = dir(fullfile(folder, ['*', UserSequenceSpec.FILE_SUFFIX]));
-            list = {found(~[found.isdir]).name};
-        end
     end
 
     methods (Static, Access = private)

@@ -25,7 +25,6 @@ classdef ViewExperimentColumn < ViewVBox
         HEIGHT_RUN = 190
 
         MODE_EXPERIMENT = 1
-        MODE_BUILDER = 2
         MODE_HELPERS = 3
         MODE_NAMES = {'Experiment', 'Sequence builder', 'Helper functions'}
     end
@@ -42,7 +41,6 @@ classdef ViewExperimentColumn < ViewVBox
         viewParams
         viewSequence
         viewResult
-        tabsSequenceResult
         viewRun
         viewHelpers
 
@@ -97,7 +95,6 @@ classdef ViewExperimentColumn < ViewVBox
             obj.viewResult = ViewExperimentResult(tabParent, controller);
             tabs.TabTitles = {'Sequence', 'Results'};
             tabs.Selection = 1;
-            obj.tabsSequenceResult = tabs;
 
             panelRun = ViewExpandablePanel(cardExperiment, controller, 'Run');
             obj.viewRun = ViewExperimentRunControl(panelRun, controller);

@@ -22,7 +22,6 @@ classdef SequenceExpression
     %   Examples:
     %       v.tau = 1.5;
     %       SequenceExpression.evaluate('2*tau + 0.1', v)   % -> 3.1
-    %       SequenceExpression.variablesUsed('tau/2')       % -> {'tau'}
     %
     %   See also EXPUSERSEQUENCE, USERSEQUENCESPEC
 
@@ -74,22 +73,6 @@ classdef SequenceExpression
             end
         end
 
-        function [names, isOk, message] = variablesUsed(expression)
-            % Which declared names an expression refers to, in order of
-            % first appearance. Does not need the variables to exist.
-            names = {};
-            [tokens, isOk, message] = SequenceExpression.tokenize(expression);
-            if ~isOk; return; end
-
-            isName = strcmp({tokens.kind}, 'name');
-            names = unique({tokens(isName).text}, 'stable');
-        end
-
-        function tf = isValidName(name)
-            % A variable name must be a plain MATLAB identifier, so that it
-            % is unambiguous in an expression and usable in generated code.
-            tf = ischar(name) && ~isempty(name) && isvarname(name);
-        end
     end
 
     %% Tokenizer

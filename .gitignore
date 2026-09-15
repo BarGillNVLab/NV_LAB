@@ -1,2 +1,5 @@
 
 /drivers/
+
+# MATLAB editor autosaves
+*.asv

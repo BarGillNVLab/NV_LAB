@@ -33,9 +33,6 @@ classdef ExpGuiParam
         % would silently round a 1 ns tau (1e-3 us) down towards zero.
         DECIMAL_DIGITS = 6
 
-        %% Fields of a spec struct
-        FIELDS = {'name', 'label', 'units', 'type', 'options', 'minimum', 'maximum', 'tooltip', 'group'}
-
         %% Properties never offered for editing
         % Results, internal bookkeeping and machinery that the GUI must not
         % let a user poke at. A few experiment-specific entries are listed
@@ -57,7 +54,7 @@ classdef ExpGuiParam
             }
 
         %% Properties which are shown, but never editable
-        READONLY_LIST = {'name', 'category'}
+        READONLY_LIST = {'name'}
 
         %% Sensible grouping for the properties defined on Experiment itself
         % Anything not listed here lands in the 'Experiment' group, which is
@@ -104,7 +101,7 @@ classdef ExpGuiParam
         function spec = make(name, varargin)
             % SPEC = MAKE(NAME, ...) builds one parameter spec.
             %   Optional name/value pairs: 'label', 'units', 'type',
-            %   'options', 'minimum', 'maximum', 'tooltip', 'group'.
+            %   'options', 'tooltip', 'group'.
             %   Anything not supplied gets a sensible default: 'label'
             %   defaults to a prettified NAME, and an empty 'type' means
             %   "infer it from the live value".
@@ -119,14 +116,12 @@ classdef ExpGuiParam
                 'units',    '', ...
                 'type',     '', ...
                 'options',  {{}}, ...
-                'minimum',  -inf, ...
-                'maximum',  inf, ...
                 'tooltip',  '', ...
                 'group',    'General');
 
             for i = 1 : 2 : length(varargin)
                 field = varargin{i};
-                if ~any(strcmp(field, ExpGuiParam.FIELDS))
+                if ~isfield(spec, field)
                     EventStation.anonymousError('"%s" is not a valid field of a parameter spec!', field)
                 end
                 spec.(field) = varargin{i+1};

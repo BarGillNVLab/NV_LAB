@@ -44,7 +44,6 @@ for i = 1:numel(bad)
     [~, ok] = SequenceExpression.evaluate(bad{i}, v);
     state = check(state, sprintf('reject [%s]', bad{i}), ~ok);
 end
-state = check(state, 'variablesUsed', isequal(SequenceExpression.variablesUsed('2*tau+piTime/tau'), {'tau','piTime'}));
 
 %% ---------- 3. sequence spec ----------
 section('Sequence spec');
@@ -86,6 +85,9 @@ state = check(state, 'unknown variable rejected', ~ok && contains(msg,'not a dec
 bad = exampleSpec(); bad.addPulse('d3','0.3',{'detector'});
 [ok, msg] = bad.validate();
 state = check(state, 'odd window count rejected', ~ok && contains(msg,'even number'));
+bad = exampleSpec(); bad.variables(1).name = '2bad';
+[ok, msg] = bad.validate();
+state = check(state, 'invalid variable name rejected', ~ok && contains(msg,'not a usable variable name'));
 
 %% ---------- 4. persistence and migration ----------
 section('Persistence');

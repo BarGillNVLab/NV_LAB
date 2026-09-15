@@ -26,8 +26,6 @@ classdef ViewSequenceBuilder < ViewVBox
         VARIABLE_WIDTHS = {110, 80, 100, 80, 50}
         VAR_NAME = 1, VAR_VALUE = 2, VAR_BINDING = 3, VAR_CHANNEL = 4, VAR_SWEPT = 5
 
-        LANE_HEIGHT = 26        % px per channel lane in the preview
-
         % Past this many points, generating the grid is worth confirming:
         % each point is its own sequence upload and measurement, per average.
         MAX_POINTS = 400
@@ -465,7 +463,7 @@ classdef ViewSequenceBuilder < ViewVBox
             switch col
                 case obj.VAR_NAME
                     newName = obj.asText(event.NewData);
-                    if ~SequenceExpression.isValidName(newName)
+                    if ~isvarname(newName)
                         obj.setStatus(sprintf('"%s" is not a usable variable name.', newName));
                         obj.refreshVariables(); return
                     end
