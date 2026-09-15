@@ -396,9 +396,9 @@ end
                         % end
                         data = obj.getRawData(pg, spcm);
                         if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled')
-                            [sig(1:2), sterr(1:2)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(1+~isSingleMeasurement)*(k-1)+1:end));%obj.detectionPeriodsPerRepeat*obj.repeats*k));
+                            [sig(1:2), sterr(1:2), normSig, normSterr] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(1+~isSingleMeasurement)*(k-1)+1:end));%obj.detectionPeriodsPerRepeat*obj.repeats*k));
                         elseif isa(spcm, 'SpcmTimeTaggerControlledArduinoDaqEnabled')
-                            [sig(1:2), sterr(1:2)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(1+~isSingleMeasurement)*(k-1)+1:end));%obj.detectionPeriodsPerRepeat*obj.repeats*k));
+                            [sig(1:2), sterr(1:2), normSig, normSterr] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(1+~isSingleMeasurement)*(k-1)+1:end));%obj.detectionPeriodsPerRepeat*obj.repeats*k));
                         
                         else
                             [sig(1:2), sterr(1:2), normSig, normSterr] = obj.processData(data);
@@ -492,13 +492,16 @@ end
             S2 = squeeze(obj.signal(2, :, 1:obj.currIter));
             S2sterr = squeeze(obj.sterr(2, :, 1:obj.currIter));
             
-            [value, sterr] = getRatioDistributionValues(obj, S1, S2, S1sterr, S2sterr);
-            obj.signalParam.value = value;
-            obj.signalParam.sterr = sterr;
-            
             if isSingleMeasurement
+                [value, sterr] = obj.normalizedSignal(S1, S2, S1sterr, S2sterr);
+                obj.signalParam.value = value;
+                obj.signalParam.sterr = sterr;
                 obj.signalParam2.value = [];
             else
+                [value, sterr] = getRatioDistributionValues(obj, S1, S2, S1sterr, S2sterr);
+                obj.signalParam.value = value;
+                obj.signalParam.sterr = sterr;
+                
                 S3 = squeeze(obj.signal(3, :, 1:obj.currIter));
                 S3sterr = squeeze(obj.sterr(3, :, 1:obj.currIter));
                 S4 = squeeze(obj.signal(4, :, 1:obj.currIter));
@@ -536,21 +539,18 @@ end
             S2 = squeeze(obj.signal(2, :, 1:obj.currIter));
             S2sterr = squeeze(obj.sterr(2, :, 1:obj.currIter));
 
-            S5 = obj.normSig(:, 1:obj.currIter);
-            S5sterr = obj.normSterr(:, 1:obj.currIter);
-            S5sterr = getCombinedSterr(obj, S5, S5sterr);
-            S5 = mean(S5,2);
-            
+            % Mean signal and mean reference over the runs done so far.
+            % Handing errorbar the whole nFrequencies-by-nAverages matrix
+            % makes it draw one curve per average instead: a fan of lines
+            % for the signal, and a reference that only looks like a single
+            % trace while its curves happen to sit on top of one another.
+            S1sterr = obj.getCombinedSterr(S1, S1sterr);
+            S1 = mean(S1, 2, 'omitnan');
+            S2sterr = obj.getCombinedSterr(S2, S2sterr);
+            S2 = mean(S2, 2, 'omitnan');
 
-%             if obj.currIter ~= 1
-%                 % Calculate the mean
-%                 S2sterr = obj.getCombinedSterr(S2, S2sterr);
-%                 S2 = mean(S2, 2);
-%             end
             dataParam = ExpResultDoubleVector('FL', S1, S1sterr, 'kcps', obj.NAME, 'With MW');
             dataParam2 = ExpResultDoubleVector('FL', S2, S2sterr, 'kcps', obj.NAME, 'Without MW');
-
-            dataParam5 = ExpResultDoubleVector('FL', S5, S5sterr, 'Normalized', obj.NAME, 'Normal');
             
             isSingleMeasurement = (isempty(obj.mirrorSweepAround) || obj.nChannels > 1);
             if ~isSingleMeasurement
@@ -572,6 +572,28 @@ end
             else
                 params = {dataParam, dataParam2, {'yParam', 'yParam2'}};
             end
+        end
+        
+        function [value, sterr] = normalizedSignal(obj, S1, S2, S1sterr, S2sterr)
+            % normSig: the signal gate over the reference gate, formed
+            % repeat by repeat in processData and then averaged over the
+            % runs done so far. Taking the ratio before averaging cancels
+            % slow fluorescence drift, which is why processData keeps it -
+            % until now it was computed and saved but never plotted.
+            %
+            % Fall back to the ratio of the averaged counts if normSig does
+            % not match the sweep: a run resumed from an older save can
+            % carry one belonging to a different frequency list.
+            N = obj.currIter;
+            if ~isequal(size(obj.normSig), size(obj.normSterr)) ...
+                    || size(obj.normSig, 1) ~= obj.getTotalNumberOfParams ...
+                    || size(obj.normSig, 2) < N
+                [value, sterr] = obj.getRatioDistributionValues(S1, S2, S1sterr, S2sterr);
+                return
+            end
+            
+            sterr = obj.getCombinedSterr(obj.normSig(:, 1:N), obj.normSterr(:, 1:N));
+            value = mean(obj.normSig(:, 1:N), 2, 'omitnan');
         end
     end
 end

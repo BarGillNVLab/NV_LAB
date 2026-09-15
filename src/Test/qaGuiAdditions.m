@@ -317,6 +317,14 @@ for n = {'ExpESR','ExpRabi','ExpEcho','ExpT1','ExpRamsey','ExpDEER'}
         ~isempty(idx) && strcmp(mc.MethodList(idx).Access,'public') && ...
         strcmp(mc.MethodList(idx).DefiningClass.Name, n{1}));
 end
+% perform() calls this by name to build ESR's normalized view, and a run
+% only finds out it is gone once it is on the hardware.
+mc = meta.class.fromName('ExpESR');
+j = find(strcmp({mc.MethodList.Name}, 'normalizedSignal'), 1);
+state = check(state, 'ExpESR.normalizedSignal is protected', ...
+    ~isempty(j) && strcmp(mc.MethodList(j).Access, 'protected') && ...
+    strcmp(mc.MethodList(j).DefiningClass.Name, 'ExpESR'));
+
 nm = Experiment.getExperimentNames();
 state = check(state, 'experiment discovery works', numel(nm(~cellfun(@isempty,nm))) > 90);
 state = check(state, 'experiment path resolves', exist(Experiment.PATH_ALL_EXPERIMENTS,'dir')==7);
