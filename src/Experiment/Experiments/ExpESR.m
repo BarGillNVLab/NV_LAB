@@ -236,6 +236,23 @@ end
         end
     end
     
+    methods (Static)
+        function M = overAverages(data, detectionPeriod, nAverages)
+            % One detection period of a signal/sterr array, shaped
+            % nParameters-by-nAverages so that a mean along dimension 2
+            % averages over the runs.
+            %
+            % Deliberately not squeeze: on the first average the slice is
+            % 1-by-nParameters-by-1, which MATLAB already holds as the 2-D
+            % row 1-by-nParameters, and squeeze leaves 2-D arrays alone. The
+            % parameters would land on the averages dimension, and a mean
+            % across averages would collapse the whole sweep into a single
+            % number - which an ExpResultDoubleVector then refuses, because
+            % it is a scalar.
+            M = reshape(data(detectionPeriod, :, 1:nAverages), [], nAverages);
+        end
+    end
+    
     %% Overridden from Experiment
     methods
         function S = buildSequence(obj)
@@ -534,10 +551,11 @@ end
                 params = ExpResultDoubleVector('FL', [], [], 'kcps', obj.NAME);
                 return
             end
-            S1 = squeeze(obj.signal(1, :, 1:obj.currIter));
-            S1sterr = squeeze(obj.sterr(1, :, 1:obj.currIter));
-            S2 = squeeze(obj.signal(2, :, 1:obj.currIter));
-            S2sterr = squeeze(obj.sterr(2, :, 1:obj.currIter));
+            N = obj.currIter;
+            S1 = ExpESR.overAverages(obj.signal, 1, N);
+            S1sterr = ExpESR.overAverages(obj.sterr, 1, N);
+            S2 = ExpESR.overAverages(obj.signal, 2, N);
+            S2sterr = ExpESR.overAverages(obj.sterr, 2, N);
 
             % Mean signal and mean reference over the runs done so far.
             % Handing errorbar the whole nFrequencies-by-nAverages matrix

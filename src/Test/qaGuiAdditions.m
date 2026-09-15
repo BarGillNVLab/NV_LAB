@@ -317,6 +317,23 @@ for n = {'ExpESR','ExpRabi','ExpEcho','ExpT1','ExpRamsey','ExpDEER'}
         ~isempty(idx) && strcmp(mc.MethodList(idx).Access,'public') && ...
         strcmp(mc.MethodList(idx).DefiningClass.Name, n{1}));
 end
+% Shaping the counts for the kcps view. A static so it can be checked here:
+% an Experiment cannot be constructed headlessly, since Setup.init wants the
+% hardware, so this is the only part of the run loop reachable from the
+% harness. The first average is the case that bites - see overAverages.
+sig = zeros(2, 101, 1000);
+sig(1, 1:14, 1) = 568;              % a sweep 14 of 101 points in
+m1 = ExpESR.overAverages(sig, 1, 1);
+state = check(state, 'first average is nParams-by-1', isequal(size(m1), [101 1]));
+state = check(state, 'first average keeps every parameter', ...
+    numel(mean(m1, 2, 'omitnan')) == 101 && ~isscalar(mean(m1, 2, 'omitnan')));
+state = check(state, 'first average keeps the measured values', ...
+    isequal(m1(1:14), 568*ones(14,1)));
+state = check(state, 'five averages are nParams-by-5', ...
+    isequal(size(ExpESR.overAverages(sig, 1, 5)), [101 5]));
+state = check(state, 'second detection period reads the reference row', ...
+    all(ExpESR.overAverages(sig, 2, 1) == 0));
+
 % perform() calls this by name to build ESR's normalized view, and a run
 % only finds out it is gone once it is on the hardware.
 mc = meta.class.fromName('ExpESR');
