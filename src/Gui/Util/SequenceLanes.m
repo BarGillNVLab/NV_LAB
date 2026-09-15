@@ -41,6 +41,15 @@ classdef SequenceLanes
             cla(ax, 'reset');
             hold(ax, 'on');
 
+            % A Sequence with no pulses cannot be asked about its channels:
+            % Sequence.activeChannelNames dot-indexes obj.pulses, which is []
+            % until something is added. Callers happen to guard on duration
+            % today, but this is a public utility and should not rely on it.
+            if isempty(S) || isempty(S.getPulses())
+                hold(ax, 'off');
+                return
+            end
+
             channelsStruct = S.perChannelEdgeTimes();
             names = {channelsStruct.name};
             keep = ~cellfun(@isempty, names);   % the last entry marks empty pulses

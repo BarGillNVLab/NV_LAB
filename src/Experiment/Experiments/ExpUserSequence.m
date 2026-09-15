@@ -22,6 +22,13 @@ classdef ExpUserSequence < Experiment
 
     properties
         spec        % UserSequenceSpec
+
+        % Experiment.prepareInternal validates and pushes these three, and
+        % Experiment itself declares only phase - so they have to live here,
+        % as they do in every other experiment.
+        frequency = 2870    % MHz
+        amplitude = -30     % dBm. Deliberately low: raise it on purpose,
+                            % not by running a sequence that never set it.
     end
 
     methods
@@ -40,6 +47,7 @@ classdef ExpUserSequence < Experiment
             obj.referenceDetectionDuration = 0.3;
             obj.laserInitializationDuration = 20;
 
+            obj.phase = 0;
             obj.parameterName = 'points';
             obj.isPlotAlternateAvailable = false;
 
@@ -123,7 +131,11 @@ classdef ExpUserSequence < Experiment
             obj.detectionDuration = signalDuration;
             obj.referenceDetectionDuration = referenceDuration;
 
-            obj.applyMwSettings(1);
+            % Fold this point's MW settings into the properties before
+            % prepareInternal runs, so the generator is configured through
+            % setFGparams - the same path every other experiment uses -
+            % rather than by poking the SignalGenerator behind its back.
+            obj.adoptMwSettings(1);
             S = obj.buildSequence(1);
             obj.prepareInternal(S)
 
@@ -224,6 +236,26 @@ classdef ExpUserSequence < Experiment
     end
 
     methods (Access = private)
+        function adoptMwSettings(obj, pointIndex)
+            % Copy this point's MW-bound values onto our own properties, and
+            % point MWChannel at whatever channels the spec names.
+            settings = obj.spec.mwSettings(pointIndex);
+            if isempty(settings); return; end
+
+            channels = unique({settings.channel}, 'stable');
+            channels = channels(~cellfun(@isempty, channels));
+            if ~isempty(channels)
+                obj.MWChannel = channels;
+            end
+
+            for i = 1 : numel(settings)
+                s = settings(i);
+                if isprop(obj, s.what)
+                    obj.(s.what) = s.value;
+                end
+            end
+        end
+
         function applyMwSettings(obj, pointIndex)
             % Push this point's MW-bound variables to the signal generator.
             % Nothing to do for a sequence whose variables are all durations.

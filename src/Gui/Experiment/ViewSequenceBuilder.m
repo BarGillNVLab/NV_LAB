@@ -42,6 +42,7 @@ classdef ViewSequenceBuilder < ViewVBox
         popSignal
         popReference
         vAxes
+        lblPreview
         lblStatus
 
         spec
@@ -139,6 +140,9 @@ classdef ViewSequenceBuilder < ViewVBox
                     'change its duration (numeric durations only)']);
             obj.vAxes = axes('Parent', uicontainer('Parent', box), ...
                 'NextPlot', 'replacechildren', 'FontSize', 8, 'UserData', 'builderPreview');
+            % The preview reports here rather than in the shared status line:
+            % a failed Run used to overwrite the reason the preview was blank.
+            obj.lblPreview = uicontrol(obj.PROP_TEXT_NO_BG{:}, 'Parent', box, 'String', '');
 
             %%% Actions
             hActions = uix.HBox('Parent', box, 'Spacing', 4);
@@ -148,7 +152,7 @@ classdef ViewSequenceBuilder < ViewVBox
 
             obj.lblStatus = uicontrol(obj.PROP_TEXT_NO_BG{:}, 'Parent', box, 'String', '');
 
-            box.Heights = [26, 16, -3, 26, 16, 110, 26, 16, -2, 26, 16, -3, 30, 18];
+            box.Heights = [26, 16, -3, 26, 16, 110, 26, 16, -2, 26, 16, -3, 16, 30, 18];
 
             obj.refreshAll();
             obj.width = 720;
@@ -285,11 +289,11 @@ classdef ViewSequenceBuilder < ViewVBox
             end
 
             if isOk
-                obj.setStatus(sprintf('%s us at the first point, %d point(s), %d pulse(s). Ready.', ...
+                obj.setPreviewStatus(sprintf('%s us at the first point, %d point(s), %d pulse(s). Ready.', ...
                     StringHelper.formatNumber(S.duration, 3), obj.spec.numberOfParams(), ...
                     numel(obj.spec.pulses)));
             else
-                obj.setStatus(message);
+                obj.setPreviewStatus(message);
             end
         end
 
@@ -712,7 +716,11 @@ classdef ViewSequenceBuilder < ViewVBox
 
         function clearAxes(obj, message)
             if isvalid(obj.vAxes); cla(obj.vAxes, 'reset'); end
-            obj.setStatus(message);
+            obj.setPreviewStatus(message);
+        end
+
+        function setPreviewStatus(obj, message)
+            if isvalid(obj.lblPreview); obj.lblPreview.String = message; end
         end
 
         function setStatus(obj, message)
