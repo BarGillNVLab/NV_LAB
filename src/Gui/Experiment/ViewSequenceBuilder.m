@@ -294,79 +294,18 @@ classdef ViewSequenceBuilder < ViewVBox
         end
 
         function drawLanes(obj, S)
-            % One lane per channel, blocks drawn as filled rectangles, with
-            % nicknames along the top.
-            %
-            % Sequence.plotSequence stacks everything on one axes and writes
-            % every nickname at the middle of its pulse rotated 270 degrees,
-            % which for a sequence of short pulses turns into an unreadable
-            % pile. Here each nickname is placed once, horizontally, and one
-            % is skipped whenever it would collide with the last one drawn.
-            ax = obj.vAxes;
-            cla(ax, 'reset');
-            hold(ax, 'on');
-
-            channelsStruct = S.perChannelEdgeTimes();
-            names = {channelsStruct.name};
-            keep = ~cellfun(@isempty, names);       % last entry marks empty pulses
-            channelsStruct = channelsStruct(keep);
-            names = names(keep);
-            nLanes = numel(names);
-            if nLanes == 0
-                obj.clearAxes('No channels are used by this sequence.');
-                return
+            % Draw with the shared renderer, then make the blocks draggable.
+            blocks = SequenceLanes.draw(obj.vAxes, S);
+            for i = 1 : numel(blocks)
+                % Tagged by the pulse that *ends* at the right edge, not the
+                % one that starts: contiguous pulses sharing a channel render
+                % as a single bar, and it is the right edge being dragged.
+                pulseIndex = obj.pulseEndingAt(blocks(i).endTime);
+                if isempty(pulseIndex); continue; end
+                set(blocks(i).patch, ...
+                    'UserData', pulseIndex, ...
+                    'ButtonDownFcn', @obj.blockDownCallback);
             end
-
-            total = S.duration;
-            laneColour = [0.20 0.45 0.75];
-
-            for i = 1 : nLanes
-                y = nLanes - i;     % first channel at the top
-                % lane background
-                % Vertex order matters: x and y are walked in step, so the
-                % second corner must stay on the baseline or the patch comes
-                % out as a bowtie with a diagonal across the lane.
-                patch(ax, [0 total total 0], [y y y+0.62 y+0.62], [0.94 0.94 0.94], ...
-                    'EdgeColor', [0.85 0.85 0.85]);
-                for j = 1 : channelsStruct(i).numOfPulses
-                    t0 = channelsStruct(i).pulsesStartTime(j);
-                    t1 = channelsStruct(i).pulsesEndTime(j);
-                    if t1 <= t0; continue; end
-                    % Tagged by the pulse that *ends* here, not the one that
-                    % starts: contiguous pulses sharing a channel render as
-                    % one bar, and it is the right-hand edge being dragged.
-                    pulseIndex = obj.pulseEndingAt(t1);
-                    patch(ax, [t0 t1 t1 t0], [y y y+0.62 y+0.62], laneColour, ...
-                        'EdgeColor', laneColour * 0.6, ...
-                        'UserData', pulseIndex, ...
-                        'ButtonDownFcn', @obj.blockDownCallback);
-                end
-            end
-
-            % Nicknames across the top, skipping any that would overlap
-            edges = S.edgeTimes();
-            pulses = S.getPulses();
-            lastRight = -inf;
-            minGap = total / 28;    % about 28 labels fit across the axes
-            for j = 1 : numel(pulses)
-                label = pulses(j).nickname;
-                if isempty(label); continue; end
-                centre = (edges(j) + edges(j+1)) / 2;
-                if centre - lastRight < minGap; continue; end
-                text(ax, centre, nLanes + 0.15, label, 'Parent', ax, ...
-                    'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', ...
-                    'FontSize', 7, 'Color', [0.25 0.25 0.25], ...
-                    'Interpreter', 'none');
-                lastRight = centre;
-            end
-
-            set(ax, 'YTick', (0 : nLanes-1) + 0.31, 'YTickLabel', fliplr(names), ...
-                'TickLabelInterpreter', 'none', ...
-                'FontSize', 8, 'Box', 'on', 'Layer', 'top', 'TickDir', 'out');
-            xlim(ax, [0 total]);
-            ylim(ax, [-0.1 nLanes + 0.75]);
-            xlabel(ax, 't [\mus]');
-            hold(ax, 'off');
         end
     end
 

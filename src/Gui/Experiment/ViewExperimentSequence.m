@@ -85,8 +85,11 @@ classdef ViewExperimentSequence < ViewVBox
             end
 
             try
-                cla(obj.vAxes);
-                S.plotSequence(obj.vAxes);
+                % SequenceLanes rather than S.plotSequence: the latter stacks
+                % every channel on one axes and writes each nickname rotated
+                % at its pulse centre, so a sequence that opens with several
+                % short delays - Rabi, for one - becomes a vertical smear.
+                SequenceLanes.draw(obj.vAxes, S);
                 obj.lblStatus.String = sprintf('Duration: %s us (per repeat)', ...
                     StringHelper.formatNumber(S.duration, 3));
             catch err
@@ -115,9 +118,12 @@ classdef ViewExperimentSequence < ViewVBox
             end
 
             try
-                cla(obj.vAxes);
-                exp.plotSequence(obj.vAxes);
-                obj.lblStatus.String = 'Previewed using hardware.';
+                % exp.plotSequence would use Sequence.plotSequence; ask it for
+                % the sequence and draw it the same way as everywhere else.
+                S = exp.getSequence();
+                SequenceLanes.draw(obj.vAxes, S);
+                obj.lblStatus.String = sprintf('Previewed using hardware - %s us.', ...
+                    StringHelper.formatNumber(S.duration, 3));
             catch err
                 obj.clearAxes(sprintf('Preview failed: %s', err.message));
             end
