@@ -7,6 +7,8 @@ classdef ViewExperimentColumn < ViewVBox
     %     Sequence builder - build a pulse sequence by hand, preview it live,
     %                        run it, save it, or export it as an Exp*.m class.
     %     Helper functions - browse and run anything in helperFunctions\.
+    %     Scan loop        - nested loops over stages, current, MW and
+    %                        experiment parameters, with steps at each point.
     %
     %   The two modes are cards in a uix.CardPanel, so switching is instant
     %   and neither side loses its state.
@@ -26,7 +28,7 @@ classdef ViewExperimentColumn < ViewVBox
 
         MODE_EXPERIMENT = 1
         MODE_HELPERS = 3
-        MODE_NAMES = {'Experiment', 'Sequence builder', 'Helper functions'}
+        MODE_NAMES = {'Experiment', 'Sequence builder', 'Helper functions', 'Scan loop'}
     end
 
     properties (SetAccess = private)
@@ -125,6 +127,16 @@ classdef ViewExperimentColumn < ViewVBox
             panelHelpers = ViewExpandablePanel(cardHelpers, controller, 'Helper functions');
             obj.viewHelpers = ViewHelperFunctions(panelHelpers, controller);
             cardHelpers.setHeights(-1);
+
+            %%% Card 4 - scan loop over stages / current / MW / experiment parameters
+            cardLoop = ViewVBox(cardParent, controller, 0, spacing);
+            uicontrol(obj.PROP_BUTTON{:}, 'Parent', cardLoop.component, ...
+                'String', 'Current x X scan with ESR...', ...
+                'TooltipString', 'Wire current x X positions, Z retract between points, an ESR at each', ...
+                'Callback', @(~, ~) scanCurrentX_ESR());
+            panelLoop = ViewExpandablePanel(cardLoop, controller, 'Scan loop (general)');
+            ViewScanLoop(panelLoop, controller);
+            cardLoop.setHeights([34, -1]);
 
             obj.cards.Selection = obj.MODE_EXPERIMENT;
             obj.restoreState();

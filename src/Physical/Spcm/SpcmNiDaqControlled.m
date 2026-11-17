@@ -100,11 +100,13 @@ classdef SpcmNiDaqControlled < Spcm & NiDaqControlled
                 errCodeSlow = '-200279'; % "The application is not able to keep up with the hardware acquisition."
                 errCodeTaskAbort = '-88709'; % "The specified operation cannot be performed because a task has been aborted [...]"
                 
-                if contains(msg, errCodeSlow) 
-                    % There was NiDaq reset, we can now safely resume
-                    err2warning(err);
-                    countsSPCM = obj.readEdgeCounting(obj.counterTimeTask, obj.nTimeCounts, obj.counterIntegrationTime);
-                elseif contains(msg, errCodeTaskAbort)
+                if contains(msg, errCodeSlow) || contains(msg, errCodeTaskAbort)
+                    % The error reset the card (NiDaq.checkError), which
+                    % killed the task: re-reading it only gives -88709.
+                    % Replace it with a fresh one and read again.
+                    if contains(msg, errCodeSlow); err2warning(err); end
+                    niDaq = getObjByName(NiDaq.NAME);
+                    try; niDaq.endTask(obj.counterTimeTask); catch; end
                     obj.prepareReadByTime(obj.counterIntegrationTime)
                     countsSPCM = obj.readEdgeCounting(obj.counterTimeTask, obj.nTimeCounts, obj.counterIntegrationTime);
                 else

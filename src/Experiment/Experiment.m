@@ -122,6 +122,14 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         pausedAverage = false;
         clearAWG = true;            % if true, clear all waveforms and sequences from memory
     end
+
+    properties (Hidden)
+        % false while an unattended loop (ScanLoop) runs this experiment: no
+        % dialogs at start - parameter changes restart it, and tracking
+        % carries on with its current reference instead of asking.
+        askQuestions = true;
+        lastSavedFile = '';     % full path of the last file this experiment was saved to
+    end
     
     properties (Dependent, Access = {?Experiment, ?ViewExperimentPlot, ?ViewExperimentRunControl}) % Inclusion of ?Experiment gives access to its subclasses
         totalNumberOfParams
@@ -590,7 +598,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 % Dialog box
                 strQuestion = sprintf('Critical parameters have been changed!\n Do you want to restart the Experiment?');
                 strTitle = 'Parameters changed';
-                if QuestionUserYesNo(strTitle, strQuestion)
+                if ~obj.askQuestions || QuestionUserYesNo(strTitle, strQuestion)
                     obj.restartFlag = true;
                 end
             end
@@ -603,7 +611,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                     tracker = getObjByName(Tracker.NAME);
                     if isempty(tracker); throwBaseObjException(Tracker.Name); end
                     trackablePos = tracker.getTrackable(TrackablePosition.NAME);
-                    if ~trackablePos.isHistoryEmpty ...
+                    if obj.askQuestions && ~trackablePos.isHistoryEmpty ...
                             && QuestionUserYesNo('Restart tracking?', 'Do you want to restart tracking?')
                         trackablePos.resetTrack
                     end
@@ -1083,6 +1091,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                     
                 folder = event.extraInfo.(SaveLoad.EVENT_FOLDER);
                 filename = event.extraInfo.(SaveLoad.EVENT_FILENAME);
+                obj.lastSavedFile = PathHelper.joinToFullPath(folder, filename);
                 obj.savePlot(folder, filename);
                 if ~isempty(obj.autosaveReason)
                     fprintf('[%s] Autosaved (%s)\n       %s\n', ...
@@ -1760,21 +1769,29 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             if spcm.hasLaserRef()
                 spcm.balancedMeas = obj.balancedMeas;
             end
+            obj.prepareExperimentCounter(spcm, pg);
+            if isempty(obj.averagesTimeStamp)
+                obj.averagesTimeStamp = zeros(obj.averages, 6);
+            end
+        end
+
+        function prepareExperimentCounter(obj, spcm, pg)
+            % Create (and start) the SPCM counting task for this sequence.
+            % Also used to rebuild it in the middle of a run: any NI-DAQ
+            % error resets the whole card (NiDaq.checkError), which kills
+            % the task, so a retry must start from a fresh one.
             spcm.setSPCMEnable(true);
             numScans = obj.detectionPeriodsPerRepeat*obj.repeats;
-            
+
             if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled')   %just checking. added by rotem 29.1.21
                  numScans = obj.detectionPeriodsPerRepeat*obj.repeats*obj.getTotalNumberOfParams*obj.runsPerPerform; %obj.runsPerPerform added by yachel 29.6.21
             elseif isa(spcm, 'SpcmTimeTaggerControlledArduinoDaqEnabled')
                 numScans = obj.detectionPeriodsPerRepeat*obj.repeats*obj.getTotalNumberOfParams*obj.runsPerPerform; %obj.runsPerPerform added by yachel 29.6.21
             end
-            
+
             seqTime = pg.sequenceDuration() * 1e-6; % Multiplication in 1e-6 is for converting usecs to secs.
             timeout = 2 * seqTime * obj.repeats;  % some multiple of the actual duration
             spcm.prepareExperimentCount(numScans, timeout, obj.getTotalNumberOfParams*obj.runsPerPerform); % obj.getTotalNumberOfParams added by rotem 18.4.21 %obj.runsPerPerform added by yachel 29.6.21
-            if isempty(obj.averagesTimeStamp)
-                obj.averagesTimeStamp = zeros(obj.averages, 6);
-            end
         end
 
         function validateCellInput(obj, varargin)

@@ -5,6 +5,8 @@ classdef ExpESR < Experiment
         NAME = 'ESR'
         
         ZERO_FIELD_SPLITTING = 2.87e3    % in Mhz
+        BACKGROUND_MIN_KCPS = 0.5       % a background at or below this is treated as none
+        EVENT_BACKGROUND_CHANGED = 'backgroundChanged'  % tells the plot window to update its "Subtract BG" box
     end
     
     properties
@@ -26,6 +28,7 @@ classdef ExpESR < Experiment
         
         piTime              % in us. For pulsed ESR.
         singletDelay        % in us. For Pulsed ESR. day between Laser and MW
+        backgroundKcps      % double. kcps. Counts the setup shows with no NV signal (dark counts, stray light). Subtracted from both gates when above 0.5 kcps.
         normSig
         normSterr
 %         autosaveReason
@@ -33,6 +36,10 @@ classdef ExpESR < Experiment
     
     properties %(Hidden, Access = private)
         freqMirrored        % set in private function
+    end
+
+    properties (Hidden)
+        subtractBackground = true   % logical. Plot with backgroundKcps removed (the plot window's "Subtract BG" box)
     end
     
     methods
@@ -88,6 +95,7 @@ classdef ExpESR < Experiment
             obj.singletDelay = 1;
             
             obj.mirrorSweepAround = []; % Use this for a single frequency range
+            obj.backgroundKcps = 0;     % kcps. No background correction unless set above 0.5
             
             obj.displayType2 = 'kcps';
             obj.isPlotAlternateAvailable = true;
@@ -174,6 +182,22 @@ classdef ExpESR < Experiment
         function set.timeDelay(obj, newVal)
             obj.timeDelay = newVal;
         end
+
+        function set.backgroundKcps(obj, newVal)
+            if ~isnumeric(newVal) || ~isscalar(newVal) || ~isfinite(newVal) || newVal < 0
+                obj.sendError('backgroundKcps must be a number of kcps, 0 or more');
+            end
+            obj.backgroundKcps = newVal;
+            % Not a changeFlag: the raw data does not depend on it, so the
+            % run carries on and only the plot is redrawn.
+            obj.refreshBackgroundView();
+            obj.sendEvent(struct(obj.EVENT_BACKGROUND_CHANGED, true)); %#ok<MCSUP>
+        end
+
+        function set.subtractBackground(obj, newVal)
+            obj.subtractBackground = logical(newVal);
+            obj.refreshBackgroundView();
+        end
 end
     
     methods
@@ -233,6 +257,80 @@ end
         
         function phase = calculatePhase(obj, f)
             phase = obj.timeDelay * f;
+        end
+
+        function tf = hasBackground(obj)
+            % Whether a background worth correcting has been set (> 0.5 kcps)
+            tf = ~isempty(obj.backgroundKcps) && obj.backgroundKcps > obj.BACKGROUND_MIN_KCPS;
+        end
+
+        function bg = activeBackground(obj)
+            % The background to subtract from the plotted counts: 0 unless
+            % one is set above 0.5 kcps and "Subtract BG" is on.
+            bg = 0;
+            if obj.hasBackground() && obj.subtractBackground
+                bg = obj.backgroundKcps;
+            end
+        end
+
+        function updateSignalParams(obj)
+            % Normalized results from the averages done so far.
+            % Without a background: normSig, the per-repeat ratio (cancels
+            % slow drift). With one: (S1 - BG) / (S2 - BG) from the averaged
+            % counts - a per-repeat ratio cannot have a constant removed
+            % after the fact.
+            N = obj.currIter;
+            if isempty(N) || N < 1 || isempty(obj.signal); return; end
+            bg = obj.activeBackground();
+            isSingleMeasurement = (isempty(obj.mirrorSweepAround) || obj.nChannels > 1);
+
+            S1 = squeeze(obj.signal(1, :, 1:N));
+            S1sterr = squeeze(obj.sterr(1, :, 1:N));
+            S2 = squeeze(obj.signal(2, :, 1:N));
+            S2sterr = squeeze(obj.sterr(2, :, 1:N));
+
+            if isSingleMeasurement && bg == 0
+                [value, sterr] = obj.normalizedSignal(S1, S2, S1sterr, S2sterr);
+            else
+                [value, sterr] = getRatioDistributionValues(obj, S1 - bg, S2 - bg, S1sterr, S2sterr);
+            end
+            obj.signalParam.value = value;
+            obj.signalParam.sterr = sterr;
+
+            if isSingleMeasurement
+                obj.signalParam2.value = [];
+            else
+                S3 = squeeze(obj.signal(3, :, 1:N));
+                S3sterr = squeeze(obj.sterr(3, :, 1:N));
+                S4 = squeeze(obj.signal(4, :, 1:N));
+                S4sterr = squeeze(obj.sterr(4, :, 1:N));
+                [value, sterr] = getRatioDistributionValues(obj, S3 - bg, S4 - bg, S3sterr, S4sterr);
+                obj.signalParam2.value = value;
+                obj.signalParam2.sterr = sterr;
+            end
+        end
+
+        function refreshBackgroundView(obj)
+            % Redraw after the background or "Subtract BG" changed. Mid-average
+            % the newest average is still partial, so leave it out - the same
+            % rule plotResultsWhenSwitchingViews follows.
+            try
+                if isempty(obj.currIter) || obj.currIter < 1 || isempty(obj.signal); return; end
+                midAverage = obj.currParamIter > 0 && obj.currParamIter < obj.totalNumberOfParams && obj.isRunning;
+                if midAverage; obj.currIter = obj.currIter - 1; end
+                c = onCleanup(@() obj.restoreIter(midAverage));
+                obj.updateSignalParams();
+                clear c
+                if ~isempty(obj.gAxes) && all(isgraphics(obj.gAxes))    % no plot window open: nothing to redraw
+                    obj.plotResultsWhenSwitchingViews();
+                end
+            catch err
+                err2warning(err);
+            end
+        end
+
+        function restoreIter(obj, midAverage)
+            if midAverage; obj.currIter = obj.currIter + 1; end
         end
     end
     
@@ -476,11 +574,14 @@ end
                     catch err
                         err2warning(err);
                         fprintf('Experiment failed at trial %d, attempting again.\n', trial);
+                        % The DAQ error has reset the card, which killed the
+                        % counting task: a retry needs a new one, or it
+                        % only times out (NIDAQ -200284) five times over.
+                        try; spcm.clearExperimentRead; catch; end
                         try
-                            % Maybe we need to manually clear the resources
-                            spcm.stopExperimentCount;
-                        catch
-                            % But maybe we don't, and that's perfectly ok.
+                            obj.prepareExperimentCounter(spcm, pg);
+                        catch err2
+                            err2warning(err2);  % the next trial reports it again
                         end
                     end
                 end
@@ -504,30 +605,7 @@ end
                 
                 
             
-            S1 = squeeze(obj.signal(1, :, 1:obj.currIter));
-            S1sterr = squeeze(obj.sterr(1, :, 1:obj.currIter));
-            S2 = squeeze(obj.signal(2, :, 1:obj.currIter));
-            S2sterr = squeeze(obj.sterr(2, :, 1:obj.currIter));
-            
-            if isSingleMeasurement
-                [value, sterr] = obj.normalizedSignal(S1, S2, S1sterr, S2sterr);
-                obj.signalParam.value = value;
-                obj.signalParam.sterr = sterr;
-                obj.signalParam2.value = [];
-            else
-                [value, sterr] = getRatioDistributionValues(obj, S1, S2, S1sterr, S2sterr);
-                obj.signalParam.value = value;
-                obj.signalParam.sterr = sterr;
-                
-                S3 = squeeze(obj.signal(3, :, 1:obj.currIter));
-                S3sterr = squeeze(obj.sterr(3, :, 1:obj.currIter));
-                S4 = squeeze(obj.signal(4, :, 1:obj.currIter));
-                S4sterr = squeeze(obj.sterr(4, :, 1:obj.currIter));
-                
-                [value, sterr] = getRatioDistributionValues(obj, S3, S4, S3sterr, S4sterr);
-                obj.signalParam2.value = value;
-                obj.signalParam2.sterr = sterr;
-            end
+            obj.updateSignalParams();
         end
         
         function wrapUp(obj)
@@ -567,8 +645,11 @@ end
             S2sterr = obj.getCombinedSterr(S2, S2sterr);
             S2 = mean(S2, 2, 'omitnan');
 
-            dataParam = ExpResultDoubleVector('FL', S1, S1sterr, 'kcps', obj.NAME, 'With MW');
-            dataParam2 = ExpResultDoubleVector('FL', S2, S2sterr, 'kcps', obj.NAME, 'Without MW');
+            bg = obj.activeBackground();
+            suffix = '';
+            if bg > 0; suffix = sprintf(' - BG %.2f', bg); end
+            dataParam = ExpResultDoubleVector('FL', S1 - bg, S1sterr, 'kcps', obj.NAME, ['With MW' suffix]);
+            dataParam2 = ExpResultDoubleVector('FL', S2 - bg, S2sterr, 'kcps', obj.NAME, ['Without MW' suffix]);
             
             isSingleMeasurement = (isempty(obj.mirrorSweepAround) || obj.nChannels > 1);
             if ~isSingleMeasurement
@@ -584,8 +665,8 @@ end
                     S3 = mean(S3, 2);
                     S4 = mean(S4, 2);
                 end
-                dataParam3 = ExpResultDoubleVector('FL', S3, S3sterr, 'kcps', obj.NAME, 'With MW - Mirrored');
-                dataParam4 = ExpResultDoubleVector('FL', S4, S4sterr, 'kcps', obj.NAME, 'Without MW - Mirrored');
+                dataParam3 = ExpResultDoubleVector('FL', S3 - bg, S3sterr, 'kcps', obj.NAME, ['With MW - Mirrored' suffix]);
+                dataParam4 = ExpResultDoubleVector('FL', S4 - bg, S4sterr, 'kcps', obj.NAME, ['Without MW - Mirrored' suffix]);
                 params = {dataParam, {dataParam3, dataParam4}, {'yParam', 'yParam2+'}};
             else
                 params = {dataParam, dataParam2, {'yParam', 'yParam2'}};

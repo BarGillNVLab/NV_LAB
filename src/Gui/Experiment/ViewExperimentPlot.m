@@ -6,6 +6,7 @@ classdef ViewExperimentPlot < ViewVBox & EventListener
         
         vAxes
         cbxAutosave
+        cbxBackground       % "Subtract BG", only for experiments with a backgroundKcps (ESR)
         progressbarAverages
         progressbarParameters
         btnStartStop
@@ -77,10 +78,21 @@ classdef ViewExperimentPlot < ViewVBox & EventListener
                     'TooltipString', 'Autosave results when the run completes', ...
                     'Value', logical(exp.shouldAutosave), ...
                     'Callback', @obj.cbxAutosaveCallback);
+                checkboxHeights = 20;
+                if isprop(exp, 'backgroundKcps')
+                    % Enabled only when the experiment's background is
+                    % above its threshold (0.5 kcps for ESR) - see refresh()
+                    obj.cbxBackground = uicontrol(...
+                        'Parent', vboxAutosave, ...
+                        'Style', 'checkbox', ...
+                        'String', 'Subtract BG', ...
+                        'Callback', @obj.cbxBackgroundCallback);
+                    checkboxHeights = [20, 20];
+                end
                 uix.Empty('Parent', vboxAutosave);
-            vboxAutosave.Heights = [-1, 20, -1];
+            vboxAutosave.Heights = [-1, checkboxHeights, -1];
             
-            hboxControls.Widths = [-1, 100, 150, 70, 80];
+            hboxControls.Widths = [-1, 100, 150, 70, 120];
             obj.progressbarParameters = progressbar(fig, 0, 'Parameters Progress Bar');
             obj.btnEmergencyStop = uicontrol(obj.PROP_BUTTON_BIG_RED{:}, ...
                 'Parent', fig, ...
@@ -153,6 +165,13 @@ classdef ViewExperimentPlot < ViewVBox & EventListener
             exp.shouldAutosave = logical(obj.cbxAutosave.Value);
         end
 
+        function cbxBackgroundCallback(obj, ~, ~)
+            exp = getExpByName(obj.expName);
+            if isempty(exp); return; end
+            exp.subtractBackground = logical(obj.cbxBackground.Value);   % redraws
+            drawnow
+        end
+
         function btnEmergencyStopCallback(obj, ~, ~)
             exp = getObjByName(obj.expName);
             if isempty(exp)
@@ -221,6 +240,21 @@ classdef ViewExperimentPlot < ViewVBox & EventListener
                 % Autosave checkbox: stays live during the run, so the user
                 % can decide mid-experiment whether the result gets saved.
                 obj.cbxAutosave.Value = logical(exp.shouldAutosave);
+                % Background subtraction: offered only when there is a
+                % background worth subtracting
+                if ~isempty(obj.cbxBackground) && isvalid(obj.cbxBackground)
+                    hasBg = exp.hasBackground();
+                    obj.cbxBackground.Enable = BooleanHelper.boolToOnOff(hasBg);
+                    obj.cbxBackground.Value = hasBg && exp.subtractBackground;
+                    if hasBg
+                        obj.cbxBackground.String = sprintf('Subtract BG (%.2f kcps)', exp.backgroundKcps);
+                        obj.cbxBackground.TooltipString = 'Ticked: plots show counts with the background removed. Unticked: as measured.';
+                    else
+                        obj.cbxBackground.String = 'Subtract BG';
+                        obj.cbxBackground.TooltipString = 'Set backgroundKcps above 0.5 kcps in the ESR parameters to enable';
+                    end
+                end
+
                 % Display type
                 if exp.isPlotAlternateAvailable
                     obj.radioAlterDisplay.Enable = 'on';
@@ -245,6 +279,8 @@ classdef ViewExperimentPlot < ViewVBox & EventListener
             elseif isfield(event.extraInfo, Experiment.EVENT_PARAM_ITERATION_DONE)
                 obj.refresh;
                 obj.updateParameterProgressbar;
+            elseif isfield(event.extraInfo, 'backgroundChanged')
+                obj.refresh;
             end
         end
     end
