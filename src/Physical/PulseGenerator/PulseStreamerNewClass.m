@@ -47,6 +47,18 @@ classdef (Sealed) PulseStreamerNewClass < PulseGenerator
         end
     end
     
+    methods
+        function delete(obj)
+            % On clear all / MATLAB exit: all outputs to 0, so the fast AOM
+            % switch (and the MW gates) close even if the laser objects were
+            % cleared after this one and could not do it themselves.
+            try
+                if ~isempty(obj.ps); obj.ps.constant(OutputState(0, 0, 0)); end
+            catch
+            end
+        end
+    end
+
     %% Channel operation
     methods
         function on(obj, channels)
@@ -134,6 +146,13 @@ classdef (Sealed) PulseStreamerNewClass < PulseGenerator
             end
             seq_new = convert_PPH_to_PSSequence(sequences); % In the future, need to use the new builder functions
             obj.ps.stream(seq_new, obj.repeats, finalOutputState);
+
+            % Streaming replaces the constant output, and the sequence ends
+            % in finalOutputState (all zero): nothing is held on any more.
+            % Record that and tell the switches, so e.g. the "Fast AOM
+            % Switch" checkbox shows off after an experiment instead of on.
+            obj.onChannelsBinary = 0;
+            obj.sendEvent(struct('onChannels', 0));
         end
         
         function TF = hasFinished(obj)

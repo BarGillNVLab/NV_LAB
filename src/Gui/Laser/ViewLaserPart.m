@@ -101,7 +101,17 @@ classdef ViewLaserPart < ViewHBox & EventListener
         end
         
         function cbxEnabledCallback(obj, ~, ~)
-            obj.requestNewEnabled(get(obj.cbxEnabled, 'Value'));
+            newValue = get(obj.cbxEnabled, 'Value');
+            part = obj.laserPart;
+            if ~newValue && isprop(part, 'onlyUserTurnsOff') && part.onlyUserTurnsOff
+                q = sprintf(['Turn %s OFF?\n\nTurning it back on needs the physical enable ', ...
+                    'on the laser controller.'], part.name);
+                if ~strcmp(questdlg(q, 'Laser off', 'Turn off', 'Keep on', 'Keep on'), 'Turn off')
+                    set(obj.cbxEnabled, 'Value', true);
+                    return
+                end
+            end
+            obj.requestNewEnabled(newValue);
         end
         
     end

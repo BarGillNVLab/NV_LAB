@@ -32,7 +32,7 @@ classdef LaserSourcePhysicalFactory
                     laserPhysicalPart = LaserSourceOnefiveKatana05.create(partName, struct);
                     case 'onefive katana 08'
                     laserPhysicalPart = LaserSourceOnefiveKatana08.create(partName, struct);
-                case 'laserquantum smd 12'
+                case {'laserquantum smd 12', 'laserquantum mpc'}
                     laserPhysicalPart = LaserSourceLaserquantumSmd12.create(partName, struct);
                 case 'swabian dlnsec'
                     laserPhysicalPart = LaserSourceSwabianDLNsec.create(partName, struct);

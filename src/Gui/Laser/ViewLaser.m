@@ -42,6 +42,10 @@ classdef ViewLaser < GuiComponent
                 sourceView = ViewLaserPart(obj, controller, laserGate.source, 'Source:');
                 heights = [heights, sourceView.height];
                 width = max([width, sourceView.width]);
+
+                if ismethod(laserGate.source, 'measuredPower')
+                    heights = [heights, ViewLaser.addMeasuredRow(laserControlBox, laserGate.source)];
+                end
             end
             
             if aomAvailBool
@@ -63,5 +67,62 @@ classdef ViewLaser < GuiComponent
             
         end % constructor
     end  % methods
+
+    methods (Static)
+        function tf = timingSensitiveRunIsOn()
+            % The SPCM counter or an experiment is running: background
+            % instrument polling should wait.
+            tf = false;
+            try
+                c = getObjByName(SpcmCounter.NAME);
+                tf = ~isempty(c) && isvalid(c) && c.isRunning;
+                if ~tf
+                    name = Experiment.current();
+                    if ~isempty(name)
+                        e = getObjByName(name);
+                        tf = ~isempty(e) && isvalid(e) && e.isRunning;
+                    end
+                end
+            catch
+            end
+        end
+    end
+
+    methods (Static, Access = private)
+        function h = addMeasuredRow(box, source)
+            % Live power reported by the laser head, next to the set point slider
+            h = 22;
+            row = uix.HBox('Parent', box, 'Spacing', 5);
+            uicontrol(GuiComponent.PROP_TEXT_NO_BG{:}, 'Parent', row, 'String', 'Measured:');
+            lbl = uicontrol(GuiComponent.PROP_TEXT_BIG{:}, 'Parent', row, 'String', '');
+            row.Widths = [70, -1];
+            % Every 5 s, and never while the SPCM counter or an experiment
+            % runs: each reading is a serial round trip on MATLAB's main
+            % thread, which those loops share - it showed as stalls in the
+            % SPCM counter.
+            t = timer('ExecutionMode', 'fixedSpacing', 'Period', 5, 'ErrorFcn', @(~, ~) [], ...
+                'TimerFcn', @(~, ~) update());
+            row.DeleteFcn = @(~, ~) stopTimer();
+            update();
+            start(t);
+
+            function update()
+                if ~isvalid(lbl); return; end
+                if ViewLaser.timingSensitiveRunIsOn()
+                    lbl.String = 'paused while counting';
+                    return
+                end
+                try
+                    p = source.measuredPower();
+                    if ~isnan(p); lbl.String = sprintf('%.1f %s', p, source.units); end
+                catch
+                    lbl.String = 'no reply';
+                end
+            end
+            function stopTimer()
+                if isvalid(t); stop(t); delete(t); end
+            end
+        end
+    end
 end
 

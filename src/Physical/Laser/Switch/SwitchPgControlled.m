@@ -10,6 +10,10 @@ classdef SwitchPgControlled < EventSender & EventListener
         
         channel     % string
     end
+
+    properties (Access = private)
+        syncingFromPg = false   % true while copying the PG's state: update, don't command the hardware
+    end
     
     methods (Access = private)
         function obj = SwitchPgControlled(name, pgChannel)
@@ -35,11 +39,13 @@ classdef SwitchPgControlled < EventSender & EventListener
             if ValidationHelper.isTrueOrFalse(newValue)
                 newValue = logical(newValue);
                 obj.isEnabled = newValue;
-                PG = getObjByName(PulseGenerator.NAME);
-                if newValue
-                    PG.on(obj.channel); %#ok<MCSUP>
-                else
-                    PG.off(obj.channel); %#ok<MCSUP>
+                if ~obj.syncingFromPg %#ok<MCSUP>
+                    PG = getObjByName(PulseGenerator.NAME);
+                    if newValue
+                        PG.on(obj.channel); %#ok<MCSUP>
+                    else
+                        PG.off(obj.channel); %#ok<MCSUP>
+                    end
                 end
                 obj.sendEvent(struct('isEnabled', newValue));
                 % ^ let everyone know about the success! :)
@@ -65,6 +71,12 @@ classdef SwitchPgControlled < EventSender & EventListener
         end
     end
     
+    methods (Access = private)
+        function endSync(obj)
+            obj.syncingFromPg = false;
+        end
+    end
+
     %% Overridden from EventListener
     methods
         % event is the event sent from the EventSender
@@ -72,11 +84,15 @@ classdef SwitchPgControlled < EventSender & EventListener
             if event.isError
                 return
             end
+            % The PG changed its outputs on its own (e.g. streamed an
+            % experiment sequence). Follow it, without sending anything back:
+            % commanding the PG here could cut a running sequence short.
             PG = event.creator;
-            newEnabled = PG.isOn(obj.name);
+            newEnabled = logical(PG.isOn(obj.channel));
             if newEnabled ~= obj.isEnabled
-                obj.isEnabled = newEnabled;
-                obj.sendEvent(struct('isEnabled', newEnabled));
+                obj.syncingFromPg = true;
+                c = onCleanup(@() obj.endSync());
+                obj.isEnabled = newEnabled;     % the setter sends the event
             end
         end
     end

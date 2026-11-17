@@ -49,6 +49,21 @@ classdef LaserGate < Savable % Needs to be EventSender
             obj.aomSwitch = aomSwitch;
         end
         
+        function delete(obj)
+            % On clear all / MATLAB exit: block the beam with the AOM, and
+            % leave the laser itself as it is (its source decides that -
+            % see onlyUserTurnsOff). Best effort: other objects may already be
+            % gone, and nothing here may stop the rest of the clean-up.
+            try
+                if obj.isAomSwitchAvail; obj.aomSwitch.isEnabled = false; end
+            catch
+            end
+            try
+                if obj.isAomAvail; obj.aom.value = obj.aom.minValue; end
+            catch
+            end
+        end
+
         function tf = isSourceAvail(obj)
             % Check if this laser gate can manipulate a smart laser source
             tf = isobject(obj.source);
@@ -99,9 +114,12 @@ classdef LaserGate < Savable % Needs to be EventSender
                     if tfAomSwitch
                         % Turn off only AOM, if possible
                         obj.aomSwitch.isEnabled = false;
-                    elseif tfSource
+                    elseif tfSource && ~LaserGate.onlyUserTurnsOff(obj.source)
                         % Second best thing
                         obj.source.isEnabled = false;
+                    elseif tfSource
+                        EventStation.anonymousWarning(['%s has no AOM switch and its laser is only ', ...
+                            'switched off by the user, so it stays on.'], obj.name);
                     else
                         EventStation.anonymousError('%s can''t be turned off!', obj.name);
                     end
@@ -200,7 +218,10 @@ classdef LaserGate < Savable % Needs to be EventSender
             
             if obj.isSourceAvail()
                 if isfield(savedStruct, obj.SAVE_PROPERTY_SOURCE_ENABLED) && obj.source.canSetEnabled
-                    obj.source.isEnabled = savedStruct.(obj.SAVE_PROPERTY_SOURCE_ENABLED);
+                    wantOn = savedStruct.(obj.SAVE_PROPERTY_SOURCE_ENABLED);
+                    if wantOn || ~LaserGate.onlyUserTurnsOff(obj.source)
+                        obj.source.isEnabled = wantOn;
+                    end     % else: loading a file never switches such a laser off
                 end
                 if isfield(savedStruct, obj.SAVE_PROPERTY_SOURCE_VALUE) && obj.source.canSetValue
                     obj.source.value = savedStruct.(obj.SAVE_PROPERTY_SOURCE_VALUE);
@@ -260,6 +281,12 @@ classdef LaserGate < Savable % Needs to be EventSender
     
     %% Create all Laser Gates
     methods (Static)
+        function tf = onlyUserTurnsOff(source)
+            % Sources that must never be switched off automatically (see
+            % LaserSourceLaserquantumSmd12.onlyUserTurnsOff)
+            tf = isprop(source, 'onlyUserTurnsOff') && source.onlyUserTurnsOff;
+        end
+
         function cellOfLasers = getLasers()
             % Creates all the lasers from the json.
             
@@ -287,7 +314,15 @@ classdef LaserGate < Savable % Needs to be EventSender
             end
             
             laserName = laserStruct.nickname;
-            sourcePhysical = LaserSourcePhysicalFactory.createFromStruct(laserName, laserStruct.directControl);
+            try
+                sourcePhysical = LaserSourcePhysicalFactory.createFromStruct(laserName, laserStruct.directControl);
+            catch err
+                % A laser controller that is off or unplugged should cost
+                % only its own controls, not the whole setup.
+                EventStation.anonymousWarning('%s: laser controller not connected, so no power control: %s', ...
+                    laserName, err.message);
+                sourcePhysical = [];
+            end
             aomPhysical = LaserAomPhysicalFactory.createFromStruct(laserName, laserStruct.aomControl);
             switchPhysical = LaserSwitchPhysicalFactory.createFromStruct(laserName, laserStruct.switch);
             laserGate = LaserGate(laserName, sourcePhysical, aomPhysical, switchPhysical);
