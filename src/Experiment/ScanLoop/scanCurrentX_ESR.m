@@ -4,9 +4,14 @@ function fig = scanCurrentX_ESR()
 %       for each X position x:
 %           Z back (retract), X to x, Z back to its start height, ESR
 %
-%   Set where to start and where to go (From / Step / To), check the plan -
-%   it shows the absolute X and Z the stages will visit - and press Start.
-%   A final dialog lists every range before anything moves.
+%   Type the values as from:step:to ranges - several are allowed, e.g.
+%   "0:5:25, 0:100:400" - check the plan (it shows the absolute X and Z the
+%   stages will visit) and press Start. A final dialog lists every range
+%   before anything moves.
+%
+%   Load last: the settings of the last scan started. Load... / Save...:
+%   a .json of these settings - every scan also leaves one next to its CSV
+%   (ScanLoop_<time>.params.json), so an old scan can be loaded and rerun.
 %
 %   Before Start: select ESR in mainExp (its parameters are used as they
 %   are), free COM5 (`clear ps`, close E3631A_gui), and put the stages
@@ -19,16 +24,17 @@ function fig = scanCurrentX_ESR()
 %   See also BUILDCURRENTXSCAN, SCANLOOP
 
 PREF_GROUP = 'NVLab_scanCurrentX';
-s0 = struct('I', [0 50 400], 'x', [-150 5 150], 'zBack', -10, 'settle', 0.5, 'esrS', 60, 'order', 'current-outer');
+DEFAULTS = struct('I', '0:50:400', 'x', '-150:5:150', 'zBack', -10, 'settle', 0.5, 'esrS', 60, 'order', 'current-outer');
+s0 = DEFAULTS;
 try
-    if ispref(PREF_GROUP, 'last')
-        saved = getpref(PREF_GROUP, 'last');
-        for f = fieldnames(saved)'; s0.(f{1}) = saved.(f{1}); end
-    end
+    if ispref(PREF_GROUP, 'last'); s0 = withDefaults(getpref(PREF_GROUP, 'last')); end
 catch
 end
 L = [];
 t0 = [];            % tic after the first point, for the live time estimate
+paramsWritten = false;
+runSettings = [];   % the settings the running scan was started with
+lastFolder = '';
 
 % Time model for the estimate (the ESR itself is measured - see fillEsrTime)
 MOVE_S = 0.5;       % one stage move, incl. waiting for arrival
@@ -36,18 +42,26 @@ MOVES_PER_X = 3;    % Z back, X, Z down
 CURRENT_S = 0.6;    % one change of the wire current
 ESR_START_S = 3;    % per ESR run, on top of its averages (prepare, plot window)
 
-fig = uifigure('Name', 'Current x X scan with ESR', 'Position', [200 150 520 550]);
-g = uigridlayout(fig, [14 4]);
-g.RowHeight = repmat({'fit'}, 1, 14);
+fig = uifigure('Name', 'Current x X scan with ESR', 'Position', [200 150 560 600]);
+g = uigridlayout(fig, [15 4]);
+g.RowHeight = repmat({'fit'}, 1, 15);
 g.ColumnWidth = {170, '1x', '1x', '1x'};
 
-uilabel(g, 'Text', '');
-for t = {'From', 'Step', 'To'}; uilabel(g, 'Text', t{1}, 'FontWeight', 'bold', 'HorizontalAlignment', 'center'); end
+uilabel(g, 'Text', 'Scan parameters', 'FontWeight', 'bold');
+uibutton(g, 'Text', 'Load last', 'Tooltip', 'The settings of the last scan started', ...
+    'ButtonPushedFcn', @(~, ~) loadLast());
+uibutton(g, 'Text', 'Load...', 'Tooltip', 'A saved .json - e.g. the .params.json next to an old scan''s CSV', ...
+    'ButtonPushedFcn', @(~, ~) loadFile());
+uibutton(g, 'Text', 'Save...', 'ButtonPushedFcn', @(~, ~) saveFile());
 
+RANGE_TIP = ['from:step:to, several separated by commas, e.g. 0:5:25, 0:100:400. ', ...
+    'Single values are fine too. Duplicates are dropped and the values sorted.'];
 uilabel(g, 'Text', 'Wire current [mA]');
-edI = arrayfun(@(v) numField(g, v), s0.I);
+edI = textField(g, s0.I);
 uilabel(g, 'Text', 'X [um], from where X is now');
-edX = arrayfun(@(v) numField(g, v), s0.x);
+edX = textField(g, s0.x);
+lblValues = uilabel(g, 'Text', '', 'FontColor', [0.4 0.4 0.4], 'WordWrap', 'on');
+lblValues.Layout.Column = [1 4];
 
 uilabel(g, 'Text', 'Order');
 ddOrder = uidropdown(g, ...
@@ -150,15 +164,93 @@ refreshAll();
         f = uieditfield(parent, 'numeric', 'Value', v, 'ValueChangedFcn', @(~, ~) updatePlan());
     end
 
+    function f = textField(parent, v)
+        f = uieditfield(parent, 'text', 'Value', v, 'Tooltip', RANGE_TIP, ...
+            'ValueChangedFcn', @(~, ~) updatePlan());
+        f.Layout.Column = [2 4];
+    end
+
     function s = settings()
-        s = struct('I', [edI.Value], 'x', [edX.Value], 'zBack', edZ.Value, 'settle', edSettle.Value, ...
+        s = struct('I', edI.Value, 'x', edX.Value, 'zBack', edZ.Value, 'settle', edSettle.Value, ...
             'esrS', edEsr.Value, 'order', ddOrder.Value);
     end
 
-    function v = range(r, what)
-        assert(r(2) ~= 0, '%s: Step must not be 0', what);
-        v = r(1):r(2):r(3);
-        assert(~isempty(v), '%s: no values from %g to %g with step %g (check the sign of Step)', what, r(1), r(3), r(2));
+    function applySettings(s)
+        s = withDefaults(s);
+        edI.Value = s.I; edX.Value = s.x; edZ.Value = s.zBack; edSettle.Value = s.settle;
+        edEsr.Value = s.esrS; ddOrder.Value = s.order;
+        updatePlan();
+    end
+
+    function loadLast()
+        try
+            assert(ispref(PREF_GROUP, 'last'), 'No scan has been started from this window yet');
+            applySettings(getpref(PREF_GROUP, 'last'));
+            lblStatus.Text = 'Loaded the settings of the last scan started.';
+        catch err
+            uialert(fig, err.message, 'Load last');
+        end
+    end
+
+    function loadFile()
+        [f, p] = uigetfile({'*.json', 'Scan parameters (*.json)'}, 'Load scan parameters', defaultFolder());
+        figure(fig);
+        if isequal(f, 0); return; end
+        try
+            applySettings(jsondecode(fileread(fullfile(p, f))));
+            lastFolder = p;
+            lblStatus.Text = ['Loaded ' f];
+        catch err
+            uialert(fig, ['Could not load ' f ': ' err.message], 'Load');
+        end
+    end
+
+    function saveFile()
+        [f, p] = uiputfile({'*.json', 'Scan parameters (*.json)'}, 'Save scan parameters', ...
+            fullfile(defaultFolder(), 'scan.params.json'));
+        figure(fig);
+        if isequal(f, 0); return; end
+        try
+            writeParams(fullfile(p, f), settings());
+            lastFolder = p;
+            lblStatus.Text = ['Saved ' f];
+        catch err
+            uialert(fig, err.message, 'Save');
+        end
+    end
+
+    function d = defaultFolder()
+        d = lastFolder;
+        if isempty(d) && ~isempty(L) && ~isempty(L.file); d = fileparts(L.file); end
+        if isempty(d); d = pwd; end
+    end
+
+    function v = range(str, what)
+        v = parseRanges(str, what);
+    end
+
+    function s = withDefaults(s)
+        % Fill what a file or an old preference lacks; old preferences kept
+        % each range as a [from step to] vector.
+        for f = fieldnames(DEFAULTS)'
+            if ~isfield(s, f{1}) || isempty(s.(f{1})); s.(f{1}) = DEFAULTS.(f{1}); end
+        end
+        for f = {'I', 'x'}
+            v = s.(f{1});
+            if isnumeric(v)
+                if numel(v) == 3; s.(f{1}) = sprintf('%g:%g:%g', v);
+                else; s.(f{1}) = strjoin(compose('%g', v), ', '); end
+            end
+            s.(f{1}) = char(s.(f{1}));
+        end
+        s = rmfield(s, setdiff(fieldnames(s), fieldnames(DEFAULTS)));
+    end
+
+    function writeParams(file, s)
+        fid = fopen(file, 'w');
+        assert(fid > 0, 'Cannot write %s', file);
+        c = onCleanup(@() fclose(fid));
+        fprintf(fid, '%s', jsonencode(s, 'PrettyPrint', true));
     end
 
     function ok = updatePlan()
@@ -173,12 +265,14 @@ refreshAll();
             assert(all(I >= 0) && max(I) <= 5000, 'Current must be within 0..5000 mA');
         catch err
             showPlan({err.message}, false);
+            lblValues.Text = '';
             btnStart.Enable = 'off';
             return
         end
+        lblValues.Text = sprintf('Current (%d): %s mA\nX (%d): %s um', ...
+            numel(I), listText(I), numel(x), listText(x));
 
         lines{end+1} = sprintf('%d currents x %d X positions = %d ESR runs', numel(I), numel(x), numel(I) * numel(x));
-        lines{end+1} = sprintf('Current: %g .. %g mA', I(1), I(end));
         nPoints = numel(I) * numel(x);
         if strcmp(s.order, 'x-outer')
             % stage moves once per X position; the current changes at every point
@@ -230,6 +324,13 @@ refreshAll();
         end
     end
 
+    function t = listText(v)
+        % All values when few, else the first and last few
+        c = compose('%g', v);
+        if numel(c) > 16; c = [c(1:6), {'...'}, c(end-5:end)]; end
+        t = strjoin(c, ' ');
+    end
+
     function showPlan(lines, ok)
         lblPlan.Text = strjoin(lines, newline);
         if ok; lblPlan.FontColor = [0 0 0]; else; lblPlan.FontColor = [0.8 0 0]; end
@@ -238,6 +339,7 @@ refreshAll();
     function startScan()
         if ~updatePlan(); return; end
         s = settings();
+        runSettings = s;
         try; setpref(PREF_GROUP, 'last', s); catch; end
         L = buildCurrentXScan(struct('current_mA', range(s.I, 'Current'), 'x_um', range(s.x, 'X'), ...
             'zBack_um', s.zBack, 'settle_s', s.settle, 'order', s.order));
@@ -246,6 +348,7 @@ refreshAll();
         btnStart.Enable = 'off'; btnStop.Enable = 'on';
         lblStatus.Text = 'Waiting for your confirmation...';
         t0 = [];
+        paramsWritten = false;
         try
             L.run();    % shows every range and asks before anything moves
             if L.pointIndex == 0
@@ -268,6 +371,12 @@ refreshAll();
     end
 
     function showProgress(loop)
+        if ~paramsWritten && ~isempty(loop.file)
+            % These settings next to the scan's CSV, for Load... later
+            paramsWritten = true;
+            [folder, base] = fileparts(loop.file);
+            try; writeParams(fullfile(folder, [base '.params.json']), runSettings); catch; end
+        end
         if ~isvalid(fig); return; end
         if isempty(t0); t0 = tic; end          % first point done: the clock runs from here
         if loop.isRunning
