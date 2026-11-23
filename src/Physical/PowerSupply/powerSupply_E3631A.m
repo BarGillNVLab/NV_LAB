@@ -16,7 +16,8 @@ classdef powerSupply_E3631A < powerSupply
         end
         
         function initilize(obj, address)
-            obj.id = visadev(address);
+            %obj.id = visadev(address);
+            obj.id= serialport(address, 9600);
         end
         
         function connect(obj)
@@ -91,7 +92,7 @@ classdef powerSupply_E3631A < powerSupply
         
         function output(obj, state, channel)
             obj.checkChannel(channel);
-            obj.checkOutput(state);
+            state = obj.booltoOnOff(state);
             obj.sendCommand(sprintf('INST %s', channel));
             obj.sendCommand(sprintf('OUTP %s', obj.booltoOnOff(state)))
         end

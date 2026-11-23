@@ -124,6 +124,30 @@ classdef (Sealed) Helmholtz < BaseObject & EventSender & Savable
 %             end
 %         end
     end
+
+    methods (Static, Access = protected)
+
+        function R = rotx(a)
+        a = deg2rad(a);
+        R = [1 0 0;
+             0 cos(a) -sin(a);
+             0 sin(a) cos(a)];
+         end
+
+        function R = roty(a)
+        a = deg2rad(a);
+        R = [cos(a) 0 sin(a);
+             0 1 0;
+            -sin(a) 0 cos(a)];
+        end
+
+        function R = rotz(a)
+        a = deg2rad(a);
+        R = [cos(a) -sin(a) 0;
+             sin(a)  cos(a) 0;
+             0 0 1];
+        end
+    end
     
     methods
         function obj = Helmholtz()
@@ -191,8 +215,10 @@ classdef (Sealed) Helmholtz < BaseObject & EventSender & Savable
                 else
                     minCur = 0;
                 end
-                obj.maxCurrent(k) = min([axisStruct.max_current, ps.maxCurrentActive(channel)]);
-                obj.minCurrent(k) = max([minCur, ps.minCurrentActive(channel)]);
+                obj.maxCurrent(k) = min([axisStruct.max_current, ps.maxCurrent(ps.chan2ind(channel))]);
+%                obj.maxCurrent(k) = min([axisStruct.max_current, ps.maxCurrentActive(channel)]);
+                obj.minCurrent(k) = min([axisStruct.max_current, ps.minCurrent(ps.chan2ind(channel))]);
+%                obj.minCurrent(k) = max([minCur, ps.minCurrentActive(channel)]);
                 obj.magneticFieldRatio(k) = axisStruct.magnetic_field_ratio;
                 obj.magneticFieldOffset(k) = axisStruct.magnetic_field_offset;
                 obj.I(k) = ps.current(ps.chan2ind(channel));
@@ -877,7 +903,10 @@ end
                         obj.sendError('no type of NV edge %s', obj.edge)
                 end
             end
-            out = rotz(obj.D_phi) * roty(obj.D_theta) * rotz(obj.D_rotate) * NVfix * in;
+            %out = rotz(obj.D_phi) * roty(obj.D_theta) * rotz(obj.D_rotate) * NVfix * in;
+            out = Helmholtz.rotz(obj.D_phi) * ...
+      Helmholtz.roty(obj.D_theta) * ...
+      Helmholtz.rotz(obj.D_rotate) * NVfix * in;
         end
         
         function save(obj, address)
