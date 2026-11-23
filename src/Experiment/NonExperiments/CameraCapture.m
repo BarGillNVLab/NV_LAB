@@ -9,10 +9,20 @@ classdef CameraCapture < EventSender & EventListener & Savable
         mcameraimageparams    
         measurementType=1;       % index for MEASUREMENTS_OPTIONS
         mCurrentlyAcquiring = false;
-
-
         initialroi
-        
+
+
+        % event camera parameters
+        eventMap
+        bufferSize = 1000;
+        videoBuffer
+        recordVideo=0;
+        writeIndex            % Position where the next image is written
+        frameCount            % Number of valid images currently stored
+        startrecording = 0;
+        fig
+        hIm
+        hEventAxes
         
     end
     
@@ -28,6 +38,9 @@ classdef CameraCapture < EventSender & EventListener & Savable
         
         PROPERTY_SCAN_PARAMS = 'scanParameters'
         MEASUREMENT_OPTIONS = {'snapshot', 'continuous'}
+        PATH_DEFAULT_STREAM_SAVE = sprintf('%sSetup %s\\eventVideo\\', ...
+            PathHelper.getPathToNvLab(), JsonInfoReader.setupNumber);
+        
     end
     
     methods (Access = private)
@@ -36,6 +49,9 @@ classdef CameraCapture < EventSender & EventListener & Savable
             obj@Savable(CameraCapture.NAME);
             obj@EventListener(SaveLoadCatImage.NAME)
             obj.mCamera = getObjByName(Camera.NAME);
+            if isa(obj.mCamera,'UEeventCamera')
+                obj.SetEventMapDefault();
+            end
         end
     end
     methods
@@ -91,7 +107,16 @@ classdef CameraCapture < EventSender & EventListener & Savable
             camera.prepareReadByTime();
             disp('Initiating Aquisition...');
             try
-                kcpsImageMatrix = obj.run(camera);
+                if isa(obj.mCamera,'UEeventCamera')
+                    obj.recordVideo = 0;
+                    obj.mCamera.StartRead();
+                    
+                    obj.initializeEventFigure();
+                    kcpsImageMatrix = obj.eventStreaming(); 
+                    
+                else
+                    kcpsImageMatrix = obj.run(camera);
+                end
                 
             catch err
                 % We couldn't scan. Wrap it up nicely
@@ -154,7 +179,7 @@ classdef CameraCapture < EventSender & EventListener & Savable
                             case 1
                                 for i = 1:size(kcpsMatrix,3)
                                     if i==2
-                                        pg.on('MW');
+                                        pg.on({'MW', 'greenLaser'});
                                     end
                                     kcpsMatrix(:,:,i) = camera.readFromTime;
                                     if i==2
@@ -168,7 +193,7 @@ classdef CameraCapture < EventSender & EventListener & Savable
                                     % Creating data to be saved
                                     for i = 1:size(kcpsMatrix,3)
                                         if i==2
-                                            pg.on('MW');
+                                            pg.on({'MW', 'greenLaser'});
                                         end
                                         kcpsMatrix(:,:,i) = camera.readFromTime;
                                         if i==2
@@ -186,7 +211,7 @@ classdef CameraCapture < EventSender & EventListener & Savable
                             case 1
                                 for j = 1:size(kcpsMatrix,3)
                                     if j==2
-                                        pg.on('MW');
+                                        pg.on({'MW', 'greenLaser'});
                                     end
                                     currentMatrix = camera.readFromTime(1, nframes, timedelay);
                                     kcpsMatrix(:,:,j) = mean(currentMatrix,3);
@@ -201,7 +226,7 @@ classdef CameraCapture < EventSender & EventListener & Savable
                                     % Creating data to be saved
                                     for j = 1:size(kcpsMatrix,3)
                                         if j==2
-                                            pg.on('MW');
+                                            pg.on({'MW', 'greenLaser'});
                                         end
                                         currentMatrix = camera.readFromTime(1, nframes, timedelay);
                                         kcpsMatrix(:,:,j) = mean(currentMatrix,3); 
@@ -223,15 +248,68 @@ classdef CameraCapture < EventSender & EventListener & Savable
                 rethrow(err);
             end
         end
+
+        function kcpsImageMatrix = eventStreaming(obj)
+             % FPS measurement
+            fpsTimer = tic;
+            totalTimer = tic;
+        
+            intervalFrames = 0;
+            totalFrames = 0;
+            while obj.mCurrentlyAcquiring
+                if ~isvalid(obj.fig)
+                    break;
+                end
+          
+                % Acquire frame
+                rawFrame = obj.mCamera.ImageAcquire();
+                intervalFrames = intervalFrames + 1;
+                totalFrames = totalFrames + 1;
+                
+                if obj.recordVideo
+                    obj.videoBuffer(:, :, obj.writeIndex) = rawFrame;
+                    obj.writeIndex = mod(obj.writeIndex, obj.bufferSize) + 1;
+                    obj.frameCount = min(obj.frameCount + 1, obj.bufferSize);
+                end
+            
+                set(obj.hIm, 'CData', rawFrame);
+            
+                drawnow limitrate 
+                elapsed = toc(fpsTimer);
+
+                if elapsed >= 10
+        
+                    fps = intervalFrames / elapsed;
+        
+                    fprintf('Event stream FPS: %.2f\n', fps);
+        
+                    % Reset interval measurement
+                    intervalFrames = 0;
+                    fpsTimer = tic;
+                end
+                
+            end
+            obj.mCamera.stopRead();
+            kcpsImageMatrix = rawFrame;
+            obj.sendEventAcquiringUpdated(rawFrame);
+            if obj.recordVideo
+                obj.saveVideo();
+                obj.recordVideo = 0;
+            end
+            obj.mCamera.clearTimeRead();
+        end
+
+        
+
         function stopAcquiring(obj)
              obj.mCurrentlyAcquiring = false;
-         end
+        end
 
-         function autosaveAfterAcquisition(obj) %#ok<MANU>
+        function autosaveAfterAcquisition(obj) %#ok<MANU>
             saveLoad = SaveLoad.getInstance(Savable.CATEGORY_IMAGE);
             saveLoad.autoSave();
-         end
-         function clear(obj)
+        end
+        function clear(obj)
             if (obj.mCurrentlyAcquiring)
                 obj.stopAcquiring();
             end
@@ -240,11 +318,222 @@ classdef CameraCapture < EventSender & EventListener & Savable
             obj.mCamera = nan;
             obj.mcameraimageparams = nan;
             obj.mCurrentlyAcquiring = false;     % probably redundant; appears in obj.stopScan
-         end
+        end
 
-         function boolean = isAcquisitionReady(obj)
+        function boolean = isAcquisitionReady(obj)
             boolean = ~isnan(obj.mImage);
         end
+
+        function SetEventMapDefault(obj)
+            % to do later add an option to change the map
+            nColors = 256;
+            halfN = nColors / 2;
+            
+            neg = [ ...
+                linspace(1,0,halfN)' ...
+                linspace(1,0,halfN)' ...
+                linspace(1,0,halfN)' ];          % white -> black
+            
+            pos = [ ...
+                zeros(halfN,1) ...
+                zeros(halfN,1) ...
+                linspace(0,1,halfN)' ];          % black -> blue
+            
+            obj.eventMap = [neg; pos];
+        end
+
+        function initializeEventFigure(obj)
+
+            rawFrame = obj.mCamera.ImageAcquire();
+        
+            if isempty(obj.fig) || ~isvalid(obj.fig)
+        
+                obj.fig = uifigure( ...
+                    'Name', 'Event Camera Display', ...
+                    'WindowStyle', 'alwaysontop', ...
+                    'Position', [100 100 900 550]);
+        
+                % Make axes occupy almost the whole figure
+                obj.hEventAxes = uiaxes(obj.fig, ...
+                    'Units', 'normalized', ...
+                    'Position', [0.03 0.07 0.90 0.88]);
+        
+                % Display first frame
+                obj.hIm = imagesc(obj.hEventAxes, rawFrame);
+        
+                axis(obj.hEventAxes, 'image');
+                axis(obj.hEventAxes, 'tight');
+        
+                colormap(obj.hEventAxes, obj.eventMap);
+                clim(obj.hEventAxes, [-1 1]);
+        
+                % Keep title
+                title(obj.hEventAxes, 'Streaming');
+        
+                % Keep colorbar
+                cb = colorbar(obj.hEventAxes);
+                cb.Location = 'eastoutside';
+        
+                drawnow;
+        
+            else
+        
+                obj.hIm.CData = rawFrame;
+                obj.fig.Visible = 'on';
+        
+            end
+        end
+
+        function startRecording(obj)
+            roi = obj.mCamera.imgparams.roi;
+            W = roi(3);
+            H = roi(4);
+            obj.videoBuffer = zeros(H, W, obj.bufferSize, 'int32');
+            obj.recordVideo = 1;
+            obj.startrecording = 1;
+            obj.writeIndex = 1;
+            obj.frameCount = 0;
+        end
+
+        function stopRecording(obj)
+            obj.startrecording = 0;
+        end
+
+        function saveVideo(obj)
+            % Save the FIFO event-frame buffer as an MP4.
+            %
+            % The saved video uses exactly the same:
+            %   - colormap
+            %   - color limits
+            % as the live event display.
+            %
+            % Frames are written oldest -> newest.
+        
+            % Validate buffer
+            if isempty(obj.videoBuffer) || obj.frameCount == 0
+                error('No frames are available in the video buffer.');
+            end
+        
+            % Validate display
+            if isempty(obj.fig) || ~isvalid(obj.fig) || ...
+               isempty(obj.hIm) || ~isvalid(obj.hIm)
+        
+                error('Initialize the event figure before saving a video.');
+            end
+        
+            % Get axes containing the event image
+            ax = ancestor(obj.hIm, 'axes');
+        
+            if isempty(ax) || ~isvalid(ax)
+                error('Could not find the event-display axes.');
+            end
+        
+            % Get EXACT display settings from the axes
+            cmap = colormap(ax);
+            cLimits = clim(ax);
+        
+            if cLimits(1) == cLimits(2)
+                error('Invalid color limits.');
+            end
+        
+            % Create save directory
+            saveFolder = obj.PATH_DEFAULT_STREAM_SAVE;
+        
+            if ~isfolder(saveFolder)
+                mkdir(saveFolder);
+            end
+        
+            % Generate filename
+            fileName = "eventVideo_" + ...
+                string(datetime("now", ...
+                "Format", "yyyyMMdd_HHmmss")) + ".mp4";
+        
+            videoPath = fullfile(saveFolder, fileName);
+        
+            % Get FIFO frames in chronological order
+            if obj.frameCount < obj.bufferSize
+        
+                % Buffer has not wrapped yet
+                frameIndices = 1:obj.frameCount;
+        
+            else
+        
+                % Buffer is full:
+                % writeIndex points to the next location that will be overwritten.
+                % Therefore it is also the oldest frame.
+                frameIndices = mod( ...
+                    (obj.writeIndex - 1) + (0:obj.bufferSize - 1), ...
+                    obj.bufferSize) + 1;
+            end
+        
+            % Create MP4 writer
+            writer = VideoWriter(videoPath, 'MPEG-4');
+        
+            % Use camera/display frame rate if available
+            if isprop(obj.mCamera, 'frameRate') && ...
+               ~isempty(obj.mCamera.frameRate) && ...
+               obj.mCamera.frameRate > 0
+        
+                writer.FrameRate = obj.mCamera.frameRate;
+            else
+                writer.FrameRate = 30;
+            end
+        
+            % Important for sparse event-camera images
+            writer.Quality = 100;
+        
+            open(writer);
+        
+            % Precompute mapping information
+            nColors = size(cmap, 1);
+        
+            cMin = cLimits(1);
+            cMax = cLimits(2);
+        
+            try
+        
+                % Write buffered frames
+                for k = 1:numel(frameIndices)
+        
+                    i = frameIndices(k);
+        
+                    % Keep original event values until color conversion
+                    frame = double(obj.videoBuffer(:, :, i));
+        
+                    % Match imagesc(...), clim(...)
+                    scaledFrame = (frame - cMin) ./ (cMax - cMin);
+        
+                    % Clip values outside CLim
+                    scaledFrame = min(max(scaledFrame, 0), 1);
+        
+                    % Convert normalized values to colormap indices
+                    colorIndex = ...
+                        1 + round(scaledFrame * (nColors - 1));
+        
+                    % Convert indexed event image -> RGB
+                    rgbFrame = reshape( ...
+                        cmap(colorIndex(:), :), ...
+                        size(frame, 1), ...
+                        size(frame, 2), ...
+                        3);
+        
+                    % Convert [0,1] RGB -> uint8
+                    rgbFrame = uint8(round(rgbFrame * 255));
+        
+                    writeVideo(writer, rgbFrame);
+                end
+        
+            catch ME
+        
+                close(writer);
+                rethrow(ME);
+            end
+        
+            close(writer);
+        
+            fprintf('Video saved successfully:\n%s\n', videoPath);
+        end
+
      end
      methods (Static)
         function obj = init

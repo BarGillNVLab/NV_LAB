@@ -22,7 +22,7 @@ classdef ViewStartStop < GuiComponent
             obj.stopbtn = uicontrol(obj.PROP_BUTTON_BIG_RED{:}, 'Parent',vboxMain, 'String', 'Stop');
             bottom = uix.HBox('Parent', vboxMain, 'Spacing', 5, 'Padding', 16);
             obj.contchx = uicontrol(obj.PROP_CHECKBOX{:}, 'Parent',bottom, 'String', 'continuous');
-            uix.Empty('Parent', bottom)
+            uix.Empty('Parent', bottom);
             uicontrol(obj.PROP_BUTTON{:}, ...
                 'Parent', bottom, ...
                 'String', 'Figure', ...
@@ -45,7 +45,6 @@ classdef ViewStartStop < GuiComponent
 
         function refresh(obj)
             obj.contchx = false;
-            obj.stopbtn.Enable = 'off';
         end
 
     
@@ -54,6 +53,7 @@ classdef ViewStartStop < GuiComponent
             if obj.contchx 
                 set(obj.startbtn, 'Enable', 'off');
             end
+            TimingHelper.getInstance().addTimestamp('ImageAcquire Start');
             cameracpture.startAcquision;
 %             obj.initialroi = cameracpture.mcameraimageparams.roi;
         end
@@ -68,15 +68,13 @@ classdef ViewStartStop < GuiComponent
             if obj.contchx ==1
                 
                 cameracpture.measurementType = 2;
-                obj.stopbtn.Enable = 'on';
             else
                 cameracpture.measurementType = 1;
-                obj.stopbtn.Enable = 'off';
             end
         end
         function StopCallback(obj)
             cameracpture = getObjByName(CameraCapture.NAME);
-            cameracpture.mCurrentlyAcquiring = false;
+            cameracpture.stopAcquiring();
             set(obj.startbtn, 'Enable', 'on');
         end
 

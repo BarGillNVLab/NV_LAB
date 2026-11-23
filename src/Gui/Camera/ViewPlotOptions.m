@@ -17,7 +17,7 @@ classdef ViewPlotOptions < GuiComponent & EventListener
     methods
         function obj = ViewPlotOptions(parent, controller)
             obj@GuiComponent(parent, controller);
-            obj@EventListener;
+            obj@EventListener(CameraDisplay.NAME);
             plotOptions = uix.Panel('Parent', parent.component, 'Title', 'Plot Options', 'Padding', 5);
             hboxMain = uix.HBox('Parent', plotOptions, 'Spacing', 0, 'Padding', 0);
 
@@ -33,7 +33,7 @@ classdef ViewPlotOptions < GuiComponent & EventListener
                 'String', 'Auto', ...
                 'Value', true); %'Callback', @obj.cbxAutoCallback
             colormap1stRow.Widths = [-1 15 50];
-            uix.Empty('parent', leftColumn)
+            uix.Empty('parent', leftColumn);
             colormap2ndRow = uix.HBox('Parent', leftColumn, 'Spacing', 5);
             uicontrol(obj.PROP_LABEL{:}, 'Parent', colormap2ndRow, ...
                 'String', 'Min');  % Label
@@ -56,9 +56,9 @@ classdef ViewPlotOptions < GuiComponent & EventListener
             rightcolumn = uix.VBox('Parent', hboxMain, 'Spacing', 5, 'Padding', 0);
             
             obj.zoomwindow = uicontrol(obj.PROP_BUTTON{:}, 'Parent', rightcolumn, 'String', 'Zoom Window');
-            uix.Empty('parent', rightcolumn)
+            uix.Empty('parent', rightcolumn);
             obj.zomout = uicontrol(obj.PROP_BUTTON{:}, 'Parent', rightcolumn, 'String', 'Zoom Out');
-            uix.Empty('parent', rightcolumn)
+            uix.Empty('parent', rightcolumn);
             obj.updateroi = uicontrol(obj.PROP_BUTTON{:}, 'Parent', rightcolumn, 'String', 'Update ROI');
 
             rightcolumn.Heights = [25 2 25 2 25];
@@ -143,9 +143,17 @@ classdef ViewPlotOptions < GuiComponent & EventListener
             maxVal = camerdisplay.colormapLimits(2);
             obj.edtMax.String = StringHelper.formatNumber(maxVal,2);
             obj.imagedata = camerdisplay.mData;
-            xaxis = cameradisplay.mFirstAxis;
-            yaxis = cameradisplay.mSecondAxis;
+            xaxis = camerdisplay.mFirstAxis;
+            yaxis = camerdisplay.mSecondAxis;
             obj.initialROI = [xaxis(1) yaxis(1) xaxis(end)-xaxis(1) yaxis(end)-yaxis(1)];
+            camera = getObjByName(Camera.NAME);
+            if isa(camera, 'UEeventCamera')
+                set(obj.popupTypes,'Enable', 'off');
+                set(obj.cbxAuto,'Enable', 'off');
+                set(obj.edtMin,'Enable', 'off');
+                set(obj.edtMax,'Enable', 'off');
+            end
+
         end
                     % 
                     % 

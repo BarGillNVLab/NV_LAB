@@ -19,12 +19,7 @@ classdef Viewexposure < GuiComponent & EventListener & EventSender
      end
 
 
-     properties (Constant)
-        MINEXPOSURETIME = 9.2394e-06;
-        MaXEXPOSURETIME = 1.9842e04;
-
-     end
-
+     
      methods
         function obj = Viewexposure(parent, controller, camera)
             obj@GuiComponent(parent, controller);
@@ -131,7 +126,7 @@ classdef Viewexposure < GuiComponent & EventListener & EventSender
 
         function SetExposureCallback(obj)
             imageParams = obj.camera.imgparams;
-            expo = imageParams.exposuretime/1000;
+            expo = imageParams.exposuretime;            %ms
             viewMexposure = obj.edtexposuretime;
             if ~ValidationHelper.isStringValueANumber(viewMexposure.String)
                 viewMexposure.String = expo;
@@ -218,7 +213,7 @@ classdef Viewexposure < GuiComponent & EventListener & EventSender
 
 
         function refresh(obj)
-            obj.edtexposuretime.String = obj.camera.imgparams.exposuretime*1e-3;
+            obj.edtexposuretime.String = obj.camera.imgparams.exposuretime;
             obj.autoadjustment.Value= obj.camera.exposureAutoState;
             obj.avgexpo.Value  = obj.camera.imgparams.Avarage_exposures;
         end

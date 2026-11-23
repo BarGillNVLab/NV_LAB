@@ -378,16 +378,18 @@ classdef ViewStagePanelMovementControl < GuiComponent & EventListener
             isEnabled = isEnabled && isStageExist && isLoopClosed;
             %  * stage scanner is not running
             scanner = getObjByName(StageScanner.NAME);
-            isEnabled = isEnabled && ~scanner.mCurrentlyScanning;
-            %  * joystick is off
-            if stage.hasJoystick
-                jstick = getObjByName(Joystick.NAME);
-                if ~isempty(jstick)
-                    isEnabled = isEnabled && ~jstick.isEnabled;
-                else
-                    % This is not the main event, but it's not bad to tell
-                    % the user that there is an upcoming problem
-                    EventStation.anonymousWarning('Joystick was supposed to be found, but wasn''t!')
+            if ~isempty(scanner)
+                isEnabled = isEnabled && ~scanner.mCurrentlyScanning;
+                %  * joystick is off
+                if stage.hasJoystick
+                    jstick = getObjByName(Joystick.NAME);
+                    if ~isempty(jstick)
+                        isEnabled = isEnabled && ~jstick.isEnabled;
+                    else
+                        % This is not the main event, but it's not bad to tell
+                        % the user that there is an upcoming problem
+                        EventStation.anonymousWarning('Joystick was supposed to be found, but wasn''t!')
+                    end
                 end
             end
             %  * current Experiment is not running

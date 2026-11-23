@@ -10,6 +10,12 @@ classdef Camera < Savable & EventSender
         EVENT_CAMERA_PARAMS_CHANGED = 'cameraParamsChanged';
     end
 
+    properties (Abstract, Constant)
+        ROI_DEFULT
+        MAX_ROI
+        MAXIMUM_BINNING
+    end
+
     
     properties (Access = public)
         timeout
@@ -63,7 +69,9 @@ classdef Camera < Savable & EventSender
 
     methods (Abstract)
         
-        initScanParams(obj)   
+        initScanParams(obj)  
+
+        resetToDefault(obj)
             
         setROI(obj, newROI);
         % set the ROI
@@ -76,10 +84,9 @@ classdef Camera < Savable & EventSender
 
 %         ImageStart(gCam,handles)
         
-        ImageAcquire(obj,what)
+        ImageAcquire(obj)
         % this function starts the image acquring
         
-        SoftwareTrigger(obj)
 
         prepareRead(obj, NumberOfImages)
 

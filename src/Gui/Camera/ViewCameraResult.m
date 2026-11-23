@@ -15,12 +15,13 @@ classdef ViewCameraResult < ViewVBox
             obj.vHeader = ViewImageOptions(obj, controller);
             %obj.vHeader.startListeningTo(ImageScanResult.NAME);     % This will ensure that header actions will occur after image has updated
             obj.vImage = ViewCameraResultImage(obj, controller, minImageSize);
+            rec = ViewRecordingEventCamera(obj, controller);
             
-            obj.height = obj.vHeader.height + obj.vImage.height + 10;
+            obj.height = obj.vHeader.height + obj.vImage.height + rec.height + 10;
             obj.width = max([obj.vHeader.width, obj.vImage.width]) + 10;
             if ~isempty(minImageSize); obj.width = 600; end
             
-            obj.setHeights([obj.vHeader.height, -1]);
+            obj.setHeights([obj.vHeader.height, -1, rec.height+10]);
         end
     end
 end

@@ -9,7 +9,7 @@ classdef CameraBasler < Camera & EventSender
     properties (Constant)
         ROI_DEFULT = [0 0 1920 1200];
         MAX_ROI = [0 0 1936 1216];
-        UNIT_CONV = 1e3;                      % us to ms conversion for Basler camera
+        UNIT_CONV = 1e3;                      % ms to us conversion for Basler camera
         PIXEL_WIDTH = 5.86;                   % pixel width in micrometers
         PIXEL_LENGTH = 5.86;                  % pixel length in micrometers
         EVENT_IMAGE_TAKEN = 'imageacquired';
@@ -59,9 +59,10 @@ classdef CameraBasler < Camera & EventSender
             if cameraOn
                 stop(obj.vid);
             end
+            
             obj.setExposureTime(obj.DEFAULT_EXPOSURE_TIME);
-            obj.setROI(obj.ROI_DEFULT);
-            obj.setBinning(1);         
+            obj.setBinning(1); 
+            obj.setROI(obj.ROI_DEFULT);    
         end
 
         function on = IsLoggin(obj)
@@ -154,8 +155,8 @@ classdef CameraBasler < Camera & EventSender
             % exposure time set to the camera must be in microseconds
             ImageParams = obj.imgparams;
             obj.setExposureAuto(0);
-            obj.src.ExposureTime = t * obj.UNIT_CONV;
-            ImageParams.exposuretime = t * obj.UNIT_CONV;
+            obj.src.ExposureTime = t * obj.UNIT_CONV;           %micro sec
+            ImageParams.exposuretime = t;                       %ms
             obj.imgparams = ImageParams;
         end
 
@@ -171,6 +172,10 @@ classdef CameraBasler < Camera & EventSender
 
         function state = getExposureAuto(obj)
             state = obj.exposureAutoState;
+        end
+
+        function exposureTime = getExposureTime(obj)
+            exposureTime = obj.src.ExposureTime;
         end
 
         function setBinning(obj, bin)
@@ -298,8 +303,8 @@ classdef CameraBasler < Camera & EventSender
         function clearTimeRead(obj)
             obj.stopRead;
             cameraprop = obj.imgparams;
-            if cameraprop.exposuretime ~= obj.src.ExposureTime
-                cameraprop.exposuretime = obj.src.ExposureTime;
+            if cameraprop.exposuretime ~= (obj.src.ExposureTime/ obj.UNIT_CONV)
+                cameraprop.exposuretime = obj.src.ExposureTime /obj.UNIT_CONV;
                 obj.imgparams = cameraprop;
             end
         end
@@ -310,7 +315,7 @@ classdef CameraBasler < Camera & EventSender
         function prepareReadbyStage(obj, nPixels, timeout, pixelTime)
             obj.timeout = timeout;
             pixelTime = pixelTime*1e03;  % pixel time in millisec
-            exposureTime = obj.imgparams.exposuretime*1e-3;
+            exposureTime = obj.imgparams.exposuretime;  % millisec
             if exposureTime > pixelTime
                 obj.setExposureTime(obj.pixelTime-0.25*obj.pixelTime);
             end
@@ -349,7 +354,6 @@ classdef CameraBasler < Camera & EventSender
             obj.framesPerTrigger(1);
             obj.setTriggerRepeats(0);
             obj.clearMemory;
-            obj.setExposureTime(obj.DEFAULT_EXPOSURE_TIME);
             fprintf('[INFO] Camera parameters have been reset to default.\n');
         end
     end
@@ -452,7 +456,7 @@ classdef CameraBasler < Camera & EventSender
         
             if isfield(params, 'exposuretime')
                 string = sprintf('%s\nExposure Time: %g ms', ...
-                    string, params.exposuretime/1000);
+                    string, params.exposuretime);
             else
                 string = sprintf('%s\nExposure Time: NaN', string);
             end

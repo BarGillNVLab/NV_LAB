@@ -1,4 +1,4 @@
-function s = ste( varargin )
+    function s = ste( varargin )
 %STE returns the standard error of the data
 % Works exactly like VAR or STD, but equals std(x)/sqrt(n), where n is the
 % number of elements in the selected axis

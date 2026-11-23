@@ -62,6 +62,7 @@ classdef CameraDisplay < Savable & EventSender & EventListener
         initialdata
         cpproi
         CPP
+        eventMap = [];
     end
     
     methods
@@ -125,22 +126,30 @@ classdef CameraDisplay < Savable & EventSender & EventListener
 
         function imagePostProcessing(obj)
             %%%% After plotting is done, we can make some slight changes
-            
+            cameracap = getObjByName(CameraCapture.NAME);
             % Plot style
             styleOptions = obj.PLOT_STYLE_OPTIONS_2D;
             
             styleName = lower(styleOptions{obj.plotStyle});
             axis(obj.gAxes, styleName)
             
-            % Colormap
-            colormapName = obj.COLORMAP_OPTIONS{obj.colormapType};
-            colormap(obj.gAxes, colormapName)
-            
+         
             data = obj.getDataForPlotting;
+
             
-            if obj.colormapAuto
-                obj.colormapLimits = obj.calcColormapLimits(data);
+            if isa(cameracap.mCamera, 'UEeventCamera')
+                if isempty(obj.eventMap)
+                    obj.eventMap = cameracap.eventMap;
+                end
+                colormapName = obj.eventMap;
+                obj.colormapLimits = [-1 1];
+            else
+                colormapName = obj.COLORMAP_OPTIONS{obj.colormapType};             
+                if obj.colormapAuto
+                    obj.colormapLimits = obj.calcColormapLimits(data);
+                end
             end
+            colormap(obj.gAxes, colormapName)
             
             try
                 caxis(obj.gAxes, obj.colormapLimits);
@@ -664,6 +673,7 @@ classdef CameraDisplay < Savable & EventSender & EventListener
                 extraInternal = obj.ScanStructToInternal(extra);
                 obj.update(extraInternal);
                 drawnow
+                TimingHelper.getInstance().addTimestamp('Frame displayed');
                 return % To avoid drawing crosshairs twice
             end
         end

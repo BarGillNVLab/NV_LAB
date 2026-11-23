@@ -24,6 +24,8 @@ classdef CameraControlled < Spcm & NiDaqControlled
         
         % Channel Names
         niDaqGateChannelName            % torn on the photodiode power supply
+
+        isEventBased = 0;
         
     end
     
@@ -43,6 +45,9 @@ classdef CameraControlled < Spcm & NiDaqControlled
             obj@NiDaqControlled([], [], [], []);
             obj.camera = Camera.create();
             obj.availableProperties.(obj.HAS_CAMERA) = true;
+            if isa(obj.camera, 'UEeventCamera')
+                obj.isEventBased = 1;
+            end
         end
     end
     
@@ -50,16 +55,16 @@ classdef CameraControlled < Spcm & NiDaqControlled
         function setSPCMEnable(obj, newBooleanValue)
         end
         
-    %%% Read by time %%%
-    function prepareReadByTime(obj)
-            % Prepare the Integrator to a scan by timer, with integration time of
-            % integrationTime in seconds.
-%             obj.camera.prepareAcquisition(exposureTime);
-            obj.camera.prepareRead;
-            obj.camera.setTriggerType('manual');
-
+        %%% Read by time %%%
+        function prepareReadByTime(obj)
+                % Prepare the Integrator to a scan by timer, with integration time of
+                % integrationTime in seconds.
+    %             obj.camera.prepareAcquisition(exposureTime);
+                obj.camera.prepareRead;
+                obj.camera.setTriggerType('manual');
+    
         end
-        
+            
         function image = readFromTime(obj, averageExposures, nframes, timeDelay)
             if exist("nframes", "var")
                 obj.camera.triggerRepeats = nframes;
@@ -88,7 +93,7 @@ classdef CameraControlled < Spcm & NiDaqControlled
     
     
     %%% By Stage %%%
-    function prepareCountByStage(obj, stageName, nPixels, timeout, isFastScan, pixelTime)
+        function prepareCountByStage(obj, stageName, nPixels, timeout, isFastScan, pixelTime)
             % Prepare the camera to a scan by a stage. Before a multiline
             % scan, this should be called only once.
             

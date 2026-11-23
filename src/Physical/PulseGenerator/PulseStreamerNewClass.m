@@ -18,7 +18,9 @@ classdef (Sealed) PulseStreamerNewClass < PulseGenerator
         currentOnChannels
         analogChannel0Value = 0
         analogChannel1Value = 0
+        postExperimentState 
     end
+    
     
     %% 
     methods (Access = private)
@@ -47,11 +49,13 @@ classdef (Sealed) PulseStreamerNewClass < PulseGenerator
             end
             obj.automaticRearm = PSTriggerMode.Single; % can be 'Normal' or 'Single'.
             obj.ps.setTrigger(obj.trigger, obj.automaticRearm)
+            obj.postExperimentState = OutputState(0,obj.analogChannel0Value,obj.analogChannel1Value);
         end
     end
     
     %% Channel operation
     methods
+    
         function on(obj, channels)
             obj.On(channels);
         end
@@ -96,7 +100,7 @@ classdef (Sealed) PulseStreamerNewClass < PulseGenerator
         function sendToHardware(obj)
             % Creates sequence in form legible to hardware, keeps the
             % initial analog channel values
-            finalOutputState = OutputState(0,obj.analogChannel0Value,obj.analogChannel1Value);
+            finalOutputState = obj.postExperimentState;
             
             % settings for sequence generation
             seq = BooleanHelper.ifTrueElse(obj.delayFixed, obj.delayFixedSequence, obj.sequence);
@@ -151,6 +155,21 @@ classdef (Sealed) PulseStreamerNewClass < PulseGenerator
                 obj.chooseOnChannels(channelsBinary);
             end
 
+            function outputState = createOutputState(obj, inputChannels)
+
+                inputChannels = obj.channelName2Address(inputChannels); %converts from a cell of names to channel numbers, if needed
+                if isempty(inputChannels)
+                    channelsBinary = 0;
+                    obj.sendWarning('Warning! No channel was turned on or off!');
+                else
+                    if sum(rem(inputChannels,1)) || min(inputChannels) <0 || max(inputChannels)> max(obj.AVAILABLE_ADDRESSES)
+                        error('Input must be integers from 0 to %f', obj.maxDigitalChannels)
+                    end
+                    channelsBinary = sum(2.^unique(inputChannels));
+                end
+                outputState = OutputState(channelsBinary,obj.analogChannel0Value, obj.analogChannel1Value);
+            end
+
             function Off(obj, channelNames)
                 if isempty(channelNames)
                     % We want everything off
@@ -198,7 +217,7 @@ classdef (Sealed) PulseStreamerNewClass < PulseGenerator
             %               only channels 0, 1 and 3 are on.
             
             % Set in Streamer
-            output = OutputState(channels,0,0);
+            output = OutputState(channels,obj.analogChannel0Value,obj.analogChannel1Value);
             obj.ps.constant(output);
             
             % Save state internally

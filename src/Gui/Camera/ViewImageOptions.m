@@ -10,7 +10,7 @@ classdef ViewImageOptions < ViewHBox
             %%%% ui component init %%%%
             obj.component.Spacing = 5;
             obj.component.Padding = 5;
-            
+            camera = getObjByName(Camera.NAME);
             % Create main vertical box layout
             main = ViewHBox(obj, controller, 0, 8);
             % left side           
@@ -32,7 +32,11 @@ classdef ViewImageOptions < ViewHBox
             % plot options, cpp, start/stop
             rightVBox = ViewVBox(main, controller, 0, 0);
             plotoptions = ViewPlotOptions(rightVBox, controller);
-            microwave = ViewImageMW(rightVBox, controller);
+            if isa(camera, 'UEeventCamera')
+                microwave = ViewMWContrast(rightVBox, controller);
+            else
+                 microwave = ViewImageMW(rightVBox, controller);
+            end
                                     
             right = {plotoptions, microwave};
             rightVBox.setHeights([-1 microwave.height]);

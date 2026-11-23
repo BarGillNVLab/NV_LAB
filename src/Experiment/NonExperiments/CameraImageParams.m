@@ -16,7 +16,7 @@ classdef CameraImageParams < handle
 
         
         roi                   % [min_x, min_y, width, length]
-        exposuretime
+        exposuretime          % in milliseconds
         binning
         
         Avarage_exposures

@@ -18,7 +18,7 @@ classdef CameraAndor < Camera & EventSender
         PIXEL_LENGTH = 6.5;
         EVENT_IMAGE_TAKEN = 'imageacquired';
         EXPOSURE_TIME_LIMITS = [0.00924 1.98e7];   % [ms]
-        DEFAULT_EXPOSURE_TIME = 10;
+        DEFAULT_EXPOSURE_TIME = 10;                 % ms
         MAXIMUM_BINNING = 8;
         MAXSENSORTEMPERATURE = 25;      % C
         MINSENSORTEMPERAURE = -50;      %C
@@ -176,7 +176,7 @@ classdef CameraAndor < Camera & EventSender
             % t is in milliseconds
             %exposure time set to the camera must be in seconds
             [obj.rc] = AT_SetFloat(obj.sdkCam, 'ExposureTime', t*1e-3);
-            obj.imgparams.exposuretime = t*1e3; %saving the exposure paramaters in microseconds
+            obj.imgparams.exposuretime = t; %saving the exposure paramaters in milliseconds
             obj.sendEventScanParamsChanged;
         end
 
@@ -226,7 +226,7 @@ classdef CameraAndor < Camera & EventSender
             AT_CheckWarning(obj.rc);
         end
 
-        function imageData = ImageAcquire(obj, ~)
+        function imageData = ImageAcquire(obj)
             check = obj.checkROIInternal;
             if ~check
                 obj.sendError('Roi is not set correctly')
@@ -362,7 +362,7 @@ classdef CameraAndor < Camera & EventSender
         function prepareReadbyStage(obj, nPixels, timeout, pixelTime)
             obj.timeout = timeout;
             pixelTime = pixelTime*1e03;  % pixel time in millisec
-            exposureTime = obj.imgparams.exposuretime*1e-3;
+            exposureTime = obj.imgparams.exposuretime;
             if exposureTime > pixelTime
                 obj.setExposureTime(obj.pixelTime-0.25*obj.pixelTime);
             end

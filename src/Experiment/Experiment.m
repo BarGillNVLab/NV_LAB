@@ -37,6 +37,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         signalParam2                % ditto, for second optional raw result
         averagesTimeStamp           % matrix of size ('averages'*6), time stamp for each end of an average, format(row): [year,month,day,hour,minute,second] 
         magneticImage = [];               % for imaging experiments
+        eventBased = false;
     end
     
     properties
@@ -195,6 +196,9 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             iscamera = spcm.hasCamera;
             if iscamera
                 obj.shouldAutosave = false;
+                if spcm.isEventBased
+                    obj.eventBased = true;
+                end
             else
                 obj.shouldAutosave = true;
             end
@@ -779,7 +783,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 obj.isTracking = false;
                 detectiontime = obj.detectionDuration;
                 referencetime = obj.referenceDetectionDuration;
-                exposuretime = spcm.camera.imgparams.exposuretime;
+                exposuretime = spcm.camera.imgparams.exposuretime*1e3;          %exposure time in microsconds
                 if exposuretime > detectiontime
                     obj.detectionDuration = exposuretime; %should be in microseconds
                     fprintf('Detection duration has been set to %d milliseconds\n', obj.detectionDuration/1000);
@@ -1036,7 +1040,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             data = dataParam.value;
             err = dataParam.sterr;
             if isImageData&&~obj.twoDimageFlag; data = mean(mean(data, ndims(data)), ndims(data)-1); end
-            if isImageData&&~obj.twoDimageFlag; err = sqrt(sum(sum(err.^2, ndims(err)), ndims(err)-1) / prod(obj.imageSize)); end
+            if isImageData&&~obj.twoDimageFlag; err = sqrt(sum(sum(err.^2, ndims(err)), ndims(err)-1)) / prod(obj.imageSize); end
             
             if isempty(data) || all(all(isnan(data)))
                 % Default plot
@@ -1356,8 +1360,38 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
     
     methods (Access = protected)
         function [signal, sterr, signalC, sterrC] = processData(obj, rawData)
+            %PROCESSDATA Process repeated signal/reference measurements.
+            %
+            % rawData structure:
+            %   Confocal: 2-D
+            %   Widefield: 3-D, with
+            %       size(rawData,1) = repeats * detectionPeriodsPerRepeat
+            %
+            % Detection periods are ordered as signal/reference pairs:
+            %   1 = signal 1
+            %   2 = reference 1
+            %   3 = signal 2
+            %   4 = reference 2
+            %   ...
+            %
+            % Internally the data are rearranged to:
+            %   s(repeat, detectionPeriod, imageX, imageY)
+            %
+            % Outputs:
+            %   signal  - mean of each detection period over repeats.
+            %             Signal and reference periods remain separate.
+            %
+            %   sterr   - standard error of each detection period over repeats.
+            %
+            %   signalC - normalized signal calculated by first dividing each signal
+            %             by its matching reference and then averaging over repeats:
+            %
+            %                 signalC = mean(signal_i ./ reference_i)
+            %
+            %   sterrC  - standard error of the normalized signal/reference ratios.
             % signalC and sterrC are the correct method for calculating the
             % normalizied signal by reference and its error
+            % rawData is a matrix of size [repeats*detectionPeriodsPerRepeat]
             kc = 1e3;     % kilocounts
             musec = 1e-6;   % microseconds
             
@@ -1378,11 +1412,13 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             
             s = reshape(rawData, [m, n, N, M]);
             s = permute(s, [2, 1, 3, 4]);
+            % s now has dimensions: [repeat, detectionPeriod, imageX, imageY]
             
             timeNormalization = [obj.detectionDuration obj.referenceDetectionDuration]*musec;
             if isprop(obj, 'weakDetectionDuration') timeNormalization = [obj.weakDetectionDuration(obj.param_idx) obj.detectionDuration obj.referenceDetectionDuration]*musec; end;
             if isprop(obj, 'changeDetectionDuration') if obj.changeDetectionDuration timeNormalization = [obj.tau(obj.param_idx) obj.referenceDetectionDuration]*musec; end; end;
-
+            
+            % Expand normalization vector if several signal/reference pairs exist
             if length(timeNormalization) ~= m &&  length(timeNormalization) > 1
                 if length(timeNormalization) == m/2
                     timeNormalization = [timeNormalization timeNormalization]; % There are two copies of the data, happens when there is double measurement!
@@ -1407,8 +1443,12 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 s(:, 2:2:end, :, :) = ref +  refSignal * 0;
             end
 
-            signal = mean(s(start:end, :, :, :), 1, "omitnan");                  % "omitnan" to ignore bad repeat and not throw all this point. added by yachel 23.07.23
-            sterr = ste(s(start:end, :, :, :), 0, 1);
+            signal = squeeze(mean(s(start:end, :, :, :), 1, "omitnan"));                  % "omitnan" to ignore bad repeat and not throw all this point. added by yachel 23.07.23
+            sterr = squeeze(ste(s(start:end, :, :, :), 0, 1));
+
+            % Correct signal/reference normalization
+            % Pair each signal measurement with the corresponding reference from THE SAME repeat.
+            % Dimensions: sigFrames(repeat, pair, N, M) refFrames(repeat, pair, N, M)
 
             sigFrames = s(start:end, 1:2:end, :, :);
             refFrames = s(start:end, 2:2:end, :, :);
@@ -1442,6 +1482,8 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                 sterr = reshape(sterr, d, m/d, M, N);
             end
         end
+
+
 
         function s = checkGlitchInRawData(obj, rawData, s)
             spcm = getObjByName(Spcm.NAME);
@@ -1499,59 +1541,91 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             end
         end
         
-        function [value, sterr] = getRatioDistributionValues(obj, S1, S2, S1sterr, S2sterr)
-            % Calculates the mean and standard error of the ratio of two
-            % normal disributions. This is an approximation of the Ratio
-            % Distribution to a Normal Distribution. See wikipedia, or
-            % lablog:
-            % https://en.wikipedia.org/wiki/Ratio_distribution#Uncorrelated_noncentral_normal_ratio
-            % http://www.bargilllab.com/lablog/2017/05/14/attempting-to-better-extract-coherence-curves/
-            M = obj.imageSize(1);
-            N = obj.imageSize(2);
-
+        % function [value, sterr] = getRatioDistributionValues(obj, S1, S2, S1sterr, S2sterr)
+        %     % Calculates the mean and standard error of the ratio of two
+        %     % normal disributions. This is an approximation of the Ratio
+        %     % Distribution to a Normal Distribution. See wikipedia, or
+        %     % lablog:
+        %     % https://en.wikipedia.org/wiki/Ratio_distribution#Uncorrelated_noncentral_normal_ratio
+        %     % http://www.bargilllab.com/lablog/2017/05/14/attempting-to-better-extract-coherence-curves/
+        %     M = obj.imageSize(1);
+        %     N = obj.imageSize(2);
+        % 
+        %     if obj.currIter == 1
+        %         % Nothing to calculate the mean over
+        %         value = S1./S2;
+        %         S1mean = S1;
+        %         S2mean = S2;
+        %     else
+        %         dataSize = size(S1);
+        %         dim = length(dataSize) -(M>1)-(N>1);
+        %         if dim > 2
+        %             S1 = reshape(S1, [], dataSize(end-(M>1)-(N>1)));
+        %             S2 = reshape(S2, [], dataSize(end-(M>1)-(N>1)));
+        %             S1sterr = reshape(S1sterr, [], dataSize(end-(M>1)-(N>1)));
+        %             S2sterr = reshape(S2sterr, [], dataSize(end-(M>1)-(N>1)));
+        %         end
+        %         value = mean(S1./S2, 2, "omitnan");
+        %         S1mean = mean(S1, 2, "omitnan");
+        %         S2mean = mean(S2, 2, "omitnan");
+        %         S1sterr = obj.getCombinedSterr(S1, S1sterr);
+        %         S2sterr = obj.getCombinedSterr(S2, S2sterr);
+        %         if dim > 2
+        %             sz = 1:length(dataSize);
+        %             imageDim = BooleanHelper.ifTrueElse(M > 1, sz(end-1:end), []);
+        %             dataSize = dataSize([1:end-1-(M>1)-(N>1), imageDim]);
+        %             value = reshape(value, dataSize);
+        %             S1mean = reshape(S1mean, dataSize);
+        %             S2mean = reshape(S2mean, dataSize);
+        %             S1sterr = reshape(S1sterr, dataSize);
+        %             S2sterr = reshape(S2sterr, dataSize);
+        %         end
+        %     end
+        %     sterr = (S1mean./S2mean).*sqrt(S1sterr.^2./S1mean.^2 + S2sterr.^2./S2mean.^2);
+        % end
+        function [value, sterr] = getRatioDistributionValues(obj, ...
+                S1, S2, S1sterr, S2sterr)
+        
+            % Dimension containing repeated measurements
+            avgDim = 3;
+        
             if obj.currIter == 1
-                % Nothing to calculate the mean over
-                value = S1./S2;
+        
                 S1mean = S1;
                 S2mean = S2;
+        
             else
-                dataSize = size(S1);
-                dim = length(dataSize) -(M>1)-(N>1);
-                if dim > 2
-                    S1 = reshape(S1, [], dataSize(end-(M>1)-(N>1)));
-                    S2 = reshape(S2, [], dataSize(end-(M>1)-(N>1)));
-                    S1sterr = reshape(S1sterr, [], dataSize(end-(M>1)-(N>1)));
-                    S2sterr = reshape(S2sterr, [], dataSize(end-(M>1)-(N>1)));
-                end
-                value = mean(S1./S2, 2, "omitnan");
-                S1mean = mean(S1, 2, "omitnan");
-                S2mean = mean(S2, 2, "omitnan");
+        
+                % Mean signal and reference
+                S1mean = mean(S1, avgDim, "omitnan");
+                S2mean = mean(S2, avgDim, "omitnan");
+        
+                % Need to combine errors along the same dimension
                 S1sterr = obj.getCombinedSterr(S1, S1sterr);
                 S2sterr = obj.getCombinedSterr(S2, S2sterr);
-                if dim > 2
-                    sz = 1:length(dataSize);
-                    imageDim = BooleanHelper.ifTrueElse(M > 1, sz(end-1:end), []);
-                    dataSize = dataSize([1:end-1-(M>1)-(N>1), imageDim]);
-                    value = reshape(value, dataSize);
-                    S1mean = reshape(S1mean, dataSize);
-                    S2mean = reshape(S2mean, dataSize);
-                    S1sterr = reshape(S1sterr, dataSize);
-                    S2sterr = reshape(S2sterr, dataSize);
-                end
+        
             end
-            sterr = (S1mean./S2mean).*sqrt(S1sterr.^2./S1mean.^2 + S2sterr.^2./S2mean.^2);
+        
+            %% Ratio
+            value = S1mean ./ S2mean;
+        
+            %% Standard error propagation
+            sterr = value .* sqrt( ...
+                (S1sterr ./ S1mean).^2 + ...
+                (S2sterr ./ S2mean).^2);
+        
         end
-
         function [value, sterr] = getCompleteSignal(obj, S, Serr)
             %S and Serr are of size 4 where (measurement param, averages, signaldim1, signaldim2 (optional))
             % measurement param can be frequency/ free percision time, etc
+            s = size(Serr);
             if obj.currIter == 1
                 % Nothing to calculate the mean over
                 value = S;
                 sterr = Serr;
             else    
-                value = mean(S, 2, "omitnan");
-                sterr = obj.getCombinedSterr(S, Serr);
+                value = squeeze(mean(S, 2, "omitnan"));
+                sterr = squeeze(sqrt(sum(Serr.^2, 2)) ./ s(2));
             end
             
         end
@@ -1580,8 +1654,13 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             N = obj.imageSize(2);
             obj.signal = zeros(obj.detectionPeriodsPerRepeat * obj.runsPerPerform, obj.getTotalNumberOfParams, obj.averages, N, M);
             obj.sterr = zeros(obj.detectionPeriodsPerRepeat * obj.runsPerPerform, obj.getTotalNumberOfParams, obj.averages, N, M);
-            obj.signalC = zeros(obj.runsPerPerform, obj.getTotalNumberOfParams, obj.averages, N, M);
-            obj.sterrC  = zeros(obj.runsPerPerform, obj.getTotalNumberOfParams, obj.averages, N, M);
+            if obj.averages == 1
+                obj.signalC = zeros(obj.getTotalNumberOfParams, obj.averages, N, M);
+                obj.sterrC  = zeros(obj.getTotalNumberOfParams, obj.averages, N, M);
+            else
+                obj.signalC = squeeze(zeros(obj.runsPerPerform, obj.getTotalNumberOfParams, obj.averages, N, M));
+                obj.sterrC  = squeeze(zeros(obj.runsPerPerform, obj.getTotalNumberOfParams, obj.averages, N, M));
+            end
             
             obj.signalParam.value = [];
             obj.signalParam2.value = [];
@@ -1602,7 +1681,9 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             pg = getObjByName(PulseGenerator.NAME);
             if isempty(pg); throwBaseObjException(PulseGenerator.Name); end
             seqTime = pg.sequenceDuration() * 1e-6; % Multiplication in 1e-6 is for converting usecs to secs.
-            
+            if obj.eventBased
+                pg.postExperimentState = OutputState(0,obj.analogChannel0Value,obj.analogChannel1Value);
+            end
             nRepeatsRuns = obj.getTotalNumberOfParams * obj.runsPerPerform;
             averageTime = obj.repeats * seqTime * nRepeatsRuns;
             if averageTime < 60 % Less than a minute
@@ -1682,7 +1763,14 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
                  obj.imagingFlag=0;
                 delay = spcm.camera.DELAY_BETWEEN_TRIGGERS;
                 S.addDelayAfterDetection(delay, 'greenLaser');
-            end  
+                if spcm.isEventBased
+                   defState = pg.createOutputState({'greenLaser'});
+                   pg.postExperimentState = defState;
+                end
+            end
+
+
+
             try
                 pg.setSequence(S);
             catch err
