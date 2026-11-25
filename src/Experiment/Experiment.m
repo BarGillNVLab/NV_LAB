@@ -38,6 +38,8 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         averagesTimeStamp           % matrix of size ('averages'*6), time stamp for each end of an average, format(row): [year,month,day,hour,minute,second] 
         magneticImage = [];               % for imaging experiments
         eventBased = false;
+        eventDetectionDuration
+        eventReferenceDuration
     end
     
     properties
@@ -405,6 +407,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             switch newVal
                 case 'CW'
                 case 'pulsed'
+                case 'eventBased'
                 otherwise
                     obj.sendError('Unknown mode! Ignoring.')
             end
@@ -510,7 +513,7 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
 
         function size = get.imageSize(obj)
             spcm = getObjByName(Spcm.NAME);
-            if spcm.hasCamera
+            if spcm.hasCamera && ~obj.eventBased
                 [~, ~, width, hight] = spcm.camera.getROI;
             else
                 width = 1;
@@ -781,6 +784,9 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             if isempty(spcm); throwBaseObjException(Spcm.Name); end
             if spcm.hasCamera
                 obj.isTracking = false;
+                if  obj.eventBased
+                    return
+                end
                 detectiontime = obj.detectionDuration;
                 referencetime = obj.referenceDetectionDuration;
                 exposuretime = spcm.camera.imgparams.exposuretime*1e3;          %exposure time in microsconds
@@ -1211,6 +1217,134 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
         
             % Bring figure forward if we created it
             if createdFig, figure(h.figure); end
+        end
+        
+         function [sigResp, sterrResp, meanEventSum, steEventSum] = processEventData(obj, events, triggers)
+            %PROCESSEVENTDATA Background-corrected event response for one point.
+            %
+            % Sequence per repeat (ExpESR, mode 'eventBased'):
+            %   R1 (MW off) -> S (MW on) -> R2 (MW off)
+            %   R1: background, ON and OFF events
+            %   S : MW on, fluorescence drops      -> OFF events (p = -1)
+            %   R2: MW off, fluorescence recovers  -> ON events  (p = +1)
+            %
+            % The detector pulses (camera trigger input) only label the
+            % windows, by their widths:
+            %   R1 = eventReferenceDuration
+            %   S  = eventDetectionDuration
+            %   R2 = eventReferenceDuration + 10
+            % Each counting window starts at its pulse's rising edge and lasts
+            %   detectionDuration (S) or referenceDetectionDuration (R1, R2).
+            %
+            % Per repeat (R1 and R2 have the same length):
+            %   eventSum = (OFF_S - OFF_R1 * T_S/T_R) + (ON_R2 - ON_R1)
+            % Both terms measure the same fluorescence change, so the sum is
+            % about twice either one.
+            %
+            % Inputs (all times in us):
+            %   events   - struct with t, p (-1 = OFF, +1 = ON)
+            %   triggers - struct with t, p (1 = rising, 0 = falling edge)
+            % Outputs (match sig(1:2,:,:), sterr(1:2,:,:), sigC(:), sterrC(:)
+            % in ExpESR.perform):
+            %   sigResp      - [2 x 1], mean over repeats of
+            %                  (1) OFF events in S,  background corrected
+            %                  (2) ON events in R2,  background corrected
+            %   sterrResp    - [2 x 1], standard errors of sigResp
+            %   meanEventSum - mean of eventSum = sigResp(1) + sigResp(2)
+            %   steEventSum  - standard error of eventSum
+            % Standard errors are NaN when there is only one repeat.
+
+            R2_EXTRA_US = 10;   % the "+10" on R2 in ExpESR.prepare
+            TOL_US = 2;         % trigger-width tolerance
+
+            Ts = int64(round(obj.detectionDuration));
+            Tr = int64(round(obj.referenceDetectionDuration));
+
+            % Trigger widths that label the windows: 1 = R1, 2 = S, 3 = R2
+            widths = [obj.eventReferenceDuration, ...
+                      obj.eventDetectionDuration, ...
+                      obj.eventReferenceDuration + R2_EXTRA_US];
+            gaps = abs(widths - widths.');
+            gaps(1:4:end) = Inf;
+            if min(gaps(:)) <= 2 * TOL_US
+                error('EventCamera:AmbiguousTriggers', ...
+                    'Trigger widths R1 = %g, S = %g, R2 = %g us are too close to tell apart.', ...
+                    widths);
+            end
+
+            % Events, split by polarity
+            t = events.t(:);
+            p = events.p(:);
+            if ~issorted(t)
+                [t, order] = sort(t);
+                p = p(order);
+            end
+            tON  = t(p > 0);     % ON  = +1
+            tOFF = t(p < 0);     % OFF = -1
+
+            % Trigger edges -> pulses
+            [tt, order] = sort(triggers.t(:));
+            tp = triggers.p(:);
+            tp = tp(order);
+            % A pulse is a rising edge directly followed by a falling edge.
+            % This also drops half pulses at the ends of the recording.
+            k = find(tp(1:end-1) == 1 & tp(2:end) == 0);
+            pulseStart = int64(tt(k));
+            pulseWidth = double(tt(k + 1) - tt(k));
+
+            % Label each pulse by the nearest expected width (0 = unknown)
+            [resid, cls] = min(abs(pulseWidth - widths), [], 2);
+            cls(resid > TOL_US) = 0;
+
+            % Complete R1 -> S -> R2 repeats
+            i = (1:numel(cls) - 2).';
+            i1 = i(cls(i) == 1 & cls(i + 1) == 2 & cls(i + 2) == 3);
+            nRep = numel(i1);
+
+            if nRep == 0
+                error('EventCamera:NoRepeats', ...
+                    'No complete R1 -> S -> R2 repeat found in %d trigger pulses.', numel(cls));
+            end
+            if nRep ~= obj.repeats
+                warning('EventCamera:RepeatCount', ...
+                    'Found %d complete repeats, expected %d. %d pulses had an unknown width.', ...
+                    nRep, obj.repeats, sum(cls == 0));
+            end
+
+            r1Start = pulseStart(i1);
+            sStart  = pulseStart(i1 + 1);
+            r2Start = pulseStart(i1 + 2);
+
+            if any(r1Start + Tr > sStart) || any(sStart + Ts > r2Start)
+                error('EventCamera:OverlappingWindows', ...
+                    'Counting windows overlap: check detectionDuration and referenceDetectionDuration.');
+            end
+
+            % Count events in [start, start + duration)
+            c = Experiment.countBefore(tOFF, [r1Start; r1Start + Tr; sStart; sStart + Ts]);
+            c = reshape(c, nRep, 4);
+            offR1 = c(:, 2) - c(:, 1);
+            offS  = c(:, 4) - c(:, 3);
+
+            c = Experiment.countBefore(tON, [r1Start; r1Start + Tr; r2Start; r2Start + Tr]);
+            c = reshape(c, nRep, 4);
+            onR1 = c(:, 2) - c(:, 1);
+            onR2 = c(:, 4) - c(:, 3);
+
+            % Background correction, average, standard error
+            signalResponse   = offS - offR1 * double(Ts) / double(Tr);   % MW on  -> OFF
+            recoveryResponse = onR2 - onR1;                               % MW off -> ON
+            eventSum = signalResponse + recoveryResponse;
+
+            sigResp      = [mean(signalResponse); mean(recoveryResponse)];
+            meanEventSum = mean(eventSum);
+            if nRep > 1
+                sterrResp   = [std(signalResponse); std(recoveryResponse)] / sqrt(nRep);
+                steEventSum = std(eventSum) / sqrt(nRep);
+            else
+                sterrResp   = [NaN; NaN];
+                steEventSum = NaN;
+            end
         end
 
     end
@@ -1681,9 +1815,6 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             pg = getObjByName(PulseGenerator.NAME);
             if isempty(pg); throwBaseObjException(PulseGenerator.Name); end
             seqTime = pg.sequenceDuration() * 1e-6; % Multiplication in 1e-6 is for converting usecs to secs.
-            if obj.eventBased
-                pg.postExperimentState = OutputState(0,obj.analogChannel0Value,obj.analogChannel1Value);
-            end
             nRepeatsRuns = obj.getTotalNumberOfParams * obj.runsPerPerform;
             averageTime = obj.repeats * seqTime * nRepeatsRuns;
             if averageTime < 60 % Less than a minute
@@ -1761,11 +1892,12 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             if spcm.hasCamera
 %                obj.imagingFlag = input('Enter 1 if you want an image, 0 otherwise: ');
                  obj.imagingFlag=0;
-                delay = spcm.camera.DELAY_BETWEEN_TRIGGERS;
-                S.addDelayAfterDetection(delay, 'greenLaser');
-                if spcm.isEventBased
+                 if obj.eventBased
                    defState = pg.createOutputState({'greenLaser'});
                    pg.postExperimentState = defState;
+                 else
+                    delay = spcm.camera.DELAY_BETWEEN_TRIGGERS;
+                    S.addDelayAfterDetection(delay, 'greenLaser');
                 end
             end
 
@@ -2155,6 +2287,20 @@ classdef (Abstract) Experiment < EventSender & EventListener & Savable
             else
                 obj.sendWarning('Experiment is of the wrong kind')
             end
+        end
+    end
+
+      methods (Static, Access = private)
+        function n = countBefore(t, q)
+            % Number of elements of the sorted vector t that are strictly
+            % smaller than each q. sort is stable and q comes first, so an
+            % event exactly at a window's end is not counted: [start, end).
+            nq = numel(q);
+            [~, ord] = sort([q(:); t(:)]);
+            isT = ord > nq;
+            c = cumsum(isT);
+            n = zeros(nq, 1);
+            n(ord(~isT)) = c(~isT);
         end
     end
 end

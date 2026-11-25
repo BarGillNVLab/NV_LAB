@@ -60,7 +60,11 @@ classdef ExpESR < Experiment
             %obj.frequency = [2779:3:2800,2803.5:0.5:2832,2833:5:2913,2916:0.5:2944,2947:3:2961]; %4A Helmholz current Setup-6
             obj.amplitude = -5;        % dBm
             obj.phase = 0;
-            obj.mode = 'CW';            % Can only be 'CW' for now.
+            if obj.eventBased
+                obj.mode = 'eventBased';            % Can only be 'CW' for now.
+            else
+                obj.mode = 'CW';
+            end
             obj.nChannels = 1;          % two channels can be added....
             
             obj.equalChannels = 0;      % boolean. true if all the channels with the same frequency
@@ -244,11 +248,24 @@ end
                                                                 {'greenLaser','detector'})  % Reference detection
                     S.addEvent(obj.singletDelay,                       '');                        % Last delay
                 case 'eventBased'
-                    obj.laserInitializationDuration = 10000;
+                    obj.detectionPeriodsPerRepeat = 3;
+                    obj.eventDetectionDuration = obj.detectionDuration;
+                    obj.eventReferenceDuration = obj.referenceDetectionDuration;
+                    if obj.referenceDetectionDuration == obj.eventDetectionDuration
+                        obj.eventReferenceDuration = obj.eventReferenceDuration/2;
+                    end
                     S.addEvent(obj.laserInitializationDuration,     {'greenLaser'});
-                    S.addEvent(obj.referenceDetectionDuration/2,           {'greenLaser','detector'})  % reference
-                    S.addEvent((obj.referenceDetectionDuration/2)+10,     {'greenLaser', MWChannel});
+                    S.addEvent(obj.eventReferenceDuration,           {'greenLaser','detector'})  % reference
+                    if obj.eventReferenceDuration == obj.detectionDuration/2
+                        S.addEvent(obj.eventReferenceDuration,     {'greenLaser'});
+                    end               
+                    S.addEvent(obj.laserInitializationDuration,     {'greenLaser'});
                     S.addEvent(obj.detectionDuration,           {MWChannel, 'greenLaser', 'detector'})  % detector
+                    S.addEvent(obj.laserInitializationDuration,     {'greenLaser'});
+                    S.addEvent(obj.eventReferenceDuration+10,           {'greenLaser','detector'})  % reference
+                    if obj.eventReferenceDuration == obj.detectionDuration/2
+                        S.addEvent(obj.eventReferenceDuration-10,     {'greenLaser'});
+                    end   
             end
             
             % Initialize FrequencyGenerator
@@ -325,6 +342,8 @@ end
                         data = obj.getRawData(pg, spcm);
                         if isa(spcm, 'SpcmTimeTaggerControlledNiDaqEnabled')
                             [sig(1:2,:,:), sterr(1:2,:,:), sigC(:,:), sterrC(:,:)] = obj.processData(data(obj.detectionPeriodsPerRepeat*obj.repeats*(1+~isSingleMeasurement)*(k-1)+1:end, :, :));%obj.detectionPeriodsPerRepeat*obj.repeats*k));
+                        elseif strcmp(obj.mode, 'eventBased')
+                            [sig(1:2,:,:), sterr(1:2,:,:), sigC(:), sterrC(:)] = obj.processEventData(data.events, data.triggers);
                         else
                             [sig(1:2,:,:), sterr(1:2,:,:), sigC(:,:), sterrC(:,:)] = obj.processData(data);
                         end
@@ -442,6 +461,10 @@ end
             % counterpart for obj.prepare.
             % In the future, it will also analyze results and fit from it
             % the resonance frequency/ies
+            pg = getObjByName(PulseGenerator.NAME);
+            if obj.eventBased
+                pg.postExperimentState = pg.defaultOutputState;
+            end
             
             obj.wrapUpInternal()
         end

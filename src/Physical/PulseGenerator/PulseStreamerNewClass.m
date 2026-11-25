@@ -20,6 +20,9 @@ classdef (Sealed) PulseStreamerNewClass < PulseGenerator
         analogChannel1Value = 0
         postExperimentState 
     end
+    properties (Dependent)
+        defaultOutputState      % OutputState: all digital channels off, current analog values
+    end
     
     
     %% 
@@ -49,7 +52,7 @@ classdef (Sealed) PulseStreamerNewClass < PulseGenerator
             end
             obj.automaticRearm = PSTriggerMode.Single; % can be 'Normal' or 'Single'.
             obj.ps.setTrigger(obj.trigger, obj.automaticRearm)
-            obj.postExperimentState = OutputState(0,obj.analogChannel0Value,obj.analogChannel1Value);
+            obj.postExperimentState = obj.defaultOutputState;
         end
     end
     
@@ -203,6 +206,10 @@ classdef (Sealed) PulseStreamerNewClass < PulseGenerator
                     return
                 end
                 obj.ps.constant(output);
+            end
+
+            function state = get.defaultOutputState(obj)
+                state = OutputState(0, obj.analogChannel0Value, obj.analogChannel1Value);
             end
            
         end

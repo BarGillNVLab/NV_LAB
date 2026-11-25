@@ -281,6 +281,10 @@ classdef CameraBasler < Camera & EventSender
             stop(obj.vid);
         end
 
+        function stopExperiment(obj)
+            obj.stopRead
+        end
+
         function clearMemory(obj)
             flushdata(obj.vid);
         end

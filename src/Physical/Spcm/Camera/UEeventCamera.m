@@ -20,6 +20,7 @@ classdef UEeventCamera < Camera & EventSender
         ROI_DEFULT = [0 0 1280 720];
         MAX_ROI = [0 0 1280 720];
         EXPOSURE_TIME_LIMITS = [0.1 10000]     % exposure time boundaries in ms
+        DRIVER_LATENCYS = 0.0005;                 % LATENCY IN SECONDS
     end
 
     properties
@@ -108,6 +109,7 @@ classdef UEeventCamera < Camera & EventSender
         function resetToDefault(obj)
             obj.flickerFrequency = obj.FLICKER_FREQUENCY_DEFAULT;
             obj.eventRateThreshold = obj.EVENT_RATE_THRES;
+            obj.setTriggerType('off');
         end
 
         function setROI(obj, roi)
@@ -295,8 +297,57 @@ classdef UEeventCamera < Camera & EventSender
         function imageCPP(~, ~, ~)
         % this function calls for the CPP functions for the camera
         end
-        function readExperimentData(~)
-        end% read data from an experiment
+
+        function prepareExperiment(obj, varargin)
+            % Call right before the pulse generator starts the sequence.
+            if ~strcmp(obj.triggertype, 'external')
+                obj.setTriggerType('external');
+            end
+            
+            obj.clearMemory;
+            obj.clearTriggers;
+        end
+
+        function prepareRead(~)
+            UEeventCamera_mex('initializeFrameBuffer');
+        end
+
+        
+        function data = readExperimentData(obj, nExpectedPulses)
+            % READEXPERIMENTDATA Return the events and triggers of the last sequence run.
+            %
+            %   data = cam.readExperimentData(nExpectedPulses)
+            %
+            % nExpectedPulses - number of detector (trigger) pulses in the run,
+            %                   detectionPeriodsPerRepeat * repeats. Each pulse
+            %                   gives two trigger edges, so exactly
+            %                   2*nExpectedPulses edges must arrive.
+            %
+            % Call after pg.run has returned (the pulse generator waits for
+            % the sequence to finish). prepareExperiment empties both buffers
+            % before the run, so everything read here belongs to this run.
+            %
+            % Output:
+            %   data.events   - x, y, p (+1 ON / -1 OFF), t (int64, us)
+            %   data.triggers - p (1 rising / 0 falling), t (int64, us), id
+
+            validateattributes(nExpectedPulses, {'numeric'}, ...
+                {'scalar', 'integer', 'positive'}, 'readExperimentData', 'nExpectedPulses');
+
+            % Let the last USB packets arrive, then read everything once
+            pause(obj.DRIVER_LATENCYS);
+            data.events   = UEeventCamera_mex('readEvents');
+            data.triggers = UEeventCamera_mex('readTriggers');
+
+            nEdges = numel(data.triggers.t);
+            if nEdges ~= 2 * nExpectedPulses
+                error('UEeventCamera:TriggerCount', ...
+                    'Expected %d trigger edges (%d pulses), received %d.', ...
+                    2 * nExpectedPulses, nExpectedPulses, nEdges);
+            end
+        end
+
+
         function prepareReadbyStage(~, ~, ~)
         end
 
@@ -340,6 +391,12 @@ classdef UEeventCamera < Camera & EventSender
             catch ME
                 error('Failed to stop Event camera acquisition: %s', ME.message);
             end
+        end
+
+        function stopExperiment(obj)
+            obj.stopRead;
+            obj.clearMemory;
+            obj.clearTriggers;
         end
 
         function biases = getBiases(~)
@@ -804,9 +861,7 @@ classdef UEeventCamera < Camera & EventSender
         function clearTriggers()
             UEeventCamera_mex('clearTriggers');
         end
-        function prepareRead()
-            UEeventCamera_mex('initializeFrameBuffer');
-        end
+        
 
         function number = getSerialNumber()
             number = UEeventCamera_mex('getSerialNumber');

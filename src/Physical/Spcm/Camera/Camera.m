@@ -104,8 +104,12 @@ classdef Camera < Savable & EventSender
 
         imageCPP(obj, what, handles)
         % this function calls for the CPP functions for the camera
+        prepareExperiment(obj,varargin)
+
         readExperimentData(obj)
         % read data from an experiment
+
+        stopExperiment(obj)
         prepareReadbyStage(nPixels, timeout, pixelTime)
 
    

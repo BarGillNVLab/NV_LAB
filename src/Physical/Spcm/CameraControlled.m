@@ -25,12 +25,13 @@ classdef CameraControlled < Spcm & NiDaqControlled
         % Channel Names
         niDaqGateChannelName            % torn on the photodiode power supply
 
-        isEventBased = 0;
+
         
     end
     
     properties
         camera              % camera object
+        isEventBased = 0;
     end
     
     properties (Constant, Hidden)
@@ -153,20 +154,25 @@ classdef CameraControlled < Spcm & NiDaqControlled
     
         function startExperimentCount(obj)
             obj.camera.StartRead;
+            pause(0.01);
         end
     
         function images = readFromExperiment(obj)
             iamgesFull = obj.camera.readExperimentData(obj.nExpIntegration);
-            dim = ndims(iamgesFull);
-            if dim == 3
-                images = double(permute(iamgesFull, [3, 1, 2]));
-            elseif dim == 4
-                images = double(permute(iamgesFull, [4, 1, 2, 3]));
+            if obj.isEventBased
+                images = iamgesFull;
+            else
+                dim = ndims(iamgesFull);
+                if dim == 3
+                    images = double(permute(iamgesFull, [3, 1, 2]));
+                elseif dim == 4
+                    images = double(permute(iamgesFull, [4, 1, 2, 3]));
+                end
             end
         end
     
         function stopExperimentCount(obj)
-            obj.camera.stopRead;
+            obj.camera.stopExperiment;
         end
 
         function returnToDefault(obj)

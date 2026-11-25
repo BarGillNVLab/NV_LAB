@@ -325,6 +325,10 @@ classdef CameraAndor < Camera & EventSender
             AT_Command(obj.sdkCam, 'AcquisitionStop');
         end
 
+        function stopExperiment(obj)
+            obj.stopRead;
+        end
+
         function clearMemory(obj)
             AT_Flush(obj.sdkCam);
         end
