@@ -27,6 +27,7 @@ classdef E3631A < handle
         lastWrite = []  % tic of the last set command
     end
     properties (Constant)
+        QUERY_TRIES = 3 % a query with no reply is asked again, up to this many times in all
         QUIET_S = 0.5   % the supply ignores anything sent this soon after a set command (measured 0.3-0.5 s)
         MAX_I = struct('P6V', 5, 'P25V', 1, 'N25V', 1)
         MAX_V = struct('P6V', 6, 'P25V', 25, 'N25V', -25)
@@ -88,14 +89,21 @@ classdef E3631A < handle
             obj.busy = true;
             c = onCleanup(@() obj.setIdle);
             obj.waitQuiet();
-            flush(obj.port, "input");   % a late reply to an earlier question must not be read as this answer
-            writeline(obj.port, cmd);
-            r = readline(obj.port);
-            if isempty(r)
-                flush(obj.port, "input");
-                error('E3631A: no reply to "%s" (check cable, 9600 8N2, and RS-232 selected on the front panel)', cmd);
+            % A query changes nothing, so a lost one (e.g. a byte garbled on
+            % the line: +511 framing error) is simply asked again
+            for attempt = 1:obj.QUERY_TRIES
+                flush(obj.port, "input");   % a late reply to an earlier question must not be read as this answer
+                writeline(obj.port, cmd);
+                r = readline(obj.port);
+                if ~isempty(r); r = strtrim(r); return; end
+                if attempt < obj.QUERY_TRIES
+                    warning('E3631A: no reply to "%s" - asking again', cmd);
+                    pause(0.5);
+                end
             end
-            r = strtrim(r);
+            flush(obj.port, "input");
+            error('E3631A: no reply to "%s" after %d tries (check cable, 9600 8N2, and RS-232 selected on the front panel)', ...
+                cmd, obj.QUERY_TRIES);
         end
 
         function write(obj, cmd)
