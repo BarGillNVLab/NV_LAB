@@ -28,7 +28,10 @@ vLabel = uilabel(g, 'FontWeight', 'bold', 'FontSize', 16);
 status = uilabel(g, 'Text', '', 'FontColor', [0.7 0 0]);
 status.Layout.Column = [1 2];
 
-t = timer('ExecutionMode', 'fixedSpacing', 'Period', 2, 'TimerFcn', @(~, ~) refresh);
+% The timer deletes itself once stopped: closing the window while a refresh
+% is waiting for the supply must not delete the timer inside its own callback
+t = timer('ExecutionMode', 'fixedSpacing', 'Period', 2, 'TimerFcn', @(~, ~) refresh, ...
+    'StopFcn', @(tt, ~) delete(tt));
 fig.CloseRequestFcn = @(~, ~) closeGui;
 start(t);
 
@@ -55,11 +58,13 @@ start(t);
         catch       % standalone use without the lab code on the path
         end
         try
-            iLabel.Text = sprintf('%.4f', ps.current);
-            vLabel.Text = sprintf('%.4f', ps.voltage);
-            outSwitch.Value = onOff(ps.isOn);   % follows changes made from a script
+            I = ps.current; V = ps.voltage; on = ps.isOn;
+            if ~isvalid(fig); return; end   % closed while waiting for the supply
+            iLabel.Text = sprintf('%.4f', I);
+            vLabel.Text = sprintf('%.4f', V);
+            outSwitch.Value = onOff(on);    % follows changes made from a script
         catch err
-            status.Text = err.message;
+            if isvalid(fig); status.Text = err.message; end
         end
     end
     function guard(fn)
@@ -71,7 +76,8 @@ start(t);
         end
     end
     function closeGui
-        stop(t); delete(t); delete(fig);
+        if isvalid(t); stop(t); end
+        delete(fig);
     end
 end
 

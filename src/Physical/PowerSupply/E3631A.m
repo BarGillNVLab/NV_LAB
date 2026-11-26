@@ -42,7 +42,7 @@ classdef E3631A < handle
             obj.vLimit = obj.MAX_V.(obj.channel);
 
             % E3631A RS-232: 9600 baud, 8N2, LF terminated, needs DTR
-            obj.port = serialport(portName, 9600, "StopBits", 2, "Timeout", 3);
+            obj.port = serialport(portName, 9600, "StopBits", 2, "Timeout", 1.5);   % replies take < 0.3 s; a lost one is asked again
             configureTerminator(obj.port, "LF");
             setDTR(obj.port, true);
             flush(obj.port);
