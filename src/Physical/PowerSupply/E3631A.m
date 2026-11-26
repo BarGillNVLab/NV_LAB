@@ -46,6 +46,9 @@ classdef E3631A < handle
             setDTR(obj.port, true);
             flush(obj.port);
             obj.write("SYST:REM");   % RS-232 commands are rejected unless in remote
+            % Opening the port can glitch the line, which the supply logs as
+            % +511 framing error; clear it so the next checkError doesn't report it
+            obj.write("*CLS");
             idn = obj.query("*IDN?");
             assert(contains(idn, "E3631A"), 'Unexpected instrument on %s: %s', portName, idn);
         end
@@ -109,9 +112,16 @@ classdef E3631A < handle
         function tf = isBusy(obj); tf = obj.busy; end
 
         function checkError(obj)
-            e = obj.query("SYST:ERR?");
-            if ~startsWith(e, "+0")
-                error('E3631A error: %s', e);
+            % Read the whole queue (up to 20 entries), so an old error is not
+            % reported again by the next call
+            errs = strings(0);
+            for k = 1:20
+                e = obj.query("SYST:ERR?");
+                if startsWith(e, "+0"); break; end
+                errs(end+1) = e; %#ok<AGROW>
+            end
+            if ~isempty(errs)
+                error('E3631A error: %s', strjoin(errs, '; '));
             end
         end
 
