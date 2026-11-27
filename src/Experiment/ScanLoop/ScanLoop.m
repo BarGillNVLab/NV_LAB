@@ -48,6 +48,7 @@ classdef ScanLoop < handle
 
     properties (Hidden)
         returnPrompt = []       % tests: @(lines) answer, in place of the "Return to start?" dialog
+        countReader = []        % tests: @() [kcps, sterr] for focus steps, in place of the SPCM + laser
     end
 
     properties (Constant)
@@ -102,6 +103,22 @@ classdef ScanLoop < handle
 
         function addExperiment(obj)
             obj.steps(end+1) = struct('type', 'experiment', 'knob', '', 'value', '', 'relative', false, 'onChange', '');
+        end
+
+        function addFocus(obj, knob, opts, onChange)
+            % Z focus search on a stage knob, at the position where the
+            % previous steps left it: steps it to the best SPCM count rate
+            % and settles there from below (see zFocusSearch). opts:
+            % stepUm, integrationS (one reading), subReads (each reading is
+            % this many SPCM reads: their mean and std), stdWeight (score =
+            % kcps - stdWeight * std), maxTravelUm (either way from where
+            % the search starts), backlashUm, noiseSigma.
+            % onChange: as in addSet. The green laser's AOM is switched on
+            % for the readings and back as it was afterwards.
+            if nargin < 3 || isempty(opts); opts = struct(); end
+            if nargin < 4; onChange = ''; end
+            obj.steps(end+1) = struct('type', 'focus', 'knob', knob, 'value', ScanLoop.focusOptions(opts), ...
+                'relative', false, 'onChange', char(onChange));
         end
 
         function addWait(obj, seconds)
@@ -303,7 +320,7 @@ classdef ScanLoop < handle
             allSteps = [obj.steps, obj.finalSteps];
             for k = 1:numel(allSteps)
                 st = allSteps(k);
-                if ~strcmp(st.type, 'set') || isKey(obj.knobs, st.knob); continue; end
+                if ~any(strcmp(st.type, {'set', 'focus'})) || isKey(obj.knobs, st.knob); continue; end
                 knob = obj.makeKnob(st.knob);
                 obj.knobs(st.knob) = knob;
                 obj.startValues(st.knob) = knob.start();
@@ -333,16 +350,31 @@ classdef ScanLoop < handle
                 else
                     list = obj.finalSteps;
                 end
+                lastTarget = struct();  % knob -> its last set target at this point
                 for k = 1:numel(list)
                     st = list(k);
-                    if ~strcmp(st.type, 'set'); continue; end
-                    v = obj.targetOf(st, k, vars);
+                    switch st.type
+                        case 'set'
+                            v = obj.targetOf(st, k, vars);
+                            lastTarget.(matlab.lang.makeValidName(st.knob)) = v;
+                        case 'focus'
+                            % The search goes either way from where the
+                            % previous set left the knob, plus the backlash
+                            % overshoot below
+                            key = matlab.lang.makeValidName(st.knob);
+                            c = obj.startValues(st.knob);
+                            if isfield(lastTarget, key); c = lastTarget.(key); end
+                            o = st.value;
+                            v = c + [-(o.maxTravelUm + o.backlashUm), o.maxTravelUm] / 1000;
+                        otherwise
+                            continue
+                    end
                     knob = obj.knobs(st.knob);
-                    knob.check(v);      % not chained onto the lookup - see releaseKnobs
+                    for vi = v; knob.check(vi); end   % not chained onto the lookup - see releaseKnobs
                     if isKey(targets, st.knob)
-                        r = targets(st.knob); targets(st.knob) = [min(r(1), v), max(r(2), v)];
+                        r = targets(st.knob); targets(st.knob) = [min(r(1), min(v)), max(r(2), max(v))];
                     else
-                        targets(st.knob) = [v v];
+                        targets(st.knob) = [min(v), max(v)];
                     end
                 end
             end
@@ -354,6 +386,12 @@ classdef ScanLoop < handle
                 r = targets(name{1});
                 lines{end+1} = sprintf('%s: now %.4g, will go %.4g .. %.4g', ...
                     name{1}, obj.startValues(name{1}), r(1), r(2)); %#ok<AGROW>
+            end
+            for st = obj.steps(strcmp({obj.steps.type}, 'focus'))
+                o = st.value;
+                lines{end+1} = sprintf(['%s focus search: %g um steps, %g s readings (score = kcps - %g x STD), ', ...
+                    'up to %g um either way, final approach from %g um below. The green AOM is on during it.'], ...
+                    st.knob, o.stepUm, o.integrationS, o.stdWeight, o.maxTravelUm, o.backlashUm); %#ok<AGROW>
             end
             if ~isempty(obj.finalSteps)
                 lines{end+1} = ''; lines{end+1} = 'At the end, in this order:';
@@ -386,6 +424,20 @@ classdef ScanLoop < handle
                         obj.lastSet(st.knob) = v;
                     end
                     rec.(field) = knob.get();
+                case 'focus'
+                    r = obj.runFocus(st);
+                    pre = sprintf('s%d_focus', k);
+                    rec.([pre 'Z']) = r.bestZ;              % [mm]
+                    rec.([pre 'ShiftUm']) = r.shiftUm;      % best - where the search started [um]
+                    rec.([pre 'Kcps']) = r.bestKcps;
+                    rec.([pre 'Std']) = r.bestStd;          % std between the sub-reads [kcps]
+                    rec.([pre 'Score']) = r.bestScore;      % kcps - stdWeight * std
+                    rec.([pre 'VerifyKcps']) = r.verifyKcps;
+                    rec.([pre 'VerifyStd']) = r.verifyStd;
+                    rec.([pre 'Reads']) = size(r.history, 1);
+                    rec.([pre 'Travel']) = double(strcmp(r.reason, 'travel'));  % 1: hit the travel limit
+                    rec.([pre 'SpcmError']) = double(strcmp(r.reason, 'spcm'));  % 1: SPCM failed, Z back at the start
+                    rec.([pre 'History']) = r.history;      % [z kcps sterr std score] - .mat only
                 case 'experiment'
                     rec.(sprintf('s%d_experiment', k)) = obj.runExperiment();
                 case 'wait'
@@ -394,6 +446,77 @@ classdef ScanLoop < handle
                 case 'function'
                     rec.(sprintf('s%d_function', k)) = obj.callFunction(st.value);
             end
+        end
+
+        function r = runFocus(obj, st)
+            % SPCM trouble: a failed read is retried with a fresh counter task
+            % (subRead). If the counter still cannot be read, the search is
+            % given up for this point only: Z goes back to where it started
+            % (from below, like the search's own final approach), the row is
+            % flagged (focusSpcmError), and the scan goes on - the ESR has
+            % its own recovery. A stage error still stops the scan.
+            knob = obj.knobs(st.knob);
+            o = st.value;
+            z0 = knob.get();
+            o.stopFcn = @() obj.stopFlag;
+            moveTo = @(z) obj.setAndConfirm(knob, st.knob, z);
+            try
+                [read, done] = obj.openCounter(o.integrationS, o.subReads);
+                c = onCleanup(done);
+                r = zFocusSearch(moveTo, read, z0, o);
+                clear c
+            catch err
+                if ~strcmp(err.identifier, 'ScanLoop:spcm'); rethrow(err); end
+                clear c     % frees the counter and puts the AOM back
+                warning('ScanLoop:focusSkipped', '%s - Z goes back to the scan height and the scan goes on.', err.message);
+                r = struct('bestZ', z0, 'bestKcps', NaN, 'bestStd', NaN, 'bestScore', NaN, 'verifyKcps', NaN, ...
+                    'verifyStd', NaN, 'finalZ', z0, 'shiftUm', 0, 'reason', 'spcm', 'direction', 0, 'history', zeros(0, 5));
+                if ~obj.stopFlag && abs(knob.get() - z0) > KinesisStage.POSITION_TOL_MM
+                    if o.backlashUm > 0; moveTo(z0 - o.backlashUm / 1000); end
+                    moveTo(z0);
+                end
+            end
+            obj.lastSet(st.knob) = r.finalZ;    % where it really is now, for the next "already there" check
+        end
+
+        function [read, done] = openCounter(obj, integrationS, subReads)
+            % Readings of integrationS each, with the green AOM on: subReads
+            % SPCM reads -> [mean kcps, its standard error, std between them].
+            % done() puts the AOM back as it was and frees the counter.
+            if ~isempty(obj.countReader)
+                read = @() ScanLoop.subRead(obj.countReader, subReads, @() []); done = @() []; return
+            end
+            counter = getObjByName(SpcmCounter.NAME);
+            if ~isempty(counter) && isvalid(counter) && counter.isRunning
+                error('Stop the SPCM counter in mainExp first - the focus search needs the same counter.');
+            end
+            laser = getObjByName(LaserGate.GREEN_LASER_NAME);
+            if isempty(laser); error('Focus search: no green laser on this setup'); end
+            if laser.isSourceAvail && ~laser.source.isEnabled
+                error('Focus search: the green laser source is off - turn it on in mainExp.');
+            end
+            spcm = getObjByName(Spcm.NAME);
+            if isempty(spcm); error('Focus search: no SPCM on this setup'); end
+            try; spcm.stopExperimentCount; catch; end   % the last ESR may still hold the counter
+            spcm.setSPCMEnable(true);
+            aomWasOn = [];      % [] = no AOM switch: nothing to put back
+            if laser.isAomSwitchAvail
+                aomWasOn = laser.aomSwitch.isEnabled;
+                laser.aomSwitch.isEnabled = true;       % the AOM only - the laser source is never touched
+            end
+            t = integrationS / subReads;
+            try
+                spcm.prepareReadByTime(t);
+            catch err
+                try
+                    ScanLoop.restartTimeRead(spcm, t);  % e.g. a DAQ error left from the ESR: one fresh try
+                catch
+                    ScanLoop.closeCounter([], laser, aomWasOn);
+                    error('ScanLoop:spcm', 'Focus search: could not start the SPCM counter (%s)', err.message);
+                end
+            end
+            read = @() ScanLoop.subRead(@() spcm.readFromTime(), subReads, @() ScanLoop.restartTimeRead(spcm, t));
+            done = @() ScanLoop.closeCounter(spcm, laser, aomWasOn);
         end
 
         function runFinalSteps(obj, vars)
@@ -651,6 +774,52 @@ classdef ScanLoop < handle
     end
 
     methods (Static, Access = private)
+        function closeCounter(spcm, laser, aomWasOn)
+            if ~isempty(spcm); try; spcm.clearTimeRead; catch err; err2warning(err); end; end
+            if ~isempty(aomWasOn); try; laser.aomSwitch.isEnabled = aomWasOn; catch err; err2warning(err); end; end
+        end
+        function [m, e, sd] = subRead(readOne, n, recover)
+            % n reads -> their mean, its standard error, and the std between
+            % them (how steady the counts are: vibration, drift, blinking).
+            % A read that errors, or gives no counts / not a number (a DAQ
+            % glitch, not light), is not used: recover() makes a fresh
+            % counter task and it is read again, up to 3 tries. Then
+            % 'ScanLoop:spcm' - the focus search is given up for this point.
+            TRIES = 3;
+            k = zeros(1, n);
+            for i = 1:n
+                for attempt = 1:TRIES
+                    try
+                        v = readOne();
+                        if isscalar(v) && isfinite(v) && v > 0; k(i) = v; break; end
+                        msg = sprintf('it read %g kcps', v);
+                    catch err
+                        msg = err.message;
+                    end
+                    if attempt == TRIES
+                        error('ScanLoop:spcm', 'Focus search: the SPCM failed %d reads in a row (%s)', TRIES, msg);
+                    end
+                    warning('ScanLoop:spcmRetry', 'Focus search: SPCM read failed (%s) - restarting the counter and reading again', msg);
+                    try; recover(); catch; end   % if this fails, the next read fails too and is counted
+                end
+            end
+            m = mean(k); sd = std(k); e = sd / sqrt(n);
+        end
+        function restartTimeRead(spcm, t)
+            try; spcm.clearTimeRead; catch; end     % the task may already be gone (a DAQ reset)
+            spcm.prepareReadByTime(t);
+        end
+        function o = focusOptions(o)
+            D = struct('stepUm', 3, 'integrationS', 1, 'subReads', 10, 'stdWeight', 1, ...
+                'maxTravelUm', 30, 'backlashUm', 10, 'noiseSigma', 2);
+            for f = fieldnames(D)'
+                if ~isfield(o, f{1}) || isempty(o.(f{1})); o.(f{1}) = D.(f{1}); end
+            end
+            o = rmfield(o, setdiff(fieldnames(o), fieldnames(D)));
+            assert(o.stepUm > 0 && o.integrationS > 0 && o.maxTravelUm >= o.stepUm && o.backlashUm >= 0 ...
+                && o.subReads >= 2 && o.stdWeight >= 0, ...
+                'Focus search: step and reading time > 0, max travel >= step, backlash >= 0, sub-reads >= 2, STD weight >= 0');
+        end
         function setProp(obj, prop, v)
             obj.(prop) = v;
         end

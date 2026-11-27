@@ -17,6 +17,14 @@ function fig = scanCurrentX_ESR()
 %   are), free COM5 (`clear ps`, close E3631A_gui), and put the stages
 %   where X should be centred - X and Z are relative to where they are.
 %
+%   Z focus search (optional): at each X position, after Z comes back to
+%   the scan height, Z is stepped to the best SPCM count rate (+ first, then
+%   - if + did not help), within +-max travel of the scan height, and the
+%   stage settles on the best spot coming up from below (backlash). Each
+%   reading is 10 sub-reads; its score is  kcps - w x STD  (STD between the
+%   sub-reads), so the best spot has many counts and steady ones. See
+%   ZFOCUSSEARCH. The green AOM is on during the search.
+%
 %   Stop here, or Pause/Halt in the ESR window: the loop stops after that
 %   point and nothing moves further. Each point is saved as it happens to
 %   ScanLoop_<time>.mat and .csv (SaveLoad default folder \ScanLoops).
@@ -24,7 +32,8 @@ function fig = scanCurrentX_ESR()
 %   See also BUILDCURRENTXSCAN, SCANLOOP
 
 PREF_GROUP = 'NVLab_scanCurrentX';
-DEFAULTS = struct('I', '0:50:400', 'x', '-150:5:150', 'zBack', -10, 'settle', 0.5, 'esrS', 60, 'order', 'current-outer');
+DEFAULTS = struct('I', '0:50:400', 'x', '-150:5:150', 'zBack', -10, 'settle', 0.5, 'esrS', 60, 'order', 'current-outer', ...
+    'focus', false, 'focusStep', 3, 'focusRead', 1, 'focusTravel', 30, 'focusBacklash', 10, 'focusStdW', 1);
 s0 = DEFAULTS;
 try
     if ispref(PREF_GROUP, 'last'); s0 = withDefaults(getpref(PREF_GROUP, 'last')); end
@@ -39,12 +48,14 @@ lastFolder = '';
 % Time model for the estimate (the ESR itself is measured - see fillEsrTime)
 MOVE_S = 0.5;       % one stage move, incl. waiting for arrival
 MOVES_PER_X = 3;    % Z back, X, Z down
+FOCUS_READS = 5;    % a typical focus search: start, 2-3 steps, the final check (+ as many moves)
 CURRENT_S = 0.6;    % one change of the wire current
 ESR_START_S = 3;    % per ESR run, on top of its averages (prepare, plot window)
 
 fig = uifigure('Name', 'Current x X scan with ESR', 'Position', [200 150 560 600]);
-g = uigridlayout(fig, [15 4]);
-g.RowHeight = repmat({'fit'}, 1, 15);
+fig.Position(4) = 690;
+g = uigridlayout(fig, [18 4]);
+g.RowHeight = repmat({'fit'}, 1, 18);
 g.ColumnWidth = {170, '1x', '1x', '1x'};
 
 uilabel(g, 'Text', 'Scan parameters', 'FontWeight', 'bold');
@@ -80,6 +91,27 @@ lblZ.Layout.Column = [3 4];
 uilabel(g, 'Text', 'Settle before ESR [s]');
 edSettle = numField(g, s0.settle);
 uilabel(g, 'Text', ''); uilabel(g, 'Text', '');
+
+FOCUS_TIP = ['At each X position, after Z is back at the scan height: read the counts, step +, keep ', ...
+    'stepping while they go up; if the first + step does not help, try - the same way. Then go to the ', ...
+    'best Z coming up from below (backlash) and read again. Never further than max travel from the scan height.'];
+uilabel(g, 'Text', 'Z focus: step [um], read [s]', 'Tooltip', FOCUS_TIP);
+cbFocus = uicheckbox(g, 'Text', 'search', 'Value', s0.focus, 'Tooltip', FOCUS_TIP, ...
+    'ValueChangedFcn', @(~, ~) updatePlan());
+edFStep = numField(g, s0.focusStep);
+edFRead = numField(g, s0.focusRead);
+uilabel(g, 'Text', 'Z focus: max travel, backlash [um]', 'Tooltip', ...
+    'Max travel: either way from the scan height. Backlash: the final approach comes up from this far below the best Z.');
+uilabel(g, 'Text', '');
+edFTravel = numField(g, s0.focusTravel);
+edFBack = numField(g, s0.focusBacklash);
+STD_TIP = ['Each reading is 10 sub-reads; its score is kcps - w x STD (STD between the sub-reads). ', ...
+    'w = 0: most counts only. w = 1: one STD of fluctuation costs as much as one kcps less.'];
+uilabel(g, 'Text', 'Z focus: STD weight w', 'Tooltip', STD_TIP);
+edFStdW = numField(g, s0.focusStdW);
+edFStdW.Tooltip = STD_TIP;
+lblStdW = uilabel(g, 'Text', 'score = kcps - w x STD', 'FontColor', [0.4 0.4 0.4]);
+lblStdW.Layout.Column = [3 4];
 
 uilabel(g, 'Text', 'One ESR run [s]');
 edEsr = numField(g, s0.esrS);
@@ -172,13 +204,17 @@ refreshAll();
 
     function s = settings()
         s = struct('I', edI.Value, 'x', edX.Value, 'zBack', edZ.Value, 'settle', edSettle.Value, ...
-            'esrS', edEsr.Value, 'order', ddOrder.Value);
+            'esrS', edEsr.Value, 'order', ddOrder.Value, 'focus', cbFocus.Value, 'focusStep', edFStep.Value, ...
+            'focusRead', edFRead.Value, 'focusTravel', edFTravel.Value, 'focusBacklash', edFBack.Value, ...
+            'focusStdW', edFStdW.Value);
     end
 
     function applySettings(s)
         s = withDefaults(s);
         edI.Value = s.I; edX.Value = s.x; edZ.Value = s.zBack; edSettle.Value = s.settle;
         edEsr.Value = s.esrS; ddOrder.Value = s.order;
+        cbFocus.Value = logical(s.focus); edFStep.Value = s.focusStep; edFRead.Value = s.focusRead;
+        edFTravel.Value = s.focusTravel; edFBack.Value = s.focusBacklash; edFStdW.Value = s.focusStdW;
         updatePlan();
     end
 
@@ -263,6 +299,12 @@ refreshAll();
             assert(s.zBack ~= 0, 'Z retract must not be 0');
             assert(s.settle >= 0, 'Settle must be 0 or more');
             assert(all(I >= 0) && max(I) <= 5000, 'Current must be within 0..5000 mA');
+            if s.focus
+                assert(s.focusStep > 0 && s.focusRead > 0, 'Z focus: step and read time must be positive');
+                assert(s.focusTravel >= s.focusStep, 'Z focus: max travel must be at least one step');
+                assert(s.focusBacklash >= 0, 'Z focus: backlash must be 0 or more');
+                assert(s.focusStdW >= 0, 'Z focus: STD weight must be 0 or more');
+            end
         catch err
             showPlan({err.message}, false);
             lblValues.Text = '';
@@ -284,6 +326,13 @@ refreshAll();
             lines{end+1} = 'Order: current outer - a full X scan per current';
         end
         total = nPoints * (s.esrS + s.settle) + nMoves * MOVE_S + nCurrent * CURRENT_S;
+        if s.focus
+            nSearch = numel(x);                         % x-outer: once per X position
+            if ~strcmp(s.order, 'x-outer'); nSearch = nPoints; end
+            total = total + nSearch * FOCUS_READS * (s.focusRead + MOVE_S);
+            lines{end+1} = sprintf('Z focus at each X: %g um steps, %g s reads, score kcps - %g x STD, +-%g um (~%.0f s each)', ...
+                s.focusStep, s.focusRead, s.focusStdW, s.focusTravel, FOCUS_READS * (s.focusRead + MOVE_S));
+        end
         perPoint = total / nPoints;
         lines{end+1} = sprintf('Time: about %s (%.0f s per point) - done ~%s if started now', ...
             fmtDuration(total), perPoint, char(datetime('now') + seconds(total), 'eee HH:mm'));
@@ -296,10 +345,15 @@ refreshAll();
             za = z0 + s.zBack / 1000;
             lines{end+1} = sprintf('X:  %.4f .. %.4f mm  (%+g .. %+g um)', xa(1), xa(2), min(x), max(x));
             lines{end+1} = sprintf('Z:  %.4f (measure) <-> %.4f mm (retracted)', z0, za);
+            if s.focus
+                zf = z0 + [-(s.focusTravel + s.focusBacklash), s.focusTravel] / 1000;
+                lines{end+1} = sprintf('Z focus search within %.4f .. %.4f mm', zf(1), zf(2));
+                za = [za, zf];
+            end
             if xa(1) < xs.minPosition || xa(2) > xs.maxPosition
                 lines{end+1} = sprintf('X OUT OF RANGE: limits %g .. %g mm', xs.minPosition, xs.maxPosition); ok = false;
             end
-            if za < zs.minPosition || za > zs.maxPosition
+            if any(za < zs.minPosition) || any(za > zs.maxPosition)
                 lines{end+1} = sprintf('Z OUT OF RANGE: limits %g .. %g mm', zs.minPosition, zs.maxPosition); ok = false;
             end
         catch err
@@ -342,7 +396,7 @@ refreshAll();
         runSettings = s;
         try; setpref(PREF_GROUP, 'last', s); catch; end
         L = buildCurrentXScan(struct('current_mA', range(s.I, 'Current'), 'x_um', range(s.x, 'X'), ...
-            'zBack_um', s.zBack, 'settle_s', s.settle, 'order', s.order));
+            'zBack_um', s.zBack, 'settle_s', s.settle, 'order', s.order, 'focus', focusOpts(s)));
         L.onPoint = @(loop) showProgress(loop);
         assignin('base', 'scanLoop', L);
         btnStart.Enable = 'off'; btnStop.Enable = 'on';
@@ -362,6 +416,14 @@ refreshAll();
         if isvalid(fig)
             btnStop.Enable = 'off';
             updatePlan();
+        end
+    end
+
+    function o = focusOpts(s)
+        o = [];
+        if s.focus
+            o = struct('stepUm', s.focusStep, 'integrationS', s.focusRead, ...
+                'maxTravelUm', s.focusTravel, 'backlashUm', s.focusBacklash, 'stdWeight', s.focusStdW);
         end
     end
 

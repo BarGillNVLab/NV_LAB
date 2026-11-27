@@ -6,6 +6,10 @@ function L = buildCurrentXScan(s)
 %   s.settle_s    wait after Z returns, before the ESR [s]
 %   s.order       (optional) 'current-outer' (default): a full X scan per current
 %                 'x-outer': at each X position, every current in turn
+%   s.focus       (optional) Z focus search options (see ScanLoop.addFocus:
+%                 stepUm, integrationS, maxTravelUm, backlashUm), or empty/absent
+%                 for none. When set, after Z comes back to the start height
+%                 it searches Z for the best count rate at every X position.
 %
 % current-outer, at every point: current, Z back, X to x, Z to its start
 %   height, wait, ESR (the current is only re-sent when it changes).
@@ -20,6 +24,7 @@ assert(~isempty(s.current_mA) && ~isempty(s.x_um), 'The current and X lists must
 assert(isscalar(s.zBack_um) && s.zBack_um ~= 0, 'Z retract must be a non-zero number of um');
 
 if ~isfield(s, 'order') || isempty(s.order); s.order = 'current-outer'; end
+if ~isfield(s, 'focus'); s.focus = []; end
 
 L = ScanLoop();
 L.experimentName = 'ESR';
@@ -32,6 +37,7 @@ switch s.order
         L.addSet('Z', zBack, true);         % retract, relative to the start height
         L.addSet('X', 'x/1000', true);      % um -> mm, relative to the start
         L.addSet('Z', '0', true);           % back to the start height
+        if ~isempty(s.focus); L.addFocus('Z', s.focus); end
         L.addWait(s.settle_s);
     case 'x-outer'
         L.addVariable('x', s.x_um);
@@ -39,6 +45,7 @@ switch s.order
         L.addSet('Z', zBack, true, 'x');    % lift / move / lower only when x changes
         L.addSet('X', 'x/1000', true, 'x');
         L.addSet('Z', '0', true, 'x');
+        if ~isempty(s.focus); L.addFocus('Z', s.focus, 'x'); end   % once per X position
         L.addSet('Current', 'I/1000');      % every point
         L.addWait(s.settle_s);
     otherwise
